@@ -8,6 +8,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Fixed
+- Comments sent from chat or file selections stay outside the quoted text in terminal Markdown renderers.
 - This fork uses `dle-labs.herdr-web-ui` for its plugin identity, phone setup actions and config-directory lookup.
 - Open tabs take turns chiming for the same alert. A question or a finish is still heard if
   the tab that claimed it closes or cannot play it, including on plain-HTTP LAN addresses.

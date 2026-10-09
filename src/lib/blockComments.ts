@@ -346,7 +346,8 @@ function quoteText(comment: PaneComment): string {
 
 /** The message for `comments` and `text`: each comment quotes its selection, block or lines, replies first in reading order, then file comments, and the typed text, unless blank, comes last. */
 export function composeWithComments(comments: readonly PaneComment[], text: string): string {
-  const entries = sortPaneComments(comments).map((c) => `${quoteText(c)}\n${c.comment.trim()}`);
+  // A blank line ends the quote; without it, Markdown's lazy continuation quotes the note too.
+  const entries = sortPaneComments(comments).map((c) => `${quoteText(c)}\n\n${c.comment.trim()}`);
   if (text.trim() !== "") entries.push(text);
   return entries.join("\n\n");
 }
