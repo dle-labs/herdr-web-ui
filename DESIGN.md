@@ -888,7 +888,8 @@ One set for both themes: the card is island black wherever it shows.
     - The field is bare in the card, no edge or fill, the popover's size with a mouse (never under
       `--fs-input` on a touch screen); two lines tall at first, it grows to six, then scrolls. It
       takes the focus with the caret at the end (not a saved comment's on a touch screen, below), and
-      is limited to 2000 characters.
+      has no per-comment character cap; the combined outgoing message still has the composer's
+      20,000-character send limit.
     - Under it a row: a saved comment's **Delete** (`.icon-button.comment-popover-delete`, a lucide
       `Trash2`, named "Delete comment") at the left, always in view, `--control-h` square with an
       `--icon-size` icon, `--text-dim`, `--status-blocked` under a pointer that hovers or a
