@@ -50,6 +50,8 @@ export interface CommentSurfaceProps {
 }
 
 export interface CommentSurfaceOptions<T, S> {
+  /** The owning pane's live connection; loss cancels dictation, never the written draft. */
+  connected: boolean;
   /** the scrolling element: it gets `surfaceProps`, and the pin layer lies in its content */
   surface: RefObject<HTMLDivElement>;
   /** the Comments setting: off, nothing is drawn and an open popover closes */
@@ -185,6 +187,8 @@ export function useCommentSurface<T extends { point?: CommentPoint }, S>(options
       const { quote, reference } = latest.current.describe(open);
       return <CommentPopover
         key={open.id}
+        owner={`${open.owner}:${open.id}`}
+        connected={latest.current.connected && latest.current.owner === open.owner && active}
         placement={placement}
         quote={quote}
         reference={reference}
@@ -198,7 +202,7 @@ export function useCommentSurface<T extends { point?: CommentPoint }, S>(options
         fallback={fallback}
       />;
     };
-  }, [open, surface, text, save, remove, close]);
+  }, [open, surface, text, save, remove, close, options.connected, options.owner, active]);
 
   const escape = (): boolean => {
     const outcome = popoverEscape(open, text.read());

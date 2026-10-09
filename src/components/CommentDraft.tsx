@@ -10,6 +10,8 @@ import { COMMENT_SURFACE } from "../lib/commentHighlight.ts";
 import { commentCanSave, commentChanged } from "../lib/commentPopover.ts";
 import { restoreFocusTarget } from "../lib/commentSelection.ts";
 import { useT } from "../lib/i18n.ts";
+import { consumeDictationEscape, useDictation, type Dictation } from "./VoiceInput.tsx";
+import { nativeModalOver } from "../lib/useFocusTrap.ts";
 
 /**
  * Whether a key or a press (its `target`) while a comment's popover or dialog (`box`) is up belongs to another modal
@@ -19,7 +21,8 @@ import { useT } from "../lib/i18n.ts";
  */
 export function inAnotherDialog(target: EventTarget | null, box: Element | null): boolean {
   const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
-  const dialog = element?.closest("[aria-modal='true']") ?? null;
+  if (nativeModalOver(box instanceof HTMLElement ? box : null)) return true;
+  const dialog = element?.closest("[aria-modal='true'], dialog[open]") ?? null;
   // the dialog is the comment's own (its box), or one it lies in (the file viewer): not another
   return dialog !== null && !(box !== null && dialog.contains(box));
 }
@@ -30,6 +33,8 @@ export interface CommentDraft {
   surface: RefObject<HTMLDivElement>;
   field: RefObject<HTMLTextAreaElement>;
   value: string;
+  dictation: Dictation;
+  note: string | null;
   /** Save does something (`commentCanSave`): a new comment with only blanks, or a saved one unchanged, has nothing to save */
   canSave: boolean;
   /** the text is changed (`commentChanged`): the popover is not given up by a key, nor passed over by the composer's Send */
@@ -47,6 +52,8 @@ export interface CommentDraft {
 }
 
 export interface CommentDraftOptions {
+  owner: string;
+  connected: boolean;
   /**
    * What gets the focus back on close. An element or null for none; by default what had the focus
    * as the editor opened. A function is asked after the commit that closes the editor, so it can
@@ -89,16 +96,32 @@ export function useCommentDraft(
   initialComment: string,
   onSave: (comment: string) => void,
   onClose: () => void,
-  { opener: given, fallback, inline = false, focusField = true, startValue, onText }: CommentDraftOptions,
+  { owner, connected, opener: given, fallback, inline = false, focusField = true, startValue, onText }: CommentDraftOptions,
 ): CommentDraft {
   const surface = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
   const [value, setValue] = useState(startValue ?? initialComment);
-  const save = (): void => { if (value.trim() === initialComment.trim()) onClose(); else onSave(value); };
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const [note, setNote] = useState<string | null>(null);
+  const dictation = useDictation({
+    mode: "comment", owner, connected, box: field, surface,
+    read: () => valueRef.current,
+    write: (text) => {
+      valueRef.current = text;
+      setValue(text);
+    },
+    onNote: setNote,
+  });
+  const close = (): void => { dictation.cancel(); onClose(); };
+  const save = (): void => {
+    dictation.cancel();
+    if (value.trim() === initialComment.trim()) onClose(); else onSave(value);
+  };
   const refocus = (): void => field.current?.focus({ preventScroll: true });
   const told = useRef(onText);
   told.current = onText;
-  useEffect(() => told.current?.(value), [value]);
+  useLayoutEffect(() => told.current?.(value), [value]);
 
   // one line to start, growing with the comment up to the cap in CSS, as the composer's box does
   useLayoutEffect(() => {
@@ -161,11 +184,12 @@ export function useCommentDraft(
   const changedNow = useRef(false);
   // a caller may hand a new onClose on every render: read here, the listener stays where it is in the window's order
   const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  closeRef.current = close;
   useEffect(() => {
     if (inline) return;
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || inAnotherDialog(event.target, surface.current)) return;
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229 || inAnotherDialog(event.target, surface.current)) return;
+      if (consumeDictationEscape(event, surface.current)) return;
       event.stopPropagation();
       event.preventDefault();
       if (changedNow.current) field.current?.focus({ preventScroll: true });
@@ -179,6 +203,7 @@ export function useCommentDraft(
   changedNow.current = changed;
   const canSave = commentCanSave(value, initialComment);
   const leave = (): boolean => {
+    dictation.cancel();
     if (!changed) {
       onClose();
       return true;
@@ -187,6 +212,7 @@ export function useCommentDraft(
     return false;
   };
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     // React's root dispatches after every document- and window-capture listener, so the walk's Escape (Composer.tsx, on
     // the document) has already run when a popover gives up here, whatever the order the listeners were added in.
     // Only an untouched popover gives up: what was typed is not thrown away by a key (the key puts the focus back in the field), and
@@ -198,19 +224,21 @@ export function useCommentDraft(
       }
       event.stopPropagation();
       event.preventDefault();
-      onClose();
+      close();
       return;
     }
     // a dialog keeps Tab inside through its focus trap (CommentPopover.tsx, `useFocusTrap`); a popover is in the page's
     // flow, and Tab goes on from it
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && event.target === field.current) {
       event.preventDefault();
+      // Keyboard Save also invalidates pending speech, even when the visible draft is unchanged.
+      dictation.cancel();
       // as a Save button: nothing to save is no save, and the editor stays
       if (canSave) save();
     }
   };
 
-  return { surface, field, value, canSave, changed, setValue, save, leave, onKeyDown };
+  return { surface, field, value, canSave, changed, setValue, save, leave, onKeyDown, dictation, note };
 }
 
 /** The comment's field, in its popover. */

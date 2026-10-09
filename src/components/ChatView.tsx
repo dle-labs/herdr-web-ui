@@ -1037,6 +1037,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
     comment: comment.comment,
   })), [stored, t]);
   const commentSurface = useCommentSurface<CommentTarget, SelectionComment>({
+    connected: connected && !ended,
     surface: scroller,
     enabled: settings.comments,
     persist: persistReplyComment,

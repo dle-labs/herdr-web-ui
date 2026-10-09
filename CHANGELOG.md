@@ -65,6 +65,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   workspace on their second line; their tooltips still name it. A list in Activity order stays
   as it was, since it mixes workspaces.
   ([#673](https://github.com/devswha/herdr-web-ui/pull/673) by @WOULDU-pres)
+- Replace cloud/browser voice input with direct, self-hosted English dictation in desktop and mobile chat, terminal lines, reply comments and file comments. Settings now applies a speech URL/model explicitly; interrupted takes are cancelled and changed drafts require review before insertion. Direct speech origins require an administrator CSP allowlist. Live streaming is not enabled yet. ([#1](https://github.com/dle-labs/herdr-web-ui/pull/1) by @polaroidkidd)
 
 ### Fixed
 - When a chat message is not sent because Claude Code's input box in the terminal is not empty,

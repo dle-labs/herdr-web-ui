@@ -1434,9 +1434,10 @@ const cases: Record<string, Case> = {
 
     // a send takes every comment: the reply's first, then the files' in the order they were first commented, then the text
     const expected = [
-      "> every revision in order\nSay which order.",
-      `> docs/spec.md:42-43\n${tableQuote.map((line) => `> ${line}`).join("\n")}\nAlso return the stored revision.`,
-      `> src/sync.ts:8\n> ${SYNC_LINES[7]}\nCompare with <=.`,
+      // The blank line ends Markdown's quote before the user's comment (no lazy continuation).
+      "> every revision in order\n\nSay which order.",
+      `> docs/spec.md:42-43\n${tableQuote.map((line) => `> ${line}`).join("\n")}\n\nAlso return the stored revision.`,
+      `> src/sync.ts:8\n> ${SYNC_LINES[7]}\n\nCompare with <=.`,
       "Thanks",
     ].join("\n\n");
     await page.getByRole("textbox", { name: "Message", exact: true }).fill("Thanks");

@@ -131,7 +131,7 @@ export function useFileComments(scope: FileCommentScope | null): FileComments {
  * back, so the viewer never closes and loses that text; true while a popover had it, and the viewer then stays;
  * `comments` are the file's comments as placed, for the header's counter and walk (none while comments are off).
  */
-export function useFileCommentLayer(scope: FileCommentScope | null, surface: RefObject<HTMLDivElement>, content: RefObject<HTMLElement>): {
+export function useFileCommentLayer(scope: FileCommentScope | null, surface: RefObject<HTMLDivElement>, content: RefObject<HTMLElement>, connected: boolean): {
   overlay: ReactNode;
   surfaceProps: CommentSurfaceProps;
   escape: () => boolean;
@@ -184,6 +184,7 @@ export function useFileCommentLayer(scope: FileCommentScope | null, surface: Ref
   };
 
   const { overlay, surfaceProps, escape } = useCommentSurface<FileTarget, MeasuredFileSelection>({
+    connected,
     surface,
     enabled: settings.comments,
     active: scope !== null,
@@ -275,7 +276,8 @@ const STOP_WAIT_MS = 1000;
  * Escape for the dialog. The dialog closes as the popover does: with comments turned off, and, while
  * nothing is typed in it, once its comment is no longer stored.
  */
-export function useFileCommentWalk({ owner, view, comments, surface, content, showView }: {
+export function useFileCommentWalk({ owner, connected, view, comments, surface, content, showView }: {
+  connected: boolean;
   /** the pane's store owner; null without a pane */
   owner: string | null;
   /** the view shown now; null while it takes no comments */
@@ -418,6 +420,8 @@ export function useFileCommentWalk({ owner, view, comments, surface, content, sh
   const closeEditor = useCallback(() => setModal(null), []);
   const editor = owner !== null && modal !== null && settings.comments && <CommentPopover
     key={modal.opening}
+    owner={`${owner}:${modal.opening}`}
+    connected={connected}
     placement="dialog"
     quote={{ text: modal.comment.quoteLines.join("\n") }}
     reference={{ path: modal.comment.path, lines: modal.comment.lines }}
