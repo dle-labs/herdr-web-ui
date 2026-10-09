@@ -8,7 +8,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Changed
-- Replace cloud/browser voice input with direct, self-hosted English dictation in desktop and mobile chat, terminal lines, reply comments and file comments. Settings now applies a speech URL/model explicitly; interrupted takes are cancelled and changed drafts require review before insertion. Direct speech origins require an administrator CSP allowlist. Live streaming is not enabled yet.
+- Replace cloud/browser voice input with direct, self-hosted English dictation in desktop and mobile chat, terminal lines, reply comments and file comments. Settings now applies a speech URL/model explicitly; interrupted takes are cancelled and changed drafts require review before insertion. Direct speech origins require an administrator CSP allowlist. Live streaming is not enabled yet. ([#1](https://github.com/dle-labs/herdr-web-ui/pull/1) by @polaroidkidd)
 
 ### Fixed
 - Comment editors no longer stop at 2,000 characters; the combined message is still checked against the send limit.
