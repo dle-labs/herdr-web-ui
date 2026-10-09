@@ -173,7 +173,7 @@ it("keeps a selection comment through a held snapshot round trip and composes it
   const [held] = new MessageQueueStore(() => storage).read("a");
   expect(held!.comments).toEqual([selection, c1]);
   expect(heldMessageText(held!)).toBe(composeWithComments([selection, c1], "hi"));
-  expect(heldMessageText(held!)).toContain("> beta\n> gamma\nwhy");
+  expect(heldMessageText(held!)).toContain("> beta\n> gamma\n\nwhy");
 });
 
 it("drops a held comment whose quote or range is malformed and keeps the rest", () => {
@@ -191,5 +191,5 @@ it("keeps file comments with a held message and composes them when sent", () => 
   const [held] = new MessageQueueStore(() => storage).read("a");
   expect(held!.comments).toEqual([c1, file]);
   expect(heldAgentOnly(held!)).toBe(true);
-  expect(heldMessageText(held!)).toBe("> Quoted\nnote\n\n> src/sync.ts:8\n> if (a < b) {\nCompare with <=.\n\nhi");
+  expect(heldMessageText(held!)).toBe("> Quoted\n\nnote\n\n> src/sync.ts:8\n> if (a < b) {\n\nCompare with <=.\n\nhi");
 });
