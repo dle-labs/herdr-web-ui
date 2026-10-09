@@ -303,7 +303,7 @@ export function Composer({
     // React's handler, so the walk control's own click clears the old mark and then sets the next
     const onClick = (): void => clearCurrent();
     const onKeyDown = (event: globalThis.KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
       const note = currentNote.current?.note;
       // Escape from the note hands the focus back to the walk control, so Enter there walks on
       // (it sits after the whole chat in the tab order)
@@ -689,9 +689,7 @@ export function Composer({
   const dictation = useDictation({
     mode: "chat",
     connected,
-    phone: mobile,
-    polish: settings.voicePolishChat,
-    keywords: () => [...(agent ? [agentLabel] : []), ...commands.map((command) => command.name)],
+    owner: draftKey,
     box: textareaRef,
     read: () => textRef.current,
     // a dictation that does not fit is refused whole: cutting would drop the draft after the caret
@@ -701,10 +699,6 @@ export function Composer({
       caretRef.current = at;
       setText(value);
       setCaret(at);
-      requestAnimationFrame(() => {
-        const element = textareaRef.current;
-        if (element) element.selectionStart = element.selectionEnd = at;
-      });
     },
     onNote: setNote,
   });
@@ -845,8 +839,8 @@ export function Composer({
       setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
     };
     if (!composerDrafts.begin(draftKey, sent)) return;
-    // a polish landing before the acknowledgement would count as an edit and keep the sent message here
-    dictation.forget();
+    // Send contains only visible text and invalidates every pending dictation result first.
+    dictation.cancel();
     try {
       const result = onSend(sent, { comments: sentComments });
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return; }
@@ -855,7 +849,7 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [attachments, commentOwner, connected, dictation.forget, draftKey, onSend, outgoing, sending, text, uploading]);
+  }, [attachments, commentOwner, connected, dictation.cancel, draftKey, onSend, outgoing, sending, text, uploading]);
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
@@ -865,6 +859,7 @@ export function Composer({
       if (mounted.current && typeof result === "string") setNote(result);
     };
     if (!composerDrafts.begin(draftKey)) return;
+    dictation.cancel();
     try {
       const result = onSend(reply);
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return; }
@@ -873,7 +868,7 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [connected, draftKey, onSend, sending]);
+  }, [connected, dictation.cancel, draftKey, onSend, sending]);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1262,6 +1257,8 @@ export function Composer({
           that was the last comment and the bar is gone (not on a touch screen: no keyboard unasked) */}
       {editedComment && settings.comments && <CommentPopover
         key={editedComment.id}
+        owner={`${commentOwner}:${editedComment.id}`}
+        connected={connected}
         placement="dialog"
         quote={editedComment.quote !== undefined ? { text: editedComment.quote } : { block: editedComment.block }}
         comment={editedComment.comment}
@@ -1285,7 +1282,7 @@ export function Composer({
       {!shownNote && terminalOnly !== null && (
         <div className="composer-hint" role="status">{t("{command} opens a tree the chat cannot show. It runs in the terminal — tap the terminal button at the top of the screen to choose a branch.", { command: `/${terminalOnly}` })}</div>
       )}
-      {/* above the whole composer: inside the surface it would cover the text being dictated */}
+      {/* In flow, so status/recovery does not cover the draft or the mobile keyboard. */}
       {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
     </div>
   );

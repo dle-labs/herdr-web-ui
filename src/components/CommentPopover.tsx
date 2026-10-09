@@ -39,8 +39,11 @@ import type { PopoverPlacement } from "./CommentPins.tsx";
 import { FileReferenceLabel, type FileReference } from "./FileReference.tsx";
 import { MarkdownBlocks } from "./Markdown.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
+import { MicButton, VoiceRecordingPill } from "./VoiceInput.tsx";
 
 export interface CommentPopoverProps {
+  owner: string;
+  connected: boolean;
   placement: PopoverPlacement;
   quote: { text: string } | { block: MarkdownBlock };
   reference?: FileReference;
@@ -188,13 +191,13 @@ function Quote({ quote, reference }: Pick<CommentPopoverProps, "quote" | "refere
  * The popover of one opening: a new comment, or a saved one, to edit. A caller keys it by the opening
  * (`OpenComment.id`), so another comment opened is another popover.
  */
-export function CommentPopover({ placement, quote, reference, note, comment, startValue, onText, onSave, onDelete, onClose, opener, fallback }: CommentPopoverProps): JSX.Element {
+export function CommentPopover({ owner, connected, placement, quote, reference, note, comment, startValue, onText, onSave, onDelete, onClose, opener, fallback }: CommentPopoverProps): JSX.Element {
   const t = useT();
   const saved = comment !== "";
   const inline = placement === "popover";
   // decided as it opens: a saved comment tapped open on a touch screen raises no keyboard (`popoverFocusesField`)
   const [focusField] = useState(() => popoverFocusesField(saved, window.matchMedia("(pointer: coarse)").matches));
-  const draft = useCommentDraft(comment, onSave, onClose, { opener, fallback, inline, focusField, startValue, onText });
+  const draft = useCommentDraft(comment, onSave, onClose, { owner, connected, opener, fallback, inline, focusField, startValue, onText });
   const saveTitle = `${t("Save comment")} (${isMacPlatform() ? "⌘↵" : "Ctrl+Enter"})`;
   // beside its pin there is no ✕, as in Claude: Escape and a press outside close it while its text is unchanged. A
   // dialog, and a phone's sheet, keep ✕, the one visible way out where a keyboard covers the page; with a change typed
@@ -215,13 +218,16 @@ export function CommentPopover({ placement, quote, reference, note, comment, sta
       <CommentField draft={draft} />
       <div className="comment-popover-edit-footer">
         {/* always in view, never behind a menu: immediate, the focus handed on to the next pin as it closes (useCommentSurface.tsx) */}
-        {saved && <button type="button" className="icon-button comment-popover-delete" aria-label={t("Delete comment")} title={t("Delete comment")} onClick={onDelete}>
+        {saved && <button type="button" className="icon-button comment-popover-delete" aria-label={t("Delete comment")} title={t("Delete comment")} onClick={() => { draft.dictation.cancel(); onDelete(); }}>
           <Trash2 aria-hidden="true" />
         </button>}
+        {draft.dictation.shown && <MicButton dictation={draft.dictation} />}
         <button type="button" className="comment-popover-save" aria-label={t("Save comment")} title={saveTitle} disabled={!draft.canSave} onClick={draft.save}>
           <ArrowUp aria-hidden="true" />
         </button>
       </div>
+      {draft.note !== null && <p className="comment-dictation-note" role="alert">{draft.note}</p>}
+      {draft.dictation.shown && <VoiceRecordingPill dictation={draft.dictation} align="end" />}
     </div>
   </Frame>;
 }

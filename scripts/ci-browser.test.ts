@@ -47,6 +47,7 @@ describe("browser lane", () => {
     expect(rows(text)).toEqual([
       { script: "scripts/demo-build.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/ui-regression.ts", seconds: expect.any(Number), code: 0 },
+      { script: "scripts/dictation-regression.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/sticky-modifiers-regression.ts", seconds: expect.any(Number), code: 7 },
     ]);
     expect(text).not.toContain("STEP=scripts/key-bar-customization-demo-regression.ts");
@@ -56,7 +57,8 @@ describe("browser lane", () => {
   it("summarizes every script and exits zero on success without enabling local evidence", async () => {
     const { text, code, evidence } = await lane();
     expect(code).toBe(0);
-    expect(rows(text)).toHaveLength(21);
+    expect(rows(text)).toHaveLength(22);
+    expect(rows(text).map((row) => row.script)).toContain("scripts/dictation-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/file-viewer-comments-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/block-comments-regression.ts");
     expect(rows(text).every((row) => row.code === 0 && row.seconds >= 0)).toBe(true);

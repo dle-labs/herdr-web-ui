@@ -44,6 +44,15 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  * Legacy paths and missing machine IDs continue to mean local.
  */
 
+/** GET /api/dictation/config -> DictationConfigResponse, authenticated and no-store.
+ * Direct browser speech policy only; never calls herdr or the speech service.
+ * A policy change requires a page reload to receive matching CSP.
+ */
+export interface DictationConfigResponse {
+  enabled: boolean;
+  allowed_origins: string[];
+}
+
 /** HTTP API
  *  GET    /api/health                    -> { ok: true, herdr: HerdrIdentity (shared/machines.ts; terminal_attach false on a
  *                                          Windows herdr and on a bridge that cannot run the PTY sidecar; terminal_mirror: its

@@ -7,6 +7,8 @@
 
 import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { blockComments } from "./blockComments.ts";
+import { invalidateDictation } from "./voice.ts";
+import { DEFAULT_DICTATION_CONFIG, normalizeDictationBase, type DictationConfig } from "./voiceTransport.ts";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
@@ -31,8 +33,7 @@ export type Palette = "amber" | "report" | "charcoal" | "catppuccin" | "lilac";
  *  narrow: 820px; default: follows the pane, up to 60rem (chatLaneWidth); wide: 72rem; full: the pane, less the gutters */
 export type ChatWidth = "narrow" | "default" | "wide" | "full";
 export const CHAT_WIDTHS: readonly ChatWidth[] = ["narrow", "default", "wide", "full"];
-/** the microphone button. auto: in the chat composer off a phone, and only where dictation can work;
- *  on: there, on a phone and in the terminal input line, disabled with its reason where it cannot work; off: nowhere */
+/** Auto: available draft surfaces; On: also show unavailable controls with a reason; Off: nowhere. */
 export type VoiceButton = "auto" | "on" | "off";
 export const VOICE_BUTTONS: readonly VoiceButton[] = ["auto", "on", "off"];
 /** the lens a pane opens in until it is switched there: auto is chat for an agent on a touch screen, else terminal */
@@ -113,9 +114,8 @@ export interface Settings {
   usageHidden: string[];
   /** the microphone button in the composer and the terminal input line; nothing is recorded until it is pressed */
   voiceInput: VoiceButton;
-  voicePolishChat: boolean;
-  /** off by default: a terminal line is usually a command, kept as spoken */
-  voicePolishTerminal: boolean;
+  /** Non-secret direct speech configuration; presets require explicit Apply before use. */
+  dictation: DictationConfig;
   /** the file viewer wraps long lines instead of scrolling sideways */
   wrapCode: boolean;
   /** code in the chat and the file viewer is colored by syntax; off, it is plain text */
@@ -165,8 +165,7 @@ export const DEFAULT_SETTINGS: Settings = {
   usageOrder: [],
   usageHidden: [],
   voiceInput: "auto",
-  voicePolishChat: true,
-  voicePolishTerminal: false,
+  dictation: { ...DEFAULT_DICTATION_CONFIG },
   wrapCode: false,
   highlightCode: true,
   markdownWidth: "readable",
@@ -187,14 +186,32 @@ export const QUICK_REPLY_MAX_CHARS = 200;
  * A record from before the button had a place of its own holds a boolean: on stays on. Its off
  * was also what a device that never chose held, so it follows the default.
  */
-function voiceButton(value: unknown): VoiceButton {
+export function voiceButton(value: unknown): VoiceButton {
   if (value === true) return "on";
   return VOICE_BUTTONS.includes(value as VoiceButton) ? value as VoiceButton : DEFAULT_SETTINGS.voiceInput;
 }
 
-/** Whether an input asks for dictation at all: auto leaves the terminal input line and a phone's composer alone. */
-export function wantsVoiceInput(setting: VoiceButton, mode: "chat" | "terminal", phone: boolean): boolean {
-  return setting === "on" || (setting === "auto" && mode === "chat" && !phone);
+/** Runtime activation, policy and browser capability are checked by the dictation engine. */
+export function wantsVoiceInput(setting: VoiceButton, _mode: "chat" | "terminal" | "comment", _phone?: boolean): boolean {
+  return setting !== "off";
+}
+
+export const DICTATION_BASE_MAX_CHARS = 2048;
+export const DICTATION_MODEL_MAX_CHARS = 512;
+
+/** Pure migration: stale polish/key fields are ignored and malformed records cannot activate a preset. */
+export function sanitizeDictation(value: unknown): DictationConfig {
+  const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+  const rawBase = record["baseUrl"];
+  const rawModel = record["model"];
+  const normalized = typeof rawBase === "string" && rawBase.length <= DICTATION_BASE_MAX_CHARS ? normalizeDictationBase(rawBase) : null;
+  const base = normalized !== null && normalized.length <= DICTATION_BASE_MAX_CHARS ? normalized : null;
+  const model = typeof rawModel === "string" && rawModel.length <= DICTATION_MODEL_MAX_CHARS && !/[\u0000-\u001f\u007f]/.test(rawModel) ? rawModel.trim() : "";
+  return {
+    baseUrl: base ?? DEFAULT_DICTATION_CONFIG.baseUrl,
+    model: model || DEFAULT_DICTATION_CONFIG.model,
+    activated: record["activated"] === true && base !== null && model.length > 0,
+  };
 }
 
 /** The replies worth a button: what the list holds, without the blank ones still being written. */
@@ -324,8 +341,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     usageOrder: usageKeys(record["usageOrder"]),
     usageHidden: usageKeys(record["usageHidden"]),
     voiceInput: voiceButton(record["voiceInput"]),
-    voicePolishChat: typeof record["voicePolishChat"] === "boolean" ? record["voicePolishChat"] : DEFAULT_SETTINGS.voicePolishChat,
-    voicePolishTerminal: typeof record["voicePolishTerminal"] === "boolean" ? record["voicePolishTerminal"] : DEFAULT_SETTINGS.voicePolishTerminal,
+    dictation: sanitizeDictation(record["dictation"]),
     wrapCode: typeof record["wrapCode"] === "boolean" ? record["wrapCode"] : DEFAULT_SETTINGS.wrapCode,
     highlightCode: typeof record["highlightCode"] === "boolean" ? record["highlightCode"] : DEFAULT_SETTINGS.highlightCode,
     markdownWidth: MARKDOWN_WIDTHS.find((width) => width === record["markdownWidth"]) ?? DEFAULT_SETTINGS.markdownWidth,
@@ -459,6 +475,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [settings, resolvedTheme, resolvedLanguage]);
 
   const update = useCallback((patch: Partial<Settings>) => {
+    // Event-time invalidation, never a React updater side effect: late takes lose authority immediately.
+    if (Object.hasOwn(patch, "dictation") || Object.hasOwn(patch, "voiceInput")) invalidateDictation();
     setSettings((current) => {
       const next = sanitizeSettings({ ...current, ...patch });
       saveSettings(next);
