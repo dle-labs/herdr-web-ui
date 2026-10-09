@@ -124,6 +124,13 @@ describe("outgoingMessage", () => {
     expect(outgoingMessage([a], "1", { answering: true, agent: false }).commentsHeld).toBe("no-agent");
     expect(outgoingMessage([], "ls", { agent: false }).commentsHeld).toBe(null);
   });
+  it("sends a comment longer than 2,000 characters without truncating it", () => {
+    const long = { ...a, comment: "x".repeat(5_000) };
+    const out = outgoingMessage([long], "draft");
+    expect(out.message).toContain(long.comment);
+    expect(out.tooLong).toBe(false);
+    expect(out.sendable).toBe(true);
+  });
   it("refuses a message over the composer limit", () => {
     const long = { ...a, comment: "x".repeat(20_000) };
     const out = outgoingMessage([long], "");
