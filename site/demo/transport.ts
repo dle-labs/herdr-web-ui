@@ -12,7 +12,7 @@
  * one notice instead of a TUI. A message sent from a chat gets a demo answer.
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
-import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionResult, PluginActions, PluginActionsResponse, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { DictationConfigResponse, AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionResult, PluginActions, PluginActionsResponse, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
@@ -1041,7 +1041,9 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     structureChanged();
     return json({ workspace_id: id, pane_id: pane.pane_id, agent_started: agent !== null } satisfies WorkspaceCreated);
   }
-  // no key in the demo: the app falls back to the browser's own speech recognition
+  // Never activate direct speech, even when this browser has persisted an applied endpoint.
+  if (path === "/api/dictation/config") return json({ enabled: false, allowed_origins: [] } satisfies DictationConfigResponse, 200, { "cache-control": "no-store" });
+  // Legacy compatibility only; no speech transport is available in the demo.
   if (path === "/api/voice") return json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus, 200, { "cache-control": "no-store" });
   if (path === "/api/voice/config") return error("demo", "the demo saves no OpenAI key", 409);
   if (path === "/api/voice/transcribe") return error("voice_not_configured", "transcription is unavailable in the demo", 409);
@@ -1052,8 +1054,15 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
 const realFetch = window.fetch.bind(window);
 window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
-  if (!url.pathname.startsWith("/api/")) return realFetch(input, init);
+  // Defense in depth: never let stale settings or model checks reach a private origin.
+  if (url.origin !== location.origin) return Promise.reject(new TypeError("External requests are unavailable in the demo"));
   const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  if (!url.pathname.startsWith("/api/")) {
+    if (method.toUpperCase() !== "GET" || /\/(?:models|audio\/transcriptions)\/?$/.test(url.pathname)) {
+      return Promise.reject(new TypeError("Direct speech requests are unavailable in the demo"));
+    }
+    return realFetch(input, init);
+  }
   return route(url, method.toUpperCase(), init, input);
 }) as typeof window.fetch;
 
@@ -1078,6 +1087,7 @@ class DemoEventSource extends EventTarget {
 }
 window.EventSource = function (url: string | URL, init?: EventSourceInit) {
   const target = new URL(String(url), location.href);
+  if (target.origin !== location.origin) throw new DOMException("External streams are unavailable in the demo", "SecurityError");
   return target.pathname === "/api/machines/events" ? (new DemoEventSource(target.href) as unknown as EventSource) : new RealEventSource(url, init);
 } as unknown as typeof EventSource;
 
@@ -1482,7 +1492,12 @@ class DemoSocket extends EventTarget {
 const RealWebSocket = window.WebSocket;
 window.WebSocket = function (url: string | URL, protocols?: string | string[]) {
   const target = new URL(String(url), location.href);
-  return target.pathname === "/ws" ? (new DemoSocket(target.href) as unknown as WebSocket) : new RealWebSocket(url, protocols);
+  const page = new URL(location.href);
+  page.protocol = page.protocol === "https:" ? "wss:" : "ws:";
+  if (target.origin !== page.origin || target.pathname !== "/ws") {
+    throw new DOMException("Direct speech sockets are unavailable in the demo", "SecurityError");
+  }
+  return new DemoSocket(target.href) as unknown as WebSocket;
 } as unknown as typeof WebSocket;
 for (const name of ["CONNECTING", "OPEN", "CLOSING", "CLOSED"] as const) Object.defineProperty(window.WebSocket, name, { value: RealWebSocket[name] });
 

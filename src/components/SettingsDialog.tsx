@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { ArrowLeft, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FileText, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
@@ -9,8 +9,8 @@ import { hasChangedComment, hasCommentDialog } from "../lib/commentDom.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, formatKeys, isMacPlatform, shortcutDisplayKeys, shortcutKeys, shortcutConflict } from "../lib/shortcuts.ts";
 import { isReservedShortcutKey } from "../lib/shortcutBindings.ts";
-import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
-import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, useSettings, forgetPaneViews } from "../lib/settings.ts";
+import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
@@ -19,13 +19,12 @@ import { Segmented, SettingsGroup, SettingsRow, Stepper, Toggle } from "./Settin
 import { FONT_FAMILY_MAX_CHARS, sanitizeFontFamily } from "../lib/fontFamily.ts";
 import type { UpdatesModel } from "../lib/updates.ts";
 import type { MachineSettings } from "../../shared/machines.ts";
-import { fetchRemoteAccess, fetchVoiceStatus, machineRequest, saveVoiceConfig } from "../lib/api.ts";
+import { fetchRemoteAccess, machineRequest } from "../lib/api.ts";
 import { isLoopbackHost, phonePlan } from "../lib/phone.ts";
 import type { AgentIntegration, HealthAuth, PluginActions, ProviderUsage, RemoteAccess } from "../../shared/protocol.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { loadIntegrations, outcomeFor, type IntegrationsResult } from "../lib/integrations.ts";
-import type { VoiceStatus } from "../../shared/voice.ts";
-import { dictationLocale, VOICE_CONFIG_EVENT } from "../lib/voice.ts";
+import { DictationSettings } from "./DictationSettings.tsx";
 import { moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, usageName, useUsage } from "../lib/usage.ts";
 import { AgentMark } from "./AgentMark.tsx";
 import { DevicesPanel } from "./DevicesPanel.tsx";
@@ -364,118 +363,6 @@ function AlertsPage({ onEnableNotifications }: { onEnableNotifications: () => Pr
   );
 }
 
-/** A language tag's name in the UI language (`hu-HU` is "Hungarian (Hungary)"), or the tag where the browser cannot name it. */
-function languageName(names: Intl.DisplayNames | null, tag: string): string {
-  try { return names?.of(tag) ?? tag; } catch { return tag; }
-}
-
-function DictationLanguageSelect() {
-  const { settings, resolvedLanguage, update } = useSettings();
-  const t = useT();
-  const locale = useLocale();
-  const names = useMemo(() => { try { return new Intl.DisplayNames([locale], { type: "language" }); } catch { return null; } }, [locale]);
-  const auto = languageName(names, dictationLocale("auto", settings.language, resolvedLanguage, navigator.languages));
-  const choices = useMemo(() => DICTATION_LANGUAGES.map((tag) => ({ tag, name: languageName(names, tag) })).sort((a, b) => a.name.localeCompare(b.name, locale)), [names, locale]);
-  return (
-    <select id="settings-voice-language" className="select settings-select" value={settings.voiceLanguage} onChange={(event) => update({ voiceLanguage: event.target.value as DictationLanguage })}>
-      <option value="auto">{t("Auto ({language})", { language: auto })}</option>
-      {choices.map(({ tag, name }) => <option key={tag} value={tag}>{name}</option>)}
-    </select>
-  );
-}
-
-function VoicePage() {
-  const { settings, update } = useSettings();
-  const t = useT();
-  // the server only says whether it holds a key; the key typed here is never kept past a save
-  const [voice, setVoice] = useState<VoiceStatus | null>(null);
-  const [voiceKey, setVoiceKey] = useState("");
-  const [voiceBusy, setVoiceBusy] = useState(false);
-  const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [micDenied, setMicDenied] = useState(false);
-  useEffect(() => { fetchVoiceStatus().then(setVoice, () => setVoice(null)); }, []);
-  /** On asks now, so the first dictation does not stop at the browser's permission prompt */
-  const chooseVoiceInput = async (voiceInput: VoiceButton) => {
-    update({ voiceInput });
-    setMicDenied(false);
-    if (voiceInput !== "on" || !window.isSecureContext || !navigator.mediaDevices?.getUserMedia) return;
-    try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach((track) => track.stop()); }
-    catch { setMicDenied(true); }
-  };
-  const changeVoiceKey = async (api_key: string | null) => {
-    setVoiceBusy(true);
-    try {
-      // the save answers the new status itself: no second request that could fail after it
-      const saved = await saveVoiceConfig({ api_key });
-      setVoiceKey("");
-      setVoiceError(null);
-      setVoice(saved);
-      window.dispatchEvent(new Event(VOICE_CONFIG_EVENT));
-    } catch (e) { setVoiceError(e instanceof Error ? e.message : String(e)); }
-    finally { setVoiceBusy(false); }
-  };
-  const micProblem = settings.voiceInput === "off" ? null : !window.isSecureContext ? t("Voice input needs HTTPS") : micDenied ? t("Microphone permission was denied") : null;
-  return (
-    <>
-      <SettingsGroup>
-        <SettingsRow label={t("Microphone button")} description={<>{t("Auto: in the chat on a desktop, where dictation can work. On: on a phone and in the terminal input line too.")}{micProblem !== null && <span className="voice-error">{micProblem}</span>}</>} wide>
-          <Segmented label={t("Microphone button")} value={settings.voiceInput} onChange={(voiceInput) => void chooseVoiceInput(voiceInput)} options={VOICE_BUTTONS.map((voiceInput) => ({ value: voiceInput, label: t(voiceInput === "auto" ? "Auto" : voiceInput === "on" ? "On" : "Off") }))} />
-        </SettingsRow>
-        {settings.voiceInput !== "off" && (
-          <SettingsRow label={t("Dictation language")} description={t("Auto listens for the app's language, or for the browser's when the app is not translated into it")} htmlFor="settings-voice-language">
-            <DictationLanguageSelect />
-          </SettingsRow>
-        )}
-      </SettingsGroup>
-
-      {settings.voiceInput !== "off" && (
-        <SettingsGroup title={t("Tidy dictated text")}>
-          <SettingsRow label={t("In chat")} description={t("Drops fillers and fixes spacing; code and paths stay as spoken")}>
-            <Toggle label={t("Tidy dictated text in chat")} checked={settings.voicePolishChat} onChange={(voicePolishChat) => update({ voicePolishChat })} />
-          </SettingsRow>
-          <SettingsRow label={t("In the terminal")} description={t("Off keeps a command exactly as transcribed")}>
-            <Toggle label={t("Tidy dictated text in the terminal")} checked={settings.voicePolishTerminal} onChange={(voicePolishTerminal) => update({ voicePolishTerminal })} />
-          </SettingsRow>
-        </SettingsGroup>
-      )}
-
-      <SettingsGroup title={t("OpenAI API key")}>
-        <div className="settings-item">
-          {voice && (
-            <p className="settings-label voice-status">
-              {voice.configured ? t(voice.source === "env" ? "OpenAI key set by HERDR_WEB_OPENAI_API_KEY" : "OpenAI key saved on this PC") : t("No OpenAI key: the browser's speech recognition is used")}
-            </p>
-          )}
-          {voice && voice.source !== "env" && (
-            <form className="voice-key" onSubmit={(event) => { event.preventDefault(); if (voiceKey.trim()) void changeVoiceKey(voiceKey.trim()); }}>
-              <input
-                className="input voice-key-input"
-                type="password"
-                value={voiceKey}
-                placeholder="sk-..."
-                aria-label={t("OpenAI API key")}
-                autoComplete="off"
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                onChange={(event) => setVoiceKey(event.target.value)}
-              />
-              <button type="submit" className="btn voice-key-save" disabled={voiceBusy || !voiceKey.trim()}>{t("Save key")}</button>
-              <button type="button" className="btn btn-ghost voice-key-remove" disabled={voiceBusy || !voice.configured} onClick={() => void changeVoiceKey(null)}>{t("Remove key")}</button>
-            </form>
-          )}
-          {voiceError && <p className="settings-hint voice-error" role="alert">{voiceError}</p>}
-          <p className="settings-hint voice-privacy">
-            {voice && !voice.configured
-              ? t("Without a key the browser recognizes the speech: Chrome and Edge send the audio to Google or Microsoft. Nothing is recorded until you press the mic.")
-              : t("Audio is sent to OpenAI with your key. Nothing is recorded until you press the mic.")}
-          </p>
-        </div>
-      </SettingsGroup>
-    </>
-  );
-}
-
 /**
  * The accounts the plan meters know, in the strip's order: each row names the account and
  * carries its move up / move down and show / hide controls.
@@ -789,7 +676,7 @@ function OpenSettingsDialog({ section = null, onClose, actions, updates, auth, h
   // dialogs' own layer: raised over it, as over a preview. Read once, as it opens: it is mounted per opening
   const [overComment] = useState(() => hasCommentDialog(document));
   const shown = useRef<{ page: SettingsPage | null; keyBar: boolean } | null>(null);
-  const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "files" ? "File viewer" : id === "alerts" ? "Alerts" : id === "voice" ? "Voice input"
+  const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "files" ? "File viewer" : id === "alerts" ? "Alerts" : id === "voice" ? "Dictation"
     : id === "usage" ? "Subscription usage" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Phone & devices" : id === "remote" ? "Remote PCs" : id === "integrations" ? "Agent integrations" : "About");
   const openPage = (id: SettingsPage): void => { setKeyBarOpen(false); setChosen(id); };
   const openKeyBar = (): void => {
@@ -864,7 +751,7 @@ function OpenSettingsDialog({ section = null, onClose, actions, updates, auth, h
       case "terminal": return <TerminalPage keyBarButtonRef={keyBarButtonRef} onEditKeyBar={openKeyBar} />;
       case "files": return <FileViewerPage />;
       case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} />;
-      case "voice": return <VoicePage />;
+      case "voice": return <DictationSettings />;
       case "usage": return <UsagePage />;
       case "shortcuts": return <ShortcutsPage />;
       case "devices": return <DevicesPage auth={auth} />;

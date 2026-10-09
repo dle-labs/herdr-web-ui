@@ -192,7 +192,7 @@ Background tasks have a button by the message box, with a count while some run: 
 | **Follow every agent** | Live RUN / INPUT / DONE / READY status for all panes, and alerts when an agent needs input, finishes or its terminal ends. |
 | **Open what agents make** | A file path in an answer opens in a viewer (images, video, audio, PDF, text), or find it with **Browse files**, and download it to your phone. |
 | **Manage sessions** | Start an agent in a folder you type or pick with **Browse**. In New workspace, Browse filters the currently loaded folders as you type (case-insensitive); open a result, then choose **Use this folder**. It does not search subfolders or folders beyond the displayed 500. Add a tab to a workspace (as herdr's prefix+c), switch tabs from the strip over the pane, rename workspaces from their ⋯/right-click menu and panes from their own menu, move a pane through header More → Move pane to…, reorder workspaces (drag a row, or on a phone long-press it and drag; Alt+Up/Down moves a focused row one step), and jump anywhere from the command palette. |
-| **Speak instead of typing** | A mic beside Attach in the composer and beside Send in the terminal input line. Hold to talk or tap twice; the words land at the caret and are never sent by themselves. See [Voice input](#voice-input). |
+| **Speak instead of typing** | One mic in chat, terminal lines and comment editors, on desktop and mobile. Tap to start, tap to finish; English words become editable draft text, never an automatic Send or Save. See [Voice input](#voice-input). |
 | **Watch your plan limits** | Beside Settings, how much of each AI subscription signed in on the PC is used, or what is left: the week's or the session's limit per account, and every limit with its reset time on a tap. See [Subscription usage](#subscription-usage). |
 | **Make it yours** | English, Korean, Japanese or Simplified Chinese, following the browser or chosen in Settings. Dark, light or system theme, compact density, terminal and chat font sizes, a resizable composer, Enter behavior and thinking visibility. |
 
@@ -240,15 +240,25 @@ Only providers with a sign-in are shown; a GitHub account without Copilot is lef
 
 ## Voice input
 
-Turn it on in **Settings → Voice input**, then hold the mic beside Attach (chat) or Send (the terminal input line) and speak, or tap it once to start and again to finish. A pill above the box shows that it is recording, with the level of your voice and a timer; Esc or ✕ cancels. On a desktop, hold Ctrl+Shift+Space (Cmd+Shift+Space on a Mac). The text goes in at the caret and is never sent by itself, so you can read it first.
+**Settings → Dictation** configures direct, self-hosted **English** transcription. The browser sends a completed recording directly to your speech server; herdr never relays the audio. There is no OpenAI-key setup, browser-vendor fallback or text-polishing request. Live microphone streaming is not enabled yet.
 
-- **With an OpenAI API key** (recommended for Korean, Japanese and Chinese mixed with code terms): paste it under **OpenAI API key** in the same section, or set `HERDR_WEB_OPENAI_API_KEY` for the server. The server sends each recording to `gpt-transcribe` with the dictation language and English, and the pane's slash commands as hints. In chat, a second call tidies the text (fillers, spacing) and leaves code, paths and flags as you said them; the terminal keeps the words as transcribed unless you turn tidying on there.
-- **Dictation language** (same section) is the language you speak. Auto listens for the app's language. While the app's language follows the browser and the browser's first language is one the app is not translated into (Hungarian, German, …), Auto listens for that one instead, so you are not heard as English. Pick another from the list when you dictate in a language your browser does not put first.
-  Auto uses browser language tags with a two-letter primary code, which both recognition paths accept. Other tags use the app's language, shown in the Auto label.
-- **Without a key**, the browser recognizes the speech itself. Chrome and Edge send the audio to Google or Microsoft for that; Safari uses Apple's.
-- **The key stays on the server.** It is kept in `voice.json` under `HERDR_WEB_STATE_DIR` (readable by your user only) and never sent to a browser. Every device that can type into your terminals (your own Tailscale login, a paired device, the token) dictates with it, and the use is billed to that key. A device paired to watch only can neither dictate nor change the key.
-- **Silence is not sent.** The recorder runs only while it hears speech, so the pauses before, between and after your words are neither uploaded nor billed. A recording with no speech is not sent at all.
-- Recording needs HTTPS (or `localhost`): the mic is turned off on a plain `http://` LAN address. To use another OpenAI-compatible server, set `HERDR_WEB_OPENAI_BASE_URL`; a key from `HERDR_WEB_OPENAI_API_KEY` is only ever sent there or to OpenAI.
+1. The administrator must allow the speech origin before starting the herdr web server:
+   ```bash
+   export HERDR_WEB_DICTATION_ORIGINS='["https://stt.intra.dle.dev"]'
+   ```
+   This is a JSON array of exact HTTPS origins, without paths, credentials, query strings or fragments. Empty means unavailable. Restart the server and reload the page after policy changes. A reverse proxy's stricter CSP still applies; policies intersect.
+2. Serve the app over HTTPS (localhost is also a secure context). Connect the browser device to NetBird, configure Speaches CORS for the **exact app origin**, and have the proxy forward requests. Allowing an origin in herdr's CSP does not configure speech-server CORS or grant VPN access.
+3. In Dictation, apply the HTTPS API base `https://stt.intra.dle.dev/v1` and model `distil-whisper/distil-large-v3.5-ct2`, or another installed model ID. These presets are not activated until **Apply**. Settings edits do not retarget an existing take.
+4. **Refresh models** and **Check connection** are explicit read-only requests to the applied endpoint. They are disabled while a different URL is unsaved. Choosing a listed model edits the settings draft; Apply commits it. A reachable service or listed model is not verified inference: the first actual take may load the model. Checks do not download/load models or send sample audio.
+
+Tap the mic once to start and again to finish. `Mod+Shift+Space` toggles the active draft's mic; Escape or Cancel cancels. The same controls serve desktop/mobile chat, the terminal input line, new and saved reply comments, and file comments. Nothing opens the keyboard just to record. **Auto** shows controls when the applied configuration, server policy and browser support allow recording; **On** also shows unavailable controls with a reason. **Off** hides them without hiding Settings. Secret/password fields never have a dictation control.
+
+- Text is inserted only if the original draft and selection are unchanged. Otherwise, review the owner-scoped result and choose **Insert at cursor** or **Discard**. It is not stored or transferred to another pane. Send, comment Save/Delete, close, settings changes and disabling cancel pending results; dictated text never sends, saves, or presses terminal Enter by itself.
+- Switching apps, locking the phone, hiding the page or losing the connection cancels the take without uploading. The mic is released after capture, not kept warm. Audio is never automatically retried or replayed. Cancelling an upload cannot guarantee cancellation of inference already running on the server.
+- Recordings are limited to 120 seconds and 10 MiB. WebM/Opus or MP4/AAC is selected according to browser support. One take owns the tab's mic through transcription; where Web Locks is supported, same-origin tabs also exclude each other. Without Web Locks only per-tab exclusion is available.
+- The public demo disables direct speech access even if this browser remembers an activated endpoint. The legacy `/api/voice*` backend and its server credentials remain compatibility-only; this UI neither uses nor deletes them.
+
+Real Android Chrome and iOS Safari recording, permission/background behavior and your deployed NetBird/CORS setup require device validation; desktop emulation is not a substitute.
 
 ## On your phone
 
@@ -430,8 +440,9 @@ Observe connections cannot take a pane, and a displaced bridge never takes it ba
 | `HERDR_WEB_TAILSCALE_OWNER` | this PC's Tailscale login | The Tailscale login that gets in through `tailscale serve` without pairing. Set it on a PC whose Tailscale node is tagged, which has no login of its own |
 | `HERDR_WEB_TAILSCALE_SERVE_ONLY` | unset (off) | `1` declares `tailscale serve` the only way anything reaches this port. Then the owner's own device gets in through serve without a code, on a tailnet one login owns with no tagged node. Enable it only when no public reverse proxy, tunnel or other forwarding server exposes this port: a visitor through one would otherwise get the owner's access |
 | `HERDR_WEB_STATE_DIR` | `~/.config/herdr-web-ui` | Push keys, device subscriptions, PC registrations and update builds |
-| `HERDR_WEB_OPENAI_API_KEY` | unset | OpenAI API key for [voice input](#voice-input). Set here, it cannot be changed from the app |
-| `HERDR_WEB_OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API root for voice input |
+| `HERDR_WEB_DICTATION_ORIGINS` | `[]` | Exact HTTPS speech-origin allowlist (JSON array) for direct [dictation](#voice-input); restart and reload after changes |
+| `HERDR_WEB_OPENAI_API_KEY` | unset | Compatibility-only legacy `/api/voice*` key; not used by Dictation |
+| `HERDR_WEB_OPENAI_BASE_URL` | `https://api.openai.com/v1` | Compatibility-only legacy voice API root; not used by Dictation |
 | `HERDR_WEB_AUTO_UPDATE` | `0` | `1` installs new releases without asking |
 | `HERDR_WEB_TELEMETRY` | unset (on) | `0` sends no [anonymous usage counts](#anonymous-usage-counts), whatever the switch in Settings says. `DO_NOT_TRACK=1` does the same |
 | `HERDR_WEB_PUSH_SUBJECT` | this repository's URL | VAPID contact URL or `mailto:` address |
@@ -482,7 +493,7 @@ A message holds the event (`install` or `update`), a random ID made on this PC, 
 
 **Settings → Shortcuts** changes the final key of each app binding or turns it off. Settings
 are saved in this browser, not on the remote PC. The command palette shows the current bindings
-and omits disabled ones. Reset shortcuts restores the defaults. Hold-to-dictate
+and omits disabled ones. Reset shortcuts restores the defaults. Toggle dictation
 (`Mod+Shift+Space`) remains fixed.
 
 Known browser/OS reservations are marked, but other combinations can also be intercepted by
@@ -555,7 +566,7 @@ No, but a phone needs two things Tailscale gives at once: a way to reach the PC 
 Session files stay on the PC running each agent, and their contents are sent to browsers connected to the app. herdr web ui has no hosted relay or account service of its own. The agents' own connections to model providers depend on their configuration.
 
 Optional features can send data off the PC:
-- [Voice input](#voice-input) sends recordings to the configured transcription provider; polishing also sends the transcribed text. Without a configured API key, browser speech recognition may use the browser vendor's service.
+- [Dictation](#voice-input) sends completed recordings directly from your browser to the explicitly configured speech server. There is no herdr audio relay, browser-vendor fallback or polishing service.
 - [Subscription usage](#subscription-usage), when enabled, sends each provider's credentials to that provider's usage endpoint.
 - Updates and remote-PC setup fetch releases or configured runtime bundles over the network; remote panes are reached over SSH.
 - Enabled push alerts go through the browser vendor's push service as encrypted notifications.

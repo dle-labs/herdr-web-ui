@@ -1404,14 +1404,18 @@ One set for both themes: the card is island black wherever it shows.
   schedules a pending message; its Send now action submits that same message now.
 
 ### Voice input
-- A mic button sits beside the add button in the composer and beside Send in the terminal input line; it
-  fills with `--accent` while recording. Dictated text is inserted at the caret, never sent.
-- `voiceInput`: `auto`, `on` or `off`; default `auto`. Auto puts the mic in the composer only, not on
-  a phone (the composer's `(max-width: 640px), (pointer: coarse)`), and leaves it out where dictation
-  cannot work (no HTTPS, or no key and no browser recognition). On shows it in both inputs and on a
-  phone, disabled with its reason where it cannot work.
-- The recording pill shows Cancel, a **Recording** label, the level bars, a mono timer and Done.
-  Amber only; `--danger` stays for errors.
+- One microphone control family serves chat, terminal lines and reply/file comment editors, including
+  saved comments and mobile sheets. Tap Start/Finish or use Mod+Shift+Space. Text edits drafts only,
+  never sends, saves or executes a terminal command. Secret fields have no microphone.
+- `voiceInput`: `auto`, `on` or `off`; default `auto`. Auto shows controls after explicit configuration
+  activation when browser capture and server-origin policy allow it, including on phones. On also
+  shows unavailable controls disabled with a reason. Off hides them; Settings stays accessible.
+- Dictation settings explicitly applies a HTTPS speech URL and model. Recognition is English;
+  recording is uploaded directly on Finish, with no vendor fallback or polishing. Live streaming is gated.
+- The in-flow, wrapping status row shows Cancel, status, level bars and a mono timer. It does not
+  float over the draft or extend beyond narrow popovers. Changed drafts/selections get an owner-scoped
+  transcript with Insert at cursor / Discard. Error text uses `role="alert"`; status uses `role="status"`.
+  Accent only while recording; danger tokens stay for errors. Touch controls use `--touch-target`.
 
 ### Command palette
 - `Mod+Shift+K` opens a top-offset `--palette-w` dialog searching panes across all connected PCs
@@ -1481,7 +1485,7 @@ One set for both themes: the card is island black wherever it shows.
   then **Composer**: Enter sends, suggestion chip; then **Quick replies**), **Terminal** (font size
   and family, wheel speed, input mode, Key bar, clipboard, use alongside herdr's own window),
   **File viewer** (wrap long lines, highlight code, Markdown width),
-  **Alerts**, **Voice input**, **Subscription usage**,
+  **Alerts**, **Dictation**, **Subscription usage**,
   **Shortcuts** (the platform-resolved global bindings), **Phone & devices** (the phone address,
   Keep screen on, Install; then paired devices), **Remote PCs**, **Agent integrations**, **About** (Updates, herdr,
   the repository links). A button that points at Updates opens the dialog on About.

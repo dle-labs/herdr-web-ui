@@ -178,8 +178,8 @@ try {
   assert.equal(await composer.getAttribute("autocorrect"), null, "the message box leaves autocorrect to the keyboard");
   assert.equal(await composer.getAttribute("spellcheck"), null, "the message box leaves spell checking to the browser");
   assert.equal(await composer.getAttribute("autocapitalize"), "sentences", "the message box capitalizes sentences");
-  await page.locator(".composer .voice-mic").waitFor();
-  console.log("PASS a desktop's chat offers the mic before Settings is asked");
+  assert.equal(await page.locator(".composer .voice-mic").count(), 0, "Auto hides dictation until configuration and administrator policy allow it");
+  console.log("PASS unactivated dictation is hidden on desktop");
   assert.equal(await workspaceHeader(workspaces[0]!).locator(".workspace-name").textContent(), "herdr-web-ui-test-browser-a",
     "Spaces names the workspace rather than its current pane");
   assert.equal(await workspaceGroup(workspaces[0]!).locator(".pane-select").count(), 1, "a workspace has one representative selector");
@@ -1764,7 +1764,7 @@ try {
   await mobilePage.route(promptRoute, (route) => route.fulfill(suggest));
   await mobileComposer.fill("");
   await until(async () => await mobileComposer.getAttribute("placeholder") === "run the tests", "a phone shows the suggestion as the placeholder");
-  assert.equal(await mobilePage.locator(".voice-mic").count(), 0, "a phone's chat has no mic until Settings asks for it");
+  assert.equal(await mobilePage.locator(".voice-mic").count(), 0, "unactivated dictation is hidden on phones");
   await mobilePage.getByTitle("Use the suggestion", { exact: true }).click();
   assert.equal(await mobileComposer.inputValue(), "run the tests", "the chip puts the suggestion in the box");
   await mobilePage.unroute(promptRoute);

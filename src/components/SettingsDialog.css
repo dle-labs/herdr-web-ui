@@ -184,24 +184,6 @@
   min-width: 0;
 }
 
-/* Voice input: the key field and its buttons share a row, the notes stay dim */
-.voice-key {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  align-items: center;
-}
-
-.voice-key-input {
-  flex: 1 1 12rem;
-  min-width: 0;
-}
-
-.voice-error {
-  display: block;
-  color: var(--danger-text);
-}
-
 /* Subscription usage: a row per account: mark, name, account, then move and show */
 .usage-accounts ol {
   margin: 0;
@@ -330,10 +312,6 @@
     width: 100%;
   }
 
-  /* the key takes the line; Save and Remove share the next one */
-  .voice-key-input {
-    flex-basis: 100%;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

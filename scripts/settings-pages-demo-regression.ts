@@ -13,8 +13,10 @@ import { ZH } from "../src/lib/i18n.zh.ts";
 // the browser's Back button steps out of the dialog instead of out of the app. All files and
 // HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
-const PAGES = ["Appearance", "Chat", "Terminal", "File viewer", "Alerts", "Voice input", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "Agent integrations", "About"];
-const SETTINGS = { language: "en", showUsage: true, voiceInput: true, showQuickReplies: true };
+const PAGES = ["Appearance", "Chat", "Terminal", "File viewer", "Alerts", "Dictation", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "Agent integrations", "About"];
+// Persisted activation must never enable private speech traffic in the public demo.
+const PRIVATE_SPEECH = "https://dictation-private.invalid";
+const SETTINGS = { language: "en", showUsage: true, voiceInput: "on", showQuickReplies: true, dictation: { baseUrl: `${PRIVATE_SPEECH}/v1`, model: "test/installed-english", activated: true } };
 
 const dialogOf = (page: Page) => page.getByRole("dialog", { name: "Settings", exact: true });
 const openSettings = async (page: Page): Promise<void> => {
@@ -67,6 +69,11 @@ try {
         try {
           await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(url).origin });
           await context.addInitScript((settings) => { if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", settings); }, JSON.stringify({ ...SETTINGS, language }));
+          const privateRequests: string[] = [];
+          await context.route(`${PRIVATE_SPEECH}/**`, (route) => {
+            privateRequests.push(route.request().url());
+            return route.abort();
+          });
           const page = await context.newPage();
           const errors: string[] = [];
           page.on("pageerror", (error) => errors.push(error.message));
@@ -90,15 +97,12 @@ try {
             await page.waitForFunction((loading) => ![...document.querySelectorAll(".settings-body [role='status']")].some((node) => loading.includes(node.textContent?.trim() ?? "")),
               [label("Loading…"), label("Asking this PC about Tailscale…")]);
             if (name === "Subscription usage") await page.locator(".usage-accounts-row").first().waitFor();
-            if (name === "Voice input") {
-              await page.locator(".voice-key").waitFor();
-              const dictation = page.getByLabel(label("Dictation language"), { exact: true });
-              await dictation.selectOption("hu-HU");
-              await page.waitForFunction(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).voiceLanguage === "hu-HU");
-              assert.equal(await dictation.inputValue(), "hu-HU");
-              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).language), language,
-                "dictation selection does not change the display language");
-              await dictation.selectOption("auto");
+            if (name === "Dictation") {
+              const policy = await page.evaluate(async () => (await fetch("/api/dictation/config")).json());
+              assert.deepEqual(policy, { enabled: false, allowed_origins: [] }, "demo policy ignores persisted private activation");
+              assert.equal(await page.getByRole("button", { name: label("Refresh models"), exact: true }).isDisabled(), true);
+              assert.equal(await page.getByRole("button", { name: label("Check"), exact: true }).isDisabled(), true);
+              assert.equal(await page.getByRole("button", { name: label("Apply"), exact: true }).isDisabled(), true);
             }
             if (name === "Agent integrations") {
               // the demo's fixture, in herdr's order with the agents found on the PC first: a failed request
@@ -147,6 +151,7 @@ try {
             await page.getByRole("button", { name: "Restore defaults", exact: true }).tap();
           }
           assert.deepEqual(errors, []);
+          assert.deepEqual(privateRequests, [], "persisted activation and Settings never contact a private speech origin in demo");
           await page.getByRole("button", { name: label("Close settings"), exact: true }).tap();
           if (language === "en") {
             const composer = page.locator(".composer textarea");
