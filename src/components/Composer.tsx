@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -13,7 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, Plus, Square, X } from "lucide-react";
+import { ArrowUp, FileText, MessageSquare, Plus, Square, X } from "lucide-react";
 
 import "./Composer.css";
 
@@ -46,6 +47,14 @@ import { AgentMark } from "./AgentMark.tsx";
 import { BackgroundTasks } from "./BackgroundTasks.tsx";
 import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
 import { useT } from "../lib/i18n.ts";
+import { blockComments, commentTarget, isReplyComment, outgoingMessage, useBlockComments, type BlockComment, type PaneComment } from "../lib/blockComments.ts";
+import { markCurrentComment, showWalkStop } from "../lib/commentHighlight.ts";
+import { changedField, inUnchangedPopover, revealField, savedPins } from "../lib/commentDom.ts";
+import { popoverOutlived } from "../lib/commentPopover.ts";
+import { lastFileStop } from "../lib/commentWalk.ts";
+import { FileCommentNavContext } from "../lib/fileCommentNav.ts";
+import { sortFileComments, type FileComment } from "../lib/fileComments.ts";
+import { CommentPopover } from "./CommentPopover.tsx";
 
 export interface ComposerProps {
   connected: boolean;
@@ -66,8 +75,12 @@ export interface ComposerProps {
   suggestion?: string | null;
   /** an empty chat's greeting: it stands over the composer's column and takes no row of its own */
   greeting?: ReactNode;
-  /** true: sent, clear the box; a string: keep the text and say why; a promise settles to either */
-  onSend: (text: string) => boolean | string | Promise<boolean | string>;
+  /** true: sent, clear the box; a string: keep the text and say why; a promise settles to either.
+   * `text` is only what was typed. `comments` are the pane's comments this send takes: reply
+   * comments quoting the agent's reply and file comments quoting lines of a file the viewer showed,
+   * so with them it goes to an agent only, queued or not, never typed into a shell. The receiver
+   * composes them with the text (composeWithComments) */
+  onSend: (text: string, options?: { comments?: readonly PaneComment[] }) => boolean | string | Promise<boolean | string>;
   onAbort: () => void;
   onUploadImage: (file: File) => Promise<string>;
 }
@@ -259,6 +272,135 @@ export function Composer({
   const draftKey = `herdr-web-ui:composer-draft:${paneStorageId(machineId, paneId)}`;
   const { text, sending } = useSyncExternalStore(composerDrafts.subscribe, () => composerDrafts.read(draftKey));
   const setText = useCallback((value: string | ((previous: string) => string)) => composerDrafts.set(draftKey, value), [draftKey]);
+  // comments on blocks of the agent's replies (lib/blockComments.ts) go out with the next message. With comments turned
+  // off there are none: no bar, no walk, nothing sent, even what another tab that still has them on stores meanwhile
+  const commentOwner = paneStorageId(machineId, paneId);
+  const comments = useBlockComments(commentOwner);
+  // an open question reads the text as its answer, and without an agent the text is typed into
+  // whatever runs in the pane (a shell, perhaps): the comments wait for a message to the agent
+  const outgoing = outgoingMessage(comments, text, { answering: answerHint !== null, agent: agent !== null });
+  // a comment the walk reached whose text is not in the chat, as it was opened, and what its field holds: a send
+  // acknowledged meanwhile must not close the popover on a change being typed
+  const [editedComment, setEditedComment] = useState<BlockComment | null>(null);
+  const editedText = useRef("");
+  // it closes as the chat's popover does (useCommentPopover): with comments turned off, whatever it holds; and, while
+  // nothing is typed in it, once its comment is no longer stored (a send acknowledged it, another tab deleted it)
+  useEffect(() => {
+    if (editedComment === null) return;
+    if (!settings.comments || popoverOutlived({ commentId: editedComment.id, initialComment: editedComment.comment }, comments, editedText.current)) setEditedComment(null);
+  }, [editedComment, settings.comments, comments]);
+  // the context bar at the top of the box walks the comments of the chat, one note per tap, and then
+  // the pane's file comments, each opened in the file viewer
+  const nextComment = useRef(0);
+  const openFileComment = useContext(FileCommentNavContext);
+  /** the walk control (the bar's text): Escape from the note the walk stands on hands the focus back to it */
+  const walkRef = useRef<HTMLButtonElement | null>(null);
+  /**
+   * The note the walk stands on (`is-current`, set by hand: no state per note) and its chat view,
+   * whose current highlight shows the note's text, until the next step, a click elsewhere or Escape.
+   */
+  const currentNote = useRef<{ note: HTMLElement; view: Element } | null>(null);
+  const clearCurrent = useCallback((): void => {
+    const current = currentNote.current;
+    if (current === null) return;
+    current.note.classList.remove("is-current");
+    markCurrentComment(current.view, null);
+    currentNote.current = null;
+  }, []);
+  useEffect(() => {
+    // a click, not a press: a touch scroll or a scrollbar drag does not end it. In the capture phase this runs before
+    // React's handler, so the walk control's own click clears the old mark and then sets the next
+    const onClick = (): void => clearCurrent();
+    const onKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      const note = currentNote.current?.note;
+      // Escape from the note hands the focus back to the walk control, so Enter there walks on
+      // (it sits after the whole chat in the tab order)
+      // read from the event's target (the focused element, fixed at dispatch), not from `document.activeElement`: it stays
+      // inside the note even when an open edit form has been closed and detached meanwhile
+      // The popover the walk opened for the pin is the note's too, while nothing is typed in it: closed by this Escape, it
+      // finds the walk control focused and leaves it there
+      const inPopover = inUnchangedPopover(event.target);
+      const onNote = note !== undefined && event.target instanceof Node && (note.contains(event.target) || inPopover);
+      clearCurrent();
+      if (onNote) walkRef.current?.focus();
+    };
+    // keydown on the document in the capture phase: after the window-capture Escape owners (the palette, dialogs, menus,
+    // dictation, the modal editor), which stop the event first, and before React's handlers. An open edit form the walk
+    // stands on gives up on Escape from its own key handler only while nothing was typed in it, so this has always run
+    // before it: the mark goes, the focus moves to the walk control, and an untouched form then closes without holding the
+    // focus, leaving it there. A form with typed text is left open (its Escape does nothing, so the event is not stopped)
+    document.addEventListener("click", onClick, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      clearCurrent();
+    };
+  }, [clearCurrent]);
+  // the last comment gone: nothing to stand on
+  useEffect(() => { if (comments.length === 0) clearCurrent(); }, [comments.length, clearCurrent]);
+  // the current comment deleted while others remain: its note left the chat, and the mark goes with
+  // it. Checked a frame later, once the chat has rendered the change. A focused element that leaves
+  // the document leaves the focus on the body: then it was the note's, and the walk control takes it
+  useEffect(() => {
+    if (currentNote.current === null) return;
+    const frame = window.requestAnimationFrame(() => {
+      const current = currentNote.current;
+      if (current === null || current.note.isConnected) return;
+      clearCurrent();
+      if (document.activeElement === null || document.activeElement === document.body) walkRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [comments, clearCurrent]);
+  const goToComment = (): void => {
+    // this pane's own chat: several panes can be mounted, each with a chat view in its stack
+    const view = surfaceRef.current?.closest(".terminal-stack");
+    if (!view) return;
+    // a comment being written in this pane keeps its place: the walk gives the focus back to it, as the Send does
+    const unsaved = changedField(view);
+    if (unsaved !== null) {
+      revealField(unsaved);
+      return;
+    }
+    // one stop per pin, in the order the pins appear, which is reading order (CommentPins). Not the provisional pin of a
+    // comment being written
+    const notes = savedPins(view, ".chat-view");
+    // a comment whose text is not in the chat (older history not loaded, a reply that changed) has no pin: it
+    // is a stop of its own that opens its popover as a dialog, so the bar reaches every comment it counts
+    const shown = new Set(notes.map((note) => note.dataset.commentId));
+    // (a file comment has no place in the chat: the viewer shows it)
+    const missing = comments.filter(isReplyComment).filter((comment) => !shown.has(comment.id));
+    // then the file comments, in the order they are sent, each a stop that opens the viewer at it
+    const files = sortFileComments(comments.filter((comment): comment is FileComment => !isReplyComment(comment)));
+    const inChat = notes.length + missing.length;
+    const stops = inChat + files.length;
+    if (stops === 0) return;
+    // the viewer walked its file's comments since (its counter, or a stop of this walk): this walk goes on after the one it showed last
+    const last = lastFileStop.get(commentOwner);
+    lastFileStop.delete(commentOwner);
+    const shownLast = last === undefined ? -1 : files.findIndex((comment) => comment.id === last);
+    const stop = (shownLast >= 0 ? inChat + shownLast + 1 : nextComment.current) % stops;
+    nextComment.current = (stop + 1) % stops;
+    clearCurrent();
+    if (stop >= inChat) { openFileComment?.(paneId, machineId, files[stop - inChat]!); return; }
+    if (stop >= notes.length) {
+      const comment = missing[stop - notes.length]!;
+      editedText.current = comment.comment;
+      setEditedComment(comment);
+      return;
+    }
+    const pin = notes[stop]!;
+    const chat = pin.closest(".chat-view");
+    if (chat === null) return;
+    // its popover opens to edit (ChatView), and its field takes the focus as it mounts, once its pin is placed. The pin is marked
+    // after the click: the click is one, and the document's click listener above clears the mark
+    pin.click();
+    pin.classList.add("is-current");
+    currentNote.current = { note: pin, view: chat };
+    // its text highlighted, it and its pin scrolled into view, the focus on the pin (`showWalkStop`)
+    showWalkStop(chat, pin);
+  };
   const mounted = useRef(true);
   const [caret, setCaret] = useState(text.length);
   const textRef = useRef(text);
@@ -291,7 +433,30 @@ export function Composer({
   const trigger = useMemo(() => activeTrigger(text, caret, { skills: agent === "codex" }), [agent, caret, text]);
   /** a command the agent runs but the chat cannot finish, while it is what the box holds */
   const terminalOnly = useMemo(() => terminalOnlyCommand(agent, text), [agent, text]);
+  // a note from the last send comes first; then what the comments have to say
+  const shownNote = note ?? (outgoing.tooLong ? t("Too long to send. Shorten the message or remove comments.")
+    : settings.comments && blockComments.isUnsaved(commentOwner) ? t("Comments could not be saved. They are lost on reload.") : null);
   const uploading = attachments.some((attachment) => attachment.state === "uploading");
+  /** the comments that go with the next message: on the send buttons, where it is sent from */
+  const goingComments = outgoing.sentIds.length;
+  const withComments = (label: string): string => goingComments > 0 ? `${label} · ${t("Comments to send: {count}", { count: goingComments })}` : label;
+  /** why the comments stay in the pane instead of going with the next send */
+  const commentsStayNote = (held: NonNullable<typeof outgoing.commentsHeld>): string => held === "no-agent" ? t("Comments stay here: they are only sent to an agent.")
+    : held === "answer" ? t("Comments stay here: they are not sent with an answer.") : t("Comments stay here: they are not sent with a command.");
+  /** the context bar is drawn while comments are stored: the message below it gives up part of its top padding */
+  const hasCommentBar = comments.length > 0;
+  /**
+   * The bar's X: every comment of this pane goes, the walk's mark with them, and the bar with them. Removed is removed:
+   * there is no undo and no dialog. The X leaves with the focus on it: the message box takes it, except on a touch
+   * screen, where that would raise the keyboard unasked (PaneTerminal tells touch apart by the same query).
+   */
+  const removeAllComments = (): void => {
+    if (comments.length === 0) return;
+    blockComments.remove(commentOwner, comments.map((comment) => comment.id));
+    nextComment.current = 0;
+    clearCurrent();
+    if (!window.matchMedia("(pointer: coarse)").matches) textareaRef.current?.focus();
+  };
   const agentLabel = agentDisplayLabel(agent);
   // the agent's suggestion stands in the empty box as it does in its own input, until anything is typed
   const offered = connected && answerHint === null && suggestion !== null ? suggestion : null;
@@ -364,7 +529,7 @@ export function Composer({
     setAutoHeight((current) => current === height ? current : height);
   }, [manualHeight]);
 
-  useLayoutEffect(sizeTextarea, [sizeTextarea, text, placeholder, boxWidth, facesLoaded]);
+  useLayoutEffect(sizeTextarea, [sizeTextarea, text, placeholder, boxWidth, facesLoaded, hasCommentBar]);
 
   // SettingsProvider writes --chat-scale in a passive effect. Measure on the next frame,
   // after that CSS is applied, so a draft rewraps without waiting for another keystroke.
@@ -665,11 +830,21 @@ export function Composer({
 
   const send = useCallback(() => {
     if (composingRef.current) return;
-    if (!connected || uploading || sending || text.trim().length === 0) return;
+    if (!connected || uploading || sending || !outgoing.sendable) return;
+    // a comment still being written in this pane's chat would not go with the message: its form is
+    // shown and takes the focus instead (inside the press, so a phone raises its keyboard there). This pane's: the
+    // chat view in its stack; a dialog anywhere is modal, so it is the one being written in
+    const unsaved = changedField(surfaceRef.current?.closest(".terminal-stack") ?? null);
+    if (unsaved !== null) {
+      revealField(unsaved);
+      return;
+    }
     const sent = text;
     const sentAttachments = attachments;
+    const { sent: sentComments, sentIds, commentsHeld } = outgoing;
     const settle = (result: boolean | string): void => {
       const acknowledged = result === true ? composerDrafts.settle(draftKey, sent) : null;
+      if (result === true) blockComments.remove(commentOwner, sentIds);
       if (!mounted.current) return;
       if (typeof result === "string") setNote(result);
       if (acknowledged === null) return;
@@ -679,7 +854,8 @@ export function Composer({
       setCaret(rest.length);
       textRef.current = rest;
       caretRef.current = rest.length;
-      setNote(edited ? t("Sent as it was. Your changes made while it was sending stayed here and were not sent.") : null);
+      setNote(edited ? t("Sent as it was. Your changes made while it was sending stayed here and were not sent.")
+        : commentsHeld !== null ? commentsStayNote(commentsHeld) : null);
       for (const attachment of sentAttachments) URL.revokeObjectURL(attachment.previewUrl);
       setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
     };
@@ -687,14 +863,14 @@ export function Composer({
     // a polish landing before the acknowledgement would count as an edit and keep the sent message here
     dictation.forget();
     try {
-      const result = onSend(text);
+      const result = onSend(sent, { comments: sentComments });
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return; }
       void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey));
     } catch {
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [attachments, connected, dictation.forget, draftKey, onSend, sending, text, uploading]);
+  }, [attachments, commentOwner, connected, dictation.forget, draftKey, onSend, outgoing, sending, text, uploading]);
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
@@ -790,7 +966,8 @@ export function Composer({
   // what the status line says; what may be sent, queued or stopped goes by the agent's own status
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
-  const sendShown = composerSendShown({ working: isWorking, text });
+  // comments alone are a message too: Send takes them for the agent's next turn while it works
+  const sendShown = composerSendShown({ working: isWorking, text }) || (isWorking && goingComments > 0);
   const hint = composerStatusHint({ uploading, connected, text });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
@@ -937,6 +1114,38 @@ export function Composer({
           </div>
         )}
 
+        {/* The comments stored for this pane, a row between the attachments and the message ("Replying to…"): their count, and
+            whether they go with the next send (accent icon) or wait (dim; the name says why). The text walks to them, the X drops
+            them all. Without comments the row takes no space */}
+        {hasCommentBar && (() => {
+          const held = outgoing.commentsHeld;
+          const waiting = held !== null;
+          const count = comments.length;
+          // all on the reply, the bar says so; with a comment on a file among them, they are just comments
+          const label = waiting ? t(count === 1 ? "{count} comment waiting" : "{count} comments waiting", { count })
+            : comments.every(isReplyComment) ? t(count === 1 ? "{count} comment on the reply" : "{count} comments on the reply", { count })
+            : t(count === 1 ? "{count} comment" : "{count} comments", { count });
+          const why = held !== null ? commentsStayNote(held) : "";
+          return (
+            <div className={`composer-comments-bar ${waiting ? "is-waiting" : "is-going"}`}>
+              <button
+                ref={walkRef}
+                type="button"
+                className="composer-comments-walk"
+                aria-label={waiting ? `${label}. ${why}` : label}
+                title={`${waiting ? `${label}\n${why}` : label}\n${t("Go to the next comment")}`}
+                onClick={goToComment}
+              >
+                <MessageSquare aria-hidden="true" />
+                <span className="composer-comments-text">{label}</span>
+              </button>
+              <button type="button" className="icon-button composer-comments-remove" aria-label={t("Remove all comments")} title={t("Remove all comments")} onClick={removeAllComments}>
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          );
+        })()}
+
         <textarea
           ref={textareaRef}
         onCompositionStart={() => { composingRef.current = true; }}
@@ -950,9 +1159,9 @@ export function Composer({
           aria-controls={menuOpen ? menuId : undefined}
           aria-expanded={menuOpen}
           aria-activedescendant={menuOpen ? `${menuId}-${selectedIndex}` : undefined}
-          spellCheck={false}
-          autoCapitalize="off"
-          autoCorrect="off"
+          // a message is prose: a phone keyboard keeps its suggestions, autocorrect and spell
+          // checking, and starts sentences with a capital
+          autoCapitalize="sentences"
           // stays editable while the socket reconnects (sending waits for it): a phone's
           // dictation keyboard opens its own app and comes back, the socket may drop meanwhile,
           // and a disabled box would lose its focus and the dictated text with it
@@ -1060,9 +1269,9 @@ export function Composer({
             <button
               type="button"
               className="composer-action composer-send"
-              aria-label={t("Send message")}
-              title={t("Send message")}
-              disabled={!connected || uploading || sending || text.trim().length === 0}
+              aria-label={withComments(t("Send message"))}
+              title={withComments(t("Send message"))}
+              disabled={!connected || uploading || sending || !outgoing.sendable}
               onClick={() => send()}
             >
               <ArrowUp aria-hidden="true" />
@@ -1070,11 +1279,35 @@ export function Composer({
           )}
         </div>
       </div>
-      {note && <div className="composer-note" role="alert">{note}</div>}
+      {shownNote && <div className="composer-note" role="alert">{shownNote}</div>}
+      {/* outside the surface: it takes drops, and a file dropped on the portalled editor would
+          bubble there through React and start an upload */}
+      {/* a comment the walk reached that has no pin: its popover as a dialog (a sheet on a phone), to edit, its field
+          filled, with Delete beside ↑. The focus goes back to the walk control, so Enter walks on; to the message box when
+          that was the last comment and the bar is gone (not on a touch screen: no keyboard unasked) */}
+      {editedComment && settings.comments && <CommentPopover
+        key={editedComment.id}
+        placement="dialog"
+        quote={editedComment.quote !== undefined ? { text: editedComment.quote } : { block: editedComment.block }}
+        comment={editedComment.comment}
+        onText={(value) => { editedText.current = value; }}
+        onSave={(value) => {
+          blockComments.save(commentOwner, commentTarget(editedComment), value);
+          setEditedComment(null);
+        }}
+        onDelete={() => {
+          blockComments.remove(commentOwner, [editedComment.id]);
+          setEditedComment(null);
+        }}
+        onClose={() => setEditedComment(null)}
+        // asked after the commit that closes it: the bar is gone with the last comment
+        opener={() => walkRef.current?.isConnected ? walkRef.current : null}
+        fallback={() => textareaRef.current}
+      />}
       {/* said while typing, before the send: after it the browser is already open and the reader is
           already in the state the words describe. Not a block — the text still goes, and pi runs the
           command in the terminal the way its own palette would */}
-      {!note && terminalOnly !== null && (
+      {!shownNote && terminalOnly !== null && (
         <div className="composer-hint" role="status">{t("{command} opens a tree the chat cannot show. It runs in the terminal — tap the terminal button at the top of the screen to choose a branch.", { command: `/${terminalOnly}` })}</div>
       )}
       {/* above the whole composer: inside the surface it would cover the text being dictated */}

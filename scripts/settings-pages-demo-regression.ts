@@ -13,7 +13,7 @@ import { ZH } from "../src/lib/i18n.zh.ts";
 // the browser's Back button steps out of the dialog instead of out of the app. All files and
 // HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
-const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Voice input", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "Agent integrations", "About"];
+const PAGES = ["Appearance", "Chat", "Terminal", "File viewer", "Alerts", "Voice input", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "Agent integrations", "About"];
 const SETTINGS = { language: "en", showUsage: true, voiceInput: true, showQuickReplies: true };
 
 const dialogOf = (page: Page) => page.getByRole("dialog", { name: "Settings", exact: true });

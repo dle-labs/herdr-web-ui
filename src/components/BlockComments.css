@@ -1,0 +1,74 @@
+/* Comments on blocks of an agent's final reply (Markdown.tsx, lib/blockComments.ts): a comment is
+   made by a mouse dragging over text in a reply (ChatView.tsx, useSelectionComment.ts), or by
+   clicking or tapping a block, which opens a popover (CommentPopover.tsx). The text a comment is on is
+   highlighted (lib/commentHighlight.ts), and a pin after its end opens it (CommentPins.tsx). A
+   list item's own words are its `.markdown-item` (Markdown.tsx): its nested blocks follow it. */
+
+/* the text of every comment shown: a faint accent tint (a comment on a whole part marks all its text), there to be
+   found and read through, never in the way of reading; its pin is what catches the eye. Translucent: on a code
+   block, a table or a blockquote their own fill shows through */
+::highlight(block-comment) {
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* the text a comment is being written on in the popover (its field took the browser's selection
+   away), as it will be marked */
+::highlight(block-comment-pending) {
+  background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* Focus mode: while a pin's comment is up (the pointer over the pin, the keyboard's focus on it,
+   its popover open, or the composer's walk on it) lib/commentHighlight.ts sets `data-comment-focus` on that chat
+   view, and only on it, so two panes are independent. The other comments' marks go, and the one
+   that is up stands alone, in a clear tint of its own. `.chat-view[…] ::highlight(name)` is valid: a highlight pseudo-element takes selectors
+   of its originating element, here the text's ancestors. A browser that cannot parse it drops
+   only this rule and keeps the plain marks above. The active and current marks are painted over
+   the base, now gone, so their tint is their own (the app sets the attribute only while one of
+   them has text to show) */
+.chat-view[data-comment-focus] ::highlight(block-comment) {
+  background-color: transparent;
+}
+
+::highlight(block-comment-active),
+::highlight(block-comment-current) {
+  background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* the text being written keeps its tint while a pin is up */
+.chat-view[data-comment-focus] ::highlight(block-comment-pending) {
+  background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* a click on a block of a reply comments on it (ChatView.tsx): with a pointer that hovers, the block under it is
+   framed, while comments are on (`data-comments`) and no popover is open: quietly, a faint accent fill reaching 2px
+   past the block and a hairline edge of the accent at 55% around it, nearly square. Drawn by the background, a shadow and an outline, which take no room, so nothing moves */
+@media (hover: hover) {
+  .chat-view[data-comments]:not(:has(.comment-popover)) .is-commentable:hover {
+    border-radius: calc(var(--radius-sm) / 3);
+    background-color: color-mix(in srgb, var(--accent) 5%, transparent);
+    box-shadow: 0 0 0 calc(var(--space-1) / 2) color-mix(in srgb, var(--accent) 5%, transparent);
+    outline: var(--hairline) solid color-mix(in srgb, var(--accent) 55%, transparent);
+    outline-offset: calc(var(--space-1) / 2);
+  }
+}
+
+/* a code block clips and a table scrolls its own box: they sit on this host instead, which takes
+   over their spacing (Markdown.tsx renders it in every reply, commentable or not) */
+.markdown-block {
+  margin-bottom: var(--space-3);
+}
+
+.markdown-block > .markdown-code,
+.markdown-block > .markdown-table-wrap,
+.markdown-block > .markdown-math-display {
+  margin-bottom: 0;
+}
+
+/* a table in a list item: a little air above and below, as between two items (ChatView.css) */
+.markdown-list .markdown-block:has(> .markdown-table-wrap) {
+  margin: var(--space-1) 0;
+}
+
+.markdown-list .markdown-block > .markdown-table-wrap {
+  margin: 0;
+}

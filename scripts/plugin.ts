@@ -66,7 +66,7 @@ function herdrConfigDir(): string | null {
   const herdr = Bun.which("herdr");
   if (herdr === null) return null;
   try {
-    const result = Bun.spawnSync([herdr, "plugin", "config-dir", "devswha.herdr-web-ui"], { windowsHide: true, stdout: "pipe", stderr: "ignore", timeout: 3000 });
+    const result = Bun.spawnSync([herdr, "plugin", "config-dir", "anndii.herdr-web-ui"], { windowsHide: true, stdout: "pipe", stderr: "ignore", timeout: 3000 });
     const dir = result.exitCode === 0 ? result.stdout.toString().trim() : "";
     return dir !== "" && ENV_FILES.some((name) => existsSync(join(dir, name))) ? dir : null;
   } catch {

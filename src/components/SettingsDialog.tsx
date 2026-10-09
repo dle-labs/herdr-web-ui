@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { ArrowLeft, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Eye, EyeOff, FileText, Gauge, Info, Keyboard, MessageSquare, Mic, Monitor, Palette, Plug, Plus, Smartphone, SquareTerminal, Star, X, type LucideIcon } from "lucide-react";
 
 import "./SettingsDialog.css";
 
 import type { AppActions } from "../lib/actions.ts";
+import { blockComments } from "../lib/blockComments.ts";
+import { hasChangedComment, hasCommentDialog } from "../lib/commentDom.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, formatKeys, isMacPlatform, shortcutDisplayKeys, shortcutKeys, shortcutConflict } from "../lib/shortcuts.ts";
 import { isReservedShortcutKey } from "../lib/shortcutBindings.ts";
-import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
+import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, type DictationLanguage, type VoiceButton } from "../lib/settings.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
+import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { Segmented, SettingsGroup, SettingsRow, Stepper, Toggle } from "./SettingsControls.tsx";
@@ -45,7 +48,7 @@ export interface SettingsDialogProps {
   /** the herdr this app's server talks to, from the last health check */
   herdrVersion: string | null;
   onEnableNotifications: () => Promise<boolean>;
-  /** a file preview is open beneath: the dialog is drawn above it */
+  /** a file preview is open beneath: the dialog is drawn above it (`.settings-raised`) */
   overPreview?: boolean;
 }
 
@@ -95,13 +98,14 @@ function FontFamilyInput({ value, label, onCommit }: { value: string; label: str
 }
 
 
-type SettingsPage = "appearance" | "chat" | "terminal" | "alerts" | "voice" | "usage" | "shortcuts" | "devices" | "remote" | "integrations" | "about";
+type SettingsPage = "appearance" | "chat" | "terminal" | "files" | "alerts" | "voice" | "usage" | "shortcuts" | "devices" | "remote" | "integrations" | "about";
 
 /** The pages in the order the list shows them: what is looked at first, then what is set once. */
 const PAGES: readonly { id: SettingsPage; icon: LucideIcon }[] = [
   { id: "appearance", icon: Palette },
   { id: "chat", icon: MessageSquare },
   { id: "terminal", icon: SquareTerminal },
+  { id: "files", icon: FileText },
   { id: "alerts", icon: Bell },
   { id: "voice", icon: Mic },
   { id: "usage", icon: Gauge },
@@ -176,6 +180,26 @@ function AppearancePage() {
 function ChatPage() {
   const { settings, update } = useSettings();
   const t = useT();
+  // how many comments turning the setting off would delete; null while no question is open
+  const [deleting, setDeleting] = useState<number | null>(null);
+  const commentsToggle = useRef<HTMLButtonElement>(null);
+  // the question answered yes: ConfirmDialog leaves the focus to its owner then, and it goes back to the switch, once
+  // the dialog is gone (its trap would take it back while it is up)
+  const refocusToggle = useRef(false);
+  useEffect(() => {
+    if (deleting !== null || !refocusToggle.current) return;
+    refocusToggle.current = false;
+    commentsToggle.current?.focus({ preventScroll: true });
+  }, [deleting]);
+  const setComments = (on: boolean): void => {
+    if (on) { update({ comments: true }); return; }
+    // counted here, in the handler: counting refreshes the store, which notifies its subscribers. A comment being
+    // written, with text typed and not saved yet, goes too: with none stored it is the one comment asked about
+    const stored = blockComments.countAll();
+    const count = stored > 0 ? stored : hasChangedComment(document) ? 1 : 0;
+    if (count === 0) update({ comments: false });
+    else setDeleting(count);
+  };
   return (
     <>
       <SettingsGroup>
@@ -189,6 +213,9 @@ function ChatPage() {
         </SettingsRow>
         <SettingsRow label={t("Show thinking")} description={t("Include the agent's reasoning blocks")}>
           <Toggle label={t("Show thinking")} checked={settings.showThinking} onChange={(showThinking) => update({ showThinking })} />
+        </SettingsRow>
+        <SettingsRow label={t("Comments")} description={t("Comment on an agent's reply and on files by selecting text or clicking a block. Turning this off deletes every comment on this device.")}>
+          <Toggle label={t("Comments")} checked={settings.comments} onChange={setComments} buttonRef={commentsToggle} />
         </SettingsRow>
         <SettingsRow label={t("Chat width")} description={t("How wide the conversation and the message box run on a large screen")} wide>
           <Segmented label={t("Chat width")} value={settings.chatWidth} onChange={(chatWidth) => update({ chatWidth })} options={CHAT_WIDTHS.map((chatWidth) => ({ value: chatWidth, label: t(chatWidth === "narrow" ? "Narrow" : chatWidth === "wide" ? "Wide" : chatWidth === "full" ? "Full" : "Default") }))} />
@@ -243,6 +270,13 @@ function ChatPage() {
           </div>
         </div>
       </SettingsGroup>
+
+      {deleting !== null && <ConfirmDialog
+        title={deleting === 1 ? t("Delete 1 comment?") : t("Delete {count} comments?", { count: deleting })}
+        body={t("Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.")}
+        confirmLabel={t("Turn off and delete")}
+        onConfirm={async () => { blockComments.clearAll(); update({ comments: false }); refocusToggle.current = true; setDeleting(null); }}
+        onClose={() => setDeleting(null)} />}
     </>
   );
 }
@@ -274,6 +308,27 @@ function TerminalPage({ keyBarButtonRef, onEditKeyBar }: { keyBarButtonRef: RefO
       </SettingsRow>
       <SettingsRow label={t("Use alongside herdr's own window")} description={t("Turn this on if this PC also shows herdr in a terminal window. A second after you switch to another window, this tab only watches the pane, so herdr's window keeps the pane at its own size instead of this window's. Click the tab to type again. While it watches, the pane is drawn at herdr's size and may not fill this window.")}>
         <Toggle label={t("Use alongside herdr's own window")} checked={settings.releasePaneAway} onChange={(releasePaneAway) => update({ releasePaneAway })} />
+      </SettingsRow>
+    </SettingsGroup>
+  );
+}
+
+/** File viewer: how a file opened from a pane reads. */
+function FileViewerPage() {
+  const { settings, update } = useSettings();
+  const t = useT();
+  // literal keys, so the i18n check finds them
+  const markdownWidthLabel = { readable: t("Default"), full: t("Full width") };
+  return (
+    <SettingsGroup>
+      <SettingsRow label={t("Wrap long lines")}>
+        <Toggle label={t("Wrap long lines")} checked={settings.wrapCode} onChange={(wrapCode) => update({ wrapCode })} />
+      </SettingsRow>
+      <SettingsRow label={t("Highlight code")} description={t("Colors code in the chat and the file viewer. Off, code is plain text.")}>
+        <Toggle label={t("Highlight code")} checked={settings.highlightCode} onChange={(highlightCode) => update({ highlightCode })} />
+      </SettingsRow>
+      <SettingsRow label={t("Markdown width")}>
+        <Segmented label={t("Markdown width")} value={settings.markdownWidth} onChange={(markdownWidth) => update({ markdownWidth })} options={MARKDOWN_WIDTHS.map((width) => ({ value: width, label: markdownWidthLabel[width] }))} />
       </SettingsRow>
     </SettingsGroup>
   );
@@ -730,8 +785,11 @@ function OpenSettingsDialog({ section = null, onClose, actions, updates, auth, h
   const settingsScrollRef = useRef(0);
   // Tab stays inside the dialog, and the focus returns to whatever opened it
   const surface = useFocusTrap<HTMLElement>(true, { initialFocus: backRef });
+  // opened (by its shortcut) over a comment's dialog, which is portalled to the end of the body and lies above the
+  // dialogs' own layer: raised over it, as over a preview. Read once, as it opens: it is mounted per opening
+  const [overComment] = useState(() => hasCommentDialog(document));
   const shown = useRef<{ page: SettingsPage | null; keyBar: boolean } | null>(null);
-  const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "alerts" ? "Alerts" : id === "voice" ? "Voice input"
+  const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "files" ? "File viewer" : id === "alerts" ? "Alerts" : id === "voice" ? "Voice input"
     : id === "usage" ? "Subscription usage" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Phone & devices" : id === "remote" ? "Remote PCs" : id === "integrations" ? "Agent integrations" : "About");
   const openPage = (id: SettingsPage): void => { setKeyBarOpen(false); setChosen(id); };
   const openKeyBar = (): void => {
@@ -804,6 +862,7 @@ function OpenSettingsDialog({ section = null, onClose, actions, updates, auth, h
       case "appearance": return <AppearancePage />;
       case "chat": return <ChatPage />;
       case "terminal": return <TerminalPage keyBarButtonRef={keyBarButtonRef} onEditKeyBar={openKeyBar} />;
+      case "files": return <FileViewerPage />;
       case "alerts": return <AlertsPage onEnableNotifications={onEnableNotifications} />;
       case "voice": return <VoicePage />;
       case "usage": return <UsagePage />;
@@ -819,7 +878,7 @@ function OpenSettingsDialog({ section = null, onClose, actions, updates, auth, h
   const focusable = page ?? PAGES[0]!.id;
 
   return (
-    <div className={overPreview ? "modal-scrim settings-over-preview" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className={overPreview || overComment ? "modal-scrim settings-raised" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       {/* named Settings on every page: the page's own name is the visible title */}
       <section ref={surface} className="modal settings-dialog" role="dialog" aria-modal="true" aria-label={keyBarOpen ? t("Key bar") : t("Settings")} tabIndex={-1}>
         <header className="modal-header settings-header">

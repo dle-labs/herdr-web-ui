@@ -1,5 +1,23 @@
-/** Held messages are explicitly sent, never dispatched by reconnects or status changes. */
-export interface HeldMessage { id: string; text: string }
+import { composeWithComments, isPaneComment, type PaneComment } from "./blockComments.ts";
+
+/**
+ * Held messages are explicitly sent, never dispatched by reconnects or status changes. `comments`
+ * is the snapshot of the reply and file comments it carries, kept apart from the typed `text`; `agentOnly`
+ * is only read from entries stored earlier (composed before they were held, their text already
+ * holds the quotes) and is never written for a new message.
+ */
+export interface HeldMessage { id: string; text: string; agentOnly?: true; comments?: readonly PaneComment[] }
+
+/** What is sent for a held message: its comments composed with its text, or the text as stored. */
+export function heldMessageText(message: HeldMessage): string {
+  return message.comments?.length ? composeWithComments(message.comments, message.text) : message.text;
+}
+
+/** A message that quotes the agent's reply goes to an agent only, never a shell. */
+export function heldAgentOnly(message: HeldMessage): boolean {
+  return message.agentOnly === true || (message.comments?.length ?? 0) > 0;
+}
+
 type QueueStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const newId = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
@@ -57,6 +75,9 @@ export class MessageQueueStore {
           const value = item as HeldMessage;
           if (typeof value.id !== "string" || typeof value.text !== "string" || ids.has(value.id)) return false;
           ids.add(value.id); return true;
+        }).map((value: HeldMessage) => {
+          const comments = Array.isArray(value.comments) ? value.comments.filter(isPaneComment) : [];
+          return { id: value.id, text: value.text, ...(value.agentOnly === true ? { agentOnly: true as const } : {}), ...(comments.length ? { comments } : {}) };
         });
       }
     } catch { /* previous versions stored a single plain-text message */ }
@@ -78,9 +99,12 @@ export class MessageQueueStore {
     for (const listener of this.listeners) listener();
   }
 
-  add(owner: string, text: string): void {
+  /** `comments`: the snapshot this message carries; `text` is only what was typed. With comments,
+   * blank text is stored as "" (the held box then says "Comments only"); alone it stays as given. */
+  add(owner: string, text: string, { comments = [] }: { comments?: readonly PaneComment[] } = {}): void {
     this.refresh(owner);
-    this.write(owner, [...this.read(owner), { id: newId(), text }]);
+    const stored = comments.length && text.trim() === "" ? "" : text;
+    this.write(owner, [...this.read(owner), { id: newId(), text: stored, ...(comments.length ? { comments } : {}) }]);
   }
   edit(owner: string, id: string, text: string): void {
     this.refresh(owner);

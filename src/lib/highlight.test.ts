@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { CodeLines } from "../components/HighlightedCode.tsx";
 import {
   extendLines,
   highlightNow,
@@ -6,6 +9,7 @@ import {
   canHighlight,
   countLines,
   languageForFence,
+  languageForPath,
   LINE_ELEMENT_LIMIT,
   linesFromRuns,
   normalizeCode,
@@ -13,6 +17,7 @@ import {
   SYNC_HIGHLIGHT_LIMIT,
   type Lines,
 } from "./highlight.ts";
+import { fileLines } from "./fileComments.ts";
 
 const text = (lines: Lines) => lines.map((line) => line.map((token) => token.text).join(""));
 /** `code` highlighted as a view does: normalized first. */
@@ -43,6 +48,39 @@ describe("languageForFence", () => {
   });
 });
 
+describe("languageForPath", () => {
+  it.each([
+    ["/r/Dockerfile", "dockerfile"], ["/r/Dockerfile.dev", "dockerfile"], ["/r/app.dockerfile", "dockerfile"],
+    ["/r/.gitignore", "toml"], ["/r/.env.local", "env"], ["/r/.env", "env"], ["/r/x.tsx", "tsx"], ["/r/x.ts", "ts"],
+    ["/r/x.mjs", "js"], ["/r/README.md", "markdown"], ["/r/a.toml", "toml"], ["/r/a.ini", "toml"], ["/r/a.svg", "html"],
+    ["/r/a.py", "python"], ["C:\\r\\a.go", "go"], ["/r/a.", null], ["/r/.bashrc", "shell"], ["/r.d/LICENSE", null],
+    ["/r/CMakeLists.txt", "cmake"], ["/r/a.json", "json"], ["/r/a.yml", "yaml"], ["/r/a.vue", "vue"], ["/r/a.c", "cpp"],
+  ])("%s → %s", (path, language) => expect(languageForPath(path)).toBe(language));
+  it("takes only a Dockerfile, or one with a suffix, as a Dockerfile", () => {
+    expect(languageForPath("/r/dockerfile.txt")).toBe("dockerfile");
+    expect(languageForPath("/r/dockerfiles.json")).toBe("json");
+    expect(languageForPath("/r/dockerfiles")).toBeNull();
+  });
+  it("decides what is Markdown, by name only and ignoring case", () => {
+    expect(languageForPath("/r/notes.MARKDOWN")).toBe("markdown");
+    expect(languageForPath("/r/x.mdx")).toBeNull();
+    expect(languageForPath("/r/x.mkd")).toBe("markdown");
+    expect(languageForPath("/r/x.mdown")).toBe("markdown");
+  });
+  it("lets a Markdown extension win over a Dockerfile name", () => {
+    expect(languageForPath("/r/Dockerfile.md")).toBe("markdown");
+    expect(languageForPath("/r/Dockerfile.dev")).toBe("dockerfile");
+  });
+  it("has no language for plain-text files", () => {
+    for (const name of ["a.txt", "a.text"]) expect(languageForPath(`/r/${name}`)).toBeNull();
+  });
+  it("returns null for the unknown", () => {
+    expect(languageForPath("/r/notes.xyz")).toBeNull();
+    expect(languageForPath("/r/LICENSE")).toBeNull();
+    expect(languageForPath("/r/Makefile")).toBeNull();
+  });
+});
+
 describe("highlightNow", () => {
   it("keeps a multi-line comment's role on every line it spans", () => {
     const lines = highlight("/* a\nb */\nconst x = 1;", "ts");
@@ -67,6 +105,16 @@ describe("highlightNow", () => {
   });
   it("splits CRLF without keeping the carriage return", () => {
     expect(text(highlight("a\r\nb", "ts"))).toEqual(["a", "b"]);
+  });
+  it("ends a line at a lone carriage return too", () => {
+    expect(text(highlight("a\rb\nc", "ts"))).toEqual(["a", "b", "c"]);
+    expect(text(plainLines(normalizeCode("a\rb\nc")))).toEqual(["a", "b", "c"]);
+  });
+  it("numbers lines as fileLines does, so a comment quotes the line the code view shows", () => {
+    for (const code of ["a\r\nb\r\nc", "a\rb\rc", "a\rb\nc\r\nd\r\re", "x\r\n\ry\n\rz", "a\n\n", "a\r\n\r\n", "a\r\r"]) {
+      expect(text(plainLines(normalizeCode(code)))).toEqual(fileLines(code));
+      expect(highlight(code, "ts").length).toBe(fileLines(code).length);
+    }
   });
   it("reads a class name as a type and a function's name as a function", () => {
     const lines = highlight("class Box {}\nfunction run() {}", "ts");
@@ -151,6 +199,29 @@ describe("countLines", () => {
     expect(countLines("a")).toBe(1);
     expect(countLines("a\n\nb")).toBe(3);
     expect(countLines("\n".repeat(LINE_ELEMENT_LIMIT))).toBe(LINE_ELEMENT_LIMIT + 1);
+
+  });
+});
+
+describe("CodeLines", () => {
+  it("keeps whitespace and source line offsets when wrapping with a copy-free number gutter", () => {
+    const source = "  a\n\n\tb\n";
+    const html = renderToStaticMarkup(createElement(CodeLines, { lines: plainLines(source), firstLine: 7, lineNumbers: true, wrap: true }));
+    expect(html).toContain('data-line-numbers=""');
+    expect(html).toContain('data-wrap=""');
+    expect(html).toContain('<span class="hl-line" data-source-line="7">  a</span>\n<span class="hl-line" data-source-line="8"></span>');
+    expect(html).toContain('<span class="hl-line" data-source-line="10"></span>');
+    expect(html.replace(/<[^>]*>/g, "")).toBe(source);
+  });
+
+  it("renders too many lines as a single exact text, not thousands of elements or a gutter", () => {
+    const source = "\n".repeat(LINE_ELEMENT_LIMIT);
+    const html = renderToStaticMarkup(createElement(CodeLines, { lines: plainLines(source), firstLine: 1, lineNumbers: true, wrap: true }));
+    expect(html).not.toContain('class="hl-line"');
+    expect(html).not.toContain("data-source-line");
+    expect(html).not.toContain("data-line-numbers");
+    expect(html).toContain(`<code>${source}</code>`);
+    expect(html).toContain('data-wrap=""');
   });
 });
 

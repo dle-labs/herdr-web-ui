@@ -35,7 +35,7 @@ it("waits for the bridge's pending-input capability before sending an explicit n
   const socket = FakeSocket.last;
   socket.open();
   expect(client.canQueueMessages()).toBe(false);
-  const result = client.submit("w1:p1", "next turn", "\x1b[200~next turn\x1b[201~", false, "queue");
+  const result = client.submit("w1:p1", "next turn", "\x1b[200~next turn\x1b[201~", { delivery: "queue" });
   await Promise.resolve();
   expect(submissions(socket)).toEqual([]);
   socket.receive(snapshot(["submit", "pending-input"]));
@@ -56,7 +56,7 @@ it("refuses queued delivery on older bridges without writing its text or a fallb
     socket.open();
     socket.receive(snapshot(features));
     expect(client.canQueueMessages()).toBe(false);
-    expect(await client.submit("w1:p1", "keep this draft", "keep this draft", false, "queue")).toMatchObject({ ok: false, code: "pending_input_unsupported" });
+    expect(await client.submit("w1:p1", "keep this draft", "keep this draft", { delivery: "queue" })).toMatchObject({ ok: false, code: "pending_input_unsupported" });
     expect(submissions(socket)).toEqual([]);
     client.close();
   }
@@ -68,7 +68,7 @@ it("accepts an owner-only pending item as the submit receipt when its separate A
   const socket = FakeSocket.last;
   socket.open();
   socket.receive(snapshot(["submit", "pending-input"]));
-  const result = client.submit("w1:p1", "one accepted message", "one accepted message", false, "queue");
+  const result = client.submit("w1:p1", "one accepted message", "one accepted message", { delivery: "queue" });
   for (let turn = 0; turn < 10 && submissions(socket).length === 0; turn++) await Promise.resolve();
   const pending: PendingMessage = { id: "pending-1", request_id: 1, text: "one accepted message", state: "queued", created_at: "2026-10-06T00:00:00Z" };
   socket.receive({ type: "pending-messages", pane_id: "w1:p1", messages: [pending] });
@@ -84,7 +84,7 @@ it("matches live queue receipts only to queued submits for the same captured pan
   const socket = FakeSocket.last;
   socket.open();
   socket.receive(snapshot(["submit", "pending-input"]));
-  const queued = client.submit("w1:p1", "queued", "queued", false, "queue");
+  const queued = client.submit("w1:p1", "queued", "queued", { delivery: "queue" });
   const immediate = client.submit("w1:p1", "immediate", "immediate");
   const action = client.pendingAction("w1:p1", "pending-other", "steer");
   const settled: string[] = [];
@@ -119,7 +119,7 @@ it("ignores a receipt from an old socket even when its request ID matches a new 
   socket.open();
   socket.receive(snapshot(["submit", "pending-input"]));
   let settled = false;
-  const result = client.submit("w1:p1", "new connection", "new connection", false, "queue");
+  const result = client.submit("w1:p1", "new connection", "new connection", { delivery: "queue" });
   void result?.then(() => { settled = true; });
   for (let turn = 0; turn < 10 && submissions(socket).length === 0; turn++) await Promise.resolve();
   const pending: PendingMessage = { id: "new-pending", request_id: 1, text: "new connection", state: "queued", created_at: "2026-10-06T00:00:00Z" };
@@ -202,14 +202,14 @@ it("refuses unsupported pending actions and never replays an action after discon
   client.close();
 });
 
-it("keeps existing Enter submits and the older bridge's input fallback compatible", async () => {
+it("types the terminal's input line as a typed submit, and keeps the older bridge's input fallback compatible", async () => {
   for (const features of [[], ["submit"], ["submit", "pending-input"]]) {
     const client = new HerdrSocket("ws://test/ws");
     client.connect();
     const socket = FakeSocket.last;
     socket.open();
     socket.receive(snapshot(features));
-    const result = client.submit("w1:p1", "steer now", "steer now", true);
+    const result = client.typeLine("w1:p1", "steer now", "steer now");
     for (let turn = 0; turn < 10 && submissions(socket).length === 0; turn++) await Promise.resolve();
     if (features.includes("submit")) {
       expect(submissions(socket)).toEqual([{ type: "submit", id: 1, pane_id: "w1:p1", text: "steer now", payload: "steer now", typed: true }]);
@@ -228,12 +228,12 @@ it("never replays a queued submit after disconnecting, including before its capa
     socket.open();
     client.attach("w1:p1", 80, 24);
     if (known) socket.receive(snapshot(["submit", "pending-input"]));
-    const result = client.submit("w1:p1", "do not replay", "do not replay", false, "queue");
+    const result = client.submit("w1:p1", "do not replay", "do not replay", { delivery: "queue" });
     for (let turn = 0; turn < 10 && known && submissions(socket).length === 0; turn++) await Promise.resolve();
     socket.disconnect();
     expect(await result).toMatchObject({ ok: false, code: "disconnected" });
     expect(client.canQueueMessages()).toBe(false);
-    expect(client.submit("w1:p1", "offline", "offline", false, "queue")).toBeNull();
+    expect(client.submit("w1:p1", "offline", "offline", { delivery: "queue" })).toBeNull();
     client.connect();
     const reconnect = FakeSocket.last;
     reconnect.open();
@@ -250,7 +250,7 @@ it("sends no submit while observing, including a role change while waiting for t
   client.connect();
   const socket = FakeSocket.last;
   socket.open();
-  const pending = client.submit("w1:p1", "not while observing", "not while observing", false, "queue");
+  const pending = client.submit("w1:p1", "not while observing", "not while observing", { delivery: "queue" });
   client.setMode("observe");
   socket.receive(snapshot(["submit", "pending-input"]));
   expect(await pending).toMatchObject({ ok: false, code: "read_only" });
@@ -265,7 +265,7 @@ it("applies a server-forced observe acknowledgement before a pending submit wake
   client.connect();
   const socket = FakeSocket.last;
   socket.open();
-  const pending = client.submit("w1:p1", "keep this draft", "keep this draft", false, "queue");
+  const pending = client.submit("w1:p1", "keep this draft", "keep this draft", { delivery: "queue" });
   socket.receive({ type: "role-ack", mode: "observe" });
   socket.receive(snapshot(["submit", "pending-input"]));
   expect(await pending).toMatchObject({ ok: false, code: "read_only" });
@@ -466,4 +466,74 @@ it("waits for capabilities when output precedes snapshot, and supports old bridg
     expect(client.sendInput("w1:p1", "no replay")).toBe(false);
     client.close();
   }
+});
+
+it("sends an agent-only message marked as such, and refuses it, sending nothing, to a server that cannot keep it from a shell", async () => {
+  const submits = (socket: FakeSocket) => socket.sent.filter((frame) => frame.type === "submit" || frame.type === "input");
+  for (const features of [["submit"], []]) {
+    const client = new HerdrSocket("ws://test/ws");
+    client.connect();
+    const socket = FakeSocket.last;
+    socket.open();
+    socket.receive(snapshot(features));
+    expect(await client.submit("w1:p1", "> quoted\ncomment", "> quoted\ncomment", { agentOnly: true })).toEqual({ ok: false, code: "agent_only_unsupported", message: expect.any(String), typed: false });
+    expect(submits(socket)).toEqual([]);
+    client.close();
+  }
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["submit", "submit-agent-only"]));
+  const result = client.submit("w1:p1", "> quoted\ncomment", "payload", { agentOnly: true });
+  for (let turn = 0; turn < 10 && submits(socket).length === 0; turn++) await Promise.resolve();
+  expect(submits(socket)).toMatchObject([{ type: "submit", pane_id: "w1:p1", text: "> quoted\ncomment", agent_only: true }]);
+  socket.receive({ type: "submit-result", id: submits(socket)[0]!["id"], pane_id: "w1:p1", ok: true });
+  expect(await result).toEqual({ ok: true });
+  client.close();
+});
+
+it("passes on the bridge's typed:false, and adds nothing to a refusal that does not carry it", async () => {
+  const submits = (socket: FakeSocket) => socket.sent.filter((frame) => frame.type === "submit" || frame.type === "pending-action");
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["submit", "pending-input", "submit-agent-only"]));
+  const refused = client.submit("w1:p1", "> quoted", "payload", { agentOnly: true });
+  for (let turn = 0; turn < 10 && submits(socket).length < 1; turn++) await Promise.resolve();
+  socket.receive({ type: "submit-result", id: submits(socket)[0]!["id"] as number, pane_id: "w1:p1", ok: false, code: "agent_not_found", message: "no agent", typed: false });
+  expect(await refused).toEqual({ ok: false, code: "agent_not_found", message: "no agent", typed: false });
+  const unknown = client.submit("w1:p1", "plain", "plain");
+  for (let turn = 0; turn < 10 && submits(socket).length < 2; turn++) await Promise.resolve();
+  socket.receive({ type: "submit-result", id: submits(socket)[1]!["id"] as number, pane_id: "w1:p1", ok: false, code: "timeout", message: "herdr timed out" });
+  expect(await unknown).toEqual({ ok: false, code: "timeout", message: "herdr timed out" });
+  const steer = client.pendingAction("w1:p1", "pending-1", "steer");
+  for (let turn = 0; turn < 10 && submits(socket).length < 3; turn++) await Promise.resolve();
+  socket.receive({ type: "pending-result", id: submits(socket)[2]!["id"] as number, pane_id: "w1:p1", pending_id: "pending-1", ok: false, code: "agent_blocked", message: "menu", typed: false });
+  expect(await steer).toEqual({ ok: false, code: "agent_blocked", message: "menu", typed: false });
+  client.close();
+});
+
+it("queues an agent-only message for the next turn with both marks, and refuses it to a bridge that cannot queue", async () => {
+  const submits = (socket: FakeSocket) => socket.sent.filter((frame) => frame.type === "submit" || frame.type === "input");
+  const old = new HerdrSocket("ws://test/ws");
+  old.connect();
+  FakeSocket.last.open();
+  FakeSocket.last.receive(snapshot(["submit", "submit-agent-only"]));
+  expect(await old.submit("w1:p1", "> quoted\ncomment", "payload", { delivery: "queue", agentOnly: true })).toMatchObject({ ok: false, code: "pending_input_unsupported", typed: false });
+  expect(submits(FakeSocket.last)).toEqual([]);
+  old.close();
+  const client = new HerdrSocket("ws://test/ws");
+  client.connect();
+  const socket = FakeSocket.last;
+  socket.open();
+  socket.receive(snapshot(["submit", "pending-input", "submit-agent-only"]));
+  const result = client.submit("w1:p1", "> quoted\ncomment", "payload", { delivery: "queue", agentOnly: true });
+  for (let turn = 0; turn < 10 && submits(socket).length === 0; turn++) await Promise.resolve();
+  expect(submits(socket)).toMatchObject([{ type: "submit", pane_id: "w1:p1", delivery: "queue", agent_only: true }]);
+  const pending: PendingMessage = { id: "pending-1", request_id: submits(socket)[0]!["id"] as number, text: "> quoted\ncomment", state: "queued", created_at: "2026-10-06T00:00:00Z" };
+  socket.receive({ type: "submit-result", id: pending.request_id, pane_id: "w1:p1", ok: true, pending });
+  expect(await result).toEqual({ ok: true, pending });
+  client.close();
 });

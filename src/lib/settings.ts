@@ -5,7 +5,8 @@
  * `--term-*` tokens of each theme for PaneTerminal's theme object.
  */
 
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { blockComments } from "./blockComments.ts";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
@@ -86,12 +87,14 @@ export interface Settings {
   /** fonts tried before the UI font in the chat's prose (code stays mono), as a CSS font-family list; "" keeps the UI font */
   chatFontFamily: string;
   /** how wide the chat lane may run on a large screen, keyed as data-chat-width in src/styles.css; default follows the pane
-   *  (chatLaneWidth, written by PaneTerminal); a narrower pane is never affected */
+   *  (chatLaneWidth, written by lib/chatLane.ts); a narrower pane is never affected */
   chatWidth: ChatWidth;
   /** true: Enter sends in the composer, Shift+Enter breaks the line; false: Ctrl/Cmd+Enter sends */
   enterSends: boolean;
   /** show the agent's folded reasoning blocks in the chat view */
   showThinking: boolean;
+  /** comment on a reply or a file by selecting text or clicking a block; off deletes every comment */
+  comments: boolean;
   /** request a screen wake lock while a pane is open in this visible tab */
   keepScreenOn: boolean;
   /** UI language; `system` follows the browser (src/lib/i18n.ts) */
@@ -129,9 +132,16 @@ export interface Settings {
   voicePolishChat: boolean;
   /** off by default: a terminal line is usually a command, kept as spoken */
   voicePolishTerminal: boolean;
-  /** code is colored by its language; off, it is plain text */
+  /** the file viewer wraps long lines instead of scrolling sideways */
+  wrapCode: boolean;
+  /** code in the chat and the file viewer is colored by syntax; off, it is plain text */
   highlightCode: boolean;
+  /** the width of a Markdown preview: the chat's lane (--chat-w), centered, or the viewer's width */
+  markdownWidth: MarkdownWidth;
 }
+
+export const MARKDOWN_WIDTHS = ["readable", "full"] as const;
+export type MarkdownWidth = (typeof MARKDOWN_WIDTHS)[number];
 
 export const DEFAULT_SETTINGS: Settings = {
   terminalInputMode: "auto",
@@ -154,6 +164,7 @@ export const DEFAULT_SETTINGS: Settings = {
   chatWidth: "default",
   enterSends: true,
   showThinking: false,
+  comments: true,
   keepScreenOn: false,
   language: "system",
   alertsOn: true,
@@ -174,7 +185,9 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceLanguage: "auto",
   voicePolishChat: true,
   voicePolishTerminal: false,
+  wrapCode: false,
   highlightCode: true,
+  markdownWidth: "readable",
 };
 
 export const QUICK_REPLIES_MAX = 12;
@@ -250,7 +263,7 @@ function chatLaneFollow(paneWidth: number): number {
 }
 
 /**
- * The Default chat lane for a pane this wide, as the CSS length PaneTerminal writes to --chat-w:
+ * The Default chat lane for a pane this wide, as the CSS length lib/chatLane.ts writes to --chat-w:
  * 71.43% of the pane, min 820px, max 60rem.
  * A length with no percentage in it: the lane's columns sit in boxes of different widths (the
  * transcript and the composer column inside a gutter, the held list and the menus outside it),
@@ -309,6 +322,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     chatWidth: CHAT_WIDTHS.includes(record["chatWidth"] as ChatWidth) ? record["chatWidth"] as ChatWidth : DEFAULT_SETTINGS.chatWidth,
     enterSends: typeof record["enterSends"] === "boolean" ? record["enterSends"] : DEFAULT_SETTINGS.enterSends,
     showThinking: typeof record["showThinking"] === "boolean" ? record["showThinking"] : DEFAULT_SETTINGS.showThinking,
+    comments: typeof record["comments"] === "boolean" ? record["comments"] : DEFAULT_SETTINGS.comments,
     keepScreenOn: typeof record["keepScreenOn"] === "boolean" ? record["keepScreenOn"] : DEFAULT_SETTINGS.keepScreenOn,
     language: LANGUAGE_SETTINGS.includes(record["language"] as LanguageSetting) ? record["language"] as LanguageSetting : DEFAULT_SETTINGS.language,
     alertsOn: typeof record["alertsOn"] === "boolean" ? record["alertsOn"] : DEFAULT_SETTINGS.alertsOn,
@@ -332,7 +346,9 @@ export function sanitizeSettings(raw: unknown): Settings {
     voiceLanguage: DICTATION_LANGUAGES.includes(record["voiceLanguage"] as (typeof DICTATION_LANGUAGES)[number]) ? record["voiceLanguage"] as DictationLanguage : DEFAULT_SETTINGS.voiceLanguage,
     voicePolishChat: typeof record["voicePolishChat"] === "boolean" ? record["voicePolishChat"] : DEFAULT_SETTINGS.voicePolishChat,
     voicePolishTerminal: typeof record["voicePolishTerminal"] === "boolean" ? record["voicePolishTerminal"] : DEFAULT_SETTINGS.voicePolishTerminal,
+    wrapCode: typeof record["wrapCode"] === "boolean" ? record["wrapCode"] : DEFAULT_SETTINGS.wrapCode,
     highlightCode: typeof record["highlightCode"] === "boolean" ? record["highlightCode"] : DEFAULT_SETTINGS.highlightCode,
+    markdownWidth: MARKDOWN_WIDTHS.find((width) => width === record["markdownWidth"]) ?? DEFAULT_SETTINGS.markdownWidth,
   };
 }
 
@@ -406,9 +422,9 @@ function applyToDocument(settings: Settings, resolved: ResolvedTheme, language: 
   root.dataset["density"] = settings.density;
   root.dataset["palette"] = settings.palette;
   root.dataset["chatWidth"] = settings.chatWidth;
-  // ChatView.css scales its type tokens by this: the chosen size over the density's
+  // ChatView.css scales its type tokens by this (the chat's and a Markdown preview's): the chosen size over the density's
   root.style.setProperty("--chat-scale", String(chatFontSize(settings) / CHAT_BASE_FONT[settings.density]));
-  // ChatView.css sets the transcript's prose in this, and falls back to --font-ui without it
+  // ChatView.css sets the transcript's and a Markdown preview's prose in this, and falls back to --font-ui without it
   const chatFont = chatFontStack(settings.chatFontFamily);
   if (chatFont === null) root.style.removeProperty("--font-chat");
   else root.style.setProperty("--font-chat", chatFont);
@@ -428,7 +444,14 @@ interface SettingsContextValue {
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<Settings>(loadSettings);
+  // the Comments setting decides what the comment store lists (`BlockCommentStore.setEnabled`): applied as the settings
+  // load, before anything reads the store, and on every change before paint, so what read it in that commit draws again
+  const [settings, setSettings] = useState<Settings>(() => {
+    const loaded = loadSettings();
+    blockComments.setEnabled(loaded.comments);
+    return loaded;
+  });
+  useLayoutEffect(() => blockComments.setEnabled(settings.comments), [settings.comments]);
   const [systemDark, setSystemDark] = useState(() => resolveTheme("system") === "dark");
 
   useEffect(() => {

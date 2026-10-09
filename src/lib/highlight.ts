@@ -28,6 +28,8 @@ import { tsx } from "@tanstack/highlight/languages/tsx";
 import { vue } from "@tanstack/highlight/languages/vue";
 import { yaml } from "@tanstack/highlight/languages/yaml";
 
+import { pathParts } from "./filePaths.ts";
+import { memoizeLast } from "./memoizeLast.ts";
 
 /** What a token means, independent of any theme; CSS maps each role to a token color. */
 export type SyntaxRole =
@@ -49,8 +51,8 @@ export interface Token {
 }
 
 /**
- * One array of tokens per source line, without the line break. Never has a trailing empty line (a
- * final "\n" ends the last line, it does not start another) and always has at least one line; an
+ * One array of tokens per source line, without the line break. A final "\n" leaves an empty
+ * trailing entry so joining the lines preserves source whitespace. Always has at least one line; an
  * empty line is an empty array. A multi-line construct (comment, template string) keeps its role on
  * every line it spans.
  */
@@ -100,7 +102,7 @@ const highlighter = createHighlighter({
 });
 const REGISTERED = new Set(highlighter.listLanguages());
 
-// a fence word to its registered language, beyond the aliases TanStack knows
+// a fence word or a file extension to its registered language, beyond the aliases TanStack knows
 // itself (javascript, typescript, bash, sh, zsh, yml, py, md, xml, golang, patch, docker, …)
 const LANGUAGE_ALIASES: Record<string, string> = {
   mts: "ts", cts: "ts",
@@ -123,7 +125,7 @@ function languageForWord(word: string): string | null {
   return REGISTERED.has(language) ? language : null;
 }
 
-/** Whether `language` is one this module highlights (a name `languageForFence` gives). */
+/** Whether `language` is one this module highlights (a name `languageForFence`/`languageForPath` give). */
 export function canHighlight(language: string | null): language is string {
   return language !== null && REGISTERED.has(language);
 }
@@ -134,6 +136,25 @@ export function canHighlight(language: string | null): language is string {
  */
 export function languageForFence(info: string): string | null {
   return languageForWord(info.trim().split(/\s+/)[0]?.toLowerCase() ?? "");
+}
+
+/**
+ * The registered language for a file path (either separator), from its name alone, or `null` when
+ * there is none. This is the only place that maps file names to languages: "is this file Markdown"
+ * is `languageForPath(path) === "markdown"`.
+ */
+export function languageForPath(path: string): string | null {
+  const { stem, extension } = pathParts(path.toLowerCase());
+  const name = stem + extension;
+  // before the name rules: Dockerfile.md is a document about a Dockerfile
+  if (name.endsWith(".md") || name.endsWith(".markdown")) return "markdown";
+  if (name === "dockerfile" || name.startsWith("dockerfile.") || name.endsWith(".dockerfile") || name === "containerfile") return "dockerfile";
+  if (name === "cmakelists.txt") return "cmake";
+  if (name === "nginx.conf") return "nginx";
+  if ([".bashrc", ".zshrc", ".profile", ".bash_profile"].includes(name)) return "shell";
+  if (name === ".env" || name.startsWith(".env.")) return "env";
+  if (name === ".gitignore" || name === ".editorconfig") return "toml";
+  return languageForWord(extension.slice(1));
 }
 
 // TanStack's semantic classes to roles; an unlisted class (`operator`) is plain
@@ -154,9 +175,9 @@ const CLASS_ROLES: Partial<Record<HighlightTokenClass, SyntaxRole>> = {
 const ROLES: readonly (SyntaxRole | null)[] = [null, "keyword", "string", "number", "comment", "function", "type", "variable", "meta", "inserted", "deleted"];
 const ROLE_INDEX = new Map(ROLES.map((role, index) => [role, index]));
 
-/** Normalize line endings without discarding source whitespace from rendered text and selection. */
+/** Normalize line endings as Markdown/fileLines do, retaining all trailing source whitespace. */
 export function normalizeCode(code: string): string {
-  return code.replace(/\r\n/g, "\n");
+  return code.replace(/\r\n?/g, "\n");
 }
 
 /** Uncolored lines, in the same shape as tokenized ones, so a view never tells the two apart. */
@@ -217,22 +238,15 @@ export function extendLines(lines: Lines, tail: string): Lines {
   return next;
 }
 
-/** The last code `highlightNow` highlighted, as it answered. */
-let lastHighlight: { source: string; language: string; lines: Lines } | null = null;
-
 /**
  * `source` (normalized) highlighted at once, on the calling thread. Never throws: a highlighter
- * error gives plain lines. The last call is remembered, so a block mounted anew with the same code
- * is not tokenized again. Only for short code (`SYNC_HIGHLIGHT_LIMIT`) or in a worker.
+ * error gives plain lines. Remembered for its last call (`memoizeLast`), so a remount does not
+ * tokenize again. Only for short code (`SYNC_HIGHLIGHT_LIMIT`) or in a worker.
  */
-export function highlightNow(source: string, language: string): Lines {
-  if (lastHighlight !== null && lastHighlight.source === source && lastHighlight.language === language) return lastHighlight.lines;
-  let lines: Lines;
+export const highlightNow = memoizeLast(function highlightNow(source: string, language: string): Lines {
   try {
-    lines = linesFromRuns(source, highlightRuns(source, language));
+    return linesFromRuns(source, highlightRuns(source, language));
   } catch {
-    lines = plainLines(source);
+    return plainLines(source);
   }
-  lastHighlight = { source, language, lines };
-  return lines;
-}
+});

@@ -378,6 +378,60 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   `HERDR_WEB_TELEMETRY=0` or `DO_NOT_TRACK=1` turns it off on the server.
   ([Anonymous usage counts](docs/guide.md#anonymous-usage-counts),
   [#599](https://github.com/devswha/herdr-web-ui/pull/599))
+- The file viewer renders a Markdown file as a **Preview**, with **Show source** for its text,
+  and shows every text file as highlighted code with line numbers. **Raw** opens the file in a new
+  tab and **Copy** copies the file; a file cut short says so in its size (`256 KB of 1.3 MB`), and a
+  warning sign there marks it, or one too long to color or to preview, with the reason as its
+  tooltip. Code blocks in the chat are highlighted too. Highlighting (TanStack Highlight) and the
+  Preview's parsing run in a worker for anything longer than a few lines, so no file or reply can
+  freeze the page: what takes longer than 2 s is shown plain. **Settings → File viewer** turns
+  highlighting off and sets line wrapping and the width of a Markdown preview. A Markdown preview
+  has the chat's font size and font, and by default the chat's width.
+  ([#429](https://github.com/devswha/herdr-web-ui/pull/429) by @aNNdii)
+- A task list (`- [x] done`, `- [ ] open`) in the chat and in a Markdown preview shows a checked or
+  empty box instead of the brackets.
+  ([#429](https://github.com/devswha/herdr-web-ui/pull/429) by @aNNdii)
+- Comment on an agent's final reply in the chat: select text with the mouse and the comment opens,
+  or click a paragraph, list item or block to comment on all of it (tap it on a phone; a pointer
+  that hovers outlines it first). There is no Comment button: a selection made by touch or the
+  keyboard, and a double or triple click, only select, to copy. The comment is written in a popover that opens beside its pin, to its
+  right, a plain input box (a bottom sheet on a phone, which quotes what it is on); Cmd/Ctrl+Enter or
+  its arrow button saves, and Escape or a click outside closes it only while nothing is typed; that
+  click does nothing else, but selecting other text opens its comment at once.
+  Several selections in one paragraph are several comments, and one selection over several
+  paragraphs or list items is one comment. The commented text is highlighted in place (a tint and
+  an underline in the accent colour) with a speech-bubble pin whose tip sits where you clicked or
+  let go of the mouse, and stays there
+  on the text as it rewraps; a pin opens the comment to edit, its text in the field, with
+  **Delete** beside the save arrow, and its text stays up while it is open. Pointing at a pin, or focusing it (pins are in the Tab
+  order), brings its text up and fades the other comments' marks. In the message box the comments
+  show as a bar below any attached files, above the text ("3 comments on the reply"): a tap on it walks to them, one comment per tap, and its X removes them all. The
+  bar's icon is accent-coloured while the comments go with the next message and dim, with the bar
+  saying "waiting" and the reason in its name, while they wait. With the keyboard alone, a comment
+  can be opened through its pin or the bar, but not written. The next message sends the comments first, each quoting its
+  selected text, in reading order. A command or an answer to the agent's open question goes without
+  them; they wait for the next message. They only ever go to an agent: when none runs in the pane,
+  what is typed goes alone (a shell would run the quoted lines), and its terminal output takes no
+  comments. A message with comments sent during a turn waits with them for the agent's next turn,
+  bound to that agent; sent at once while no agent runs, it is refused rather than typed into the
+  pane, and so it is when a Codex is busy with its own queued questions. Comments are kept per
+  pane on this device. **Settings → Chat → Comments** turns them off: it asks first, then deletes
+  every comment on this device, and no pin, drag or block click is left.
+  ([#409](https://github.com/devswha/herdr-web-ui/pull/409) by @aNNdii)
+- Comment on a file in the file viewer, in its Markdown preview and in its code view, when it was
+  opened from a pane. Select text with the mouse and the comment opens, as in the chat; or click
+  or tap a line of the code view or a block of the preview to comment on all of it. A comment shows
+  as a pin as in the chat, where you clicked or let go of the mouse, its popover opening beside it, and the popover shows the file and lines
+  (`sync.ts · Line 8`). In the header a
+  comment icon carries the file's count, and each tap walks to the next one, unfolding a folded
+  code block it is in; an outdated comment opens in a dialog. The composer's bar counts them with
+  the reply comments, and its walk opens the file at each. The next message sends them after the reply comments, each as a
+  `> path:lines` quote of the commented lines (a line cut at 200 characters, a quote at 20 lines)
+  over the comment. A comment follows its lines when the file changes, and is marked outdated, but
+  still sent, when they are gone.
+- A comment's sheet on a phone raises the keyboard as it opens (a saved comment's only once its
+  field is tapped) and stays in view above it, in the chat and in the file viewer. **Send** while a comment is half written sends nothing and gives
+  the focus back to that comment's field instead.
 
 ### Changed
 - The default mobile terminal key bar puts Esc, Tab and Ctrl+C first, before the held modifiers
@@ -391,6 +445,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - A GitHub release opens with its patch notes, short lines under New features, Improvements and
   Bug fixes as an install shows them, with the full changelog folded underneath.
   ([#598](https://github.com/devswha/herdr-web-ui/pull/598))
+- A file the viewer cannot show has no Open in new tab, only Download. A size under 10 MB shows one
+  decimal (`1.3 MB`), in the viewer and in a bridge update's progress.
+  ([#429](https://github.com/devswha/herdr-web-ui/pull/429) by @aNNdii)
 - The website moved to <https://herdrweb.dev/>, and the install commands with it:
   `curl -fsSL https://herdrweb.dev/install.sh | sh` and
   `irm https://herdrweb.dev/install.ps1 | iex`. Every address under
@@ -415,6 +472,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   notice, as a usage limit reached or reset does. Claude Code 2.1.29x records these as
   informational entries, which the chat left out.
   ([#600](https://github.com/devswha/herdr-web-ui/pull/600) by @Yoonwoo-Ha)
+- On a phone, the chat's message box keeps the keyboard's word suggestions, autocorrect and
+  spell checking, and starts a sentence with a capital. The box used to turn all of them off,
+  as the terminal does.
+- Delete and other danger buttons no longer turn grey like the buttons beside them when the
+  pointer is over them. ([#409](https://github.com/devswha/herdr-web-ui/pull/409) by @aNNdii)
 - A chat message with an invisible character in it (a zero-width space, a joiner, a byte-order
   mark, often in pasted text) no longer seems lost. Claude Code 2.1.294 takes such characters out
   and keeps the message in its input for review instead of sending it, while the chat had already
@@ -923,6 +985,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   squeezed every column to fit, down to a letter or two, so words and file paths broke after
   any letter. A column is now never narrower than its longest word.
   ([#481](https://github.com/devswha/herdr-web-ui/pull/481) by @aNNdii)
+- A Markdown quote nested deeper than 32 levels shows its remaining `>` as text. A few kilobytes of
+  nested quotes overflowed the renderer: a chat message showed that it can't be shown, and a
+  Markdown file blanked the app. A preview that still cannot be drawn now says so in the file
+  viewer and offers its source.
+  ([#429](https://github.com/devswha/herdr-web-ui/pull/429) by @aNNdii)
 - In the chat of an OmO pane, a background task that ends shows where OmO reported it: a
   card that says how many tasks ended, and for each its summary, whether it finished, failed
   or was cancelled, the agent and model it ran as, how long it took, its turns, tool calls and
