@@ -7,6 +7,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Fixed
+- This fork uses `dle-labs.herdr-web-ui` for its plugin identity, phone setup actions and config-directory lookup.
+
 ## [0.4.6] - 2026-10-11
 
 ### Added
