@@ -130,6 +130,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   takes the unused height, and an empty one follows the folded section directly. The Agents height
   cap, independent scrolling and fixed footer stay unchanged.
   ([#780](https://github.com/devswha/herdr-web-ui/pull/780) by @vibewriter-hand)
+- This fork uses `dle-labs.herdr-web-ui` for its plugin identity, phone setup actions and config-directory lookup.
 
 ## [0.4.6] - 2026-10-11
 
