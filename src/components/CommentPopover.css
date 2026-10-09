@@ -176,6 +176,13 @@ pre.comment-popover-plain {
   gap: var(--space-3);
 }
 
+.comment-dictation-note {
+  margin: 0;
+  color: var(--danger-text);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+
 /* a comment's field (CommentDraft.tsx `CommentField`), bare in the card: two lines tall at first, grows with the
    comment (CommentDraft.tsx), then scrolls */
 .comment-editor-field {

@@ -1,7 +1,7 @@
 /* the terminal's input line on touch screens (TerminalInput.tsx): above the key bar, one row
    that grows to four, with a send button that reads Enter while the line is empty */
 .terminal-input {
-  position: relative; /* the dictation pill floats above it */
+  position: relative; /* dictation status occupies a full grid row */
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-2);

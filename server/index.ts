@@ -15,6 +15,7 @@ import { paneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
 import { badRequest, errorResponse, isCount, isJsonObject, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
+import { dictationPolicy, dictationConfig } from "./dictation.ts";
 import { startStatusCollector } from "./collector.ts";
 import { conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneRunsOmo, toolOutput } from "./conversation.ts";
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
@@ -355,6 +356,8 @@ export function createServer(
     usage?: UsageService;
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
     voice?: VoiceService;
+    /** Exact HTTPS speech origins; unset reads HERDR_WEB_DICTATION_ORIGINS (JSON array). Invalid policy refuses startup. */
+    dictationOrigins?: readonly string[];
     machines?: boolean;
     registerBridge?: boolean;
     /** SUBMIT_DEADLINE_MS; tests shorten it */
@@ -381,6 +384,7 @@ export function createServer(
     sidecar?: boolean;
   } = {},
 ): { port: number; hostname: string; stop: () => void } {
+  const dictation = dictationPolicy(options.dictationOrigins);
   const attachments = new Map<string, PaneAttachment>();
   /** whether this bridge can `terminal attach`: herdr is asked once, and the PTY sidecar has to be runnable here (server/pty/sidecar.ts) */
   /** whether the sidecar can run, settled as the server starts so that attach, /api/health and /api/bridge tell one answer; a forced answer (tests) stands in for it */
@@ -1419,6 +1423,9 @@ export function createServer(
       if (pathname === "/api/herdr/update") return handleHerdrUpdateRequest(request, options.herdrUpdate);
       if (pathname === "/api/telemetry") return handleTelemetryRequest(request, options.telemetry);
 
+      if (pathname === "/api/dictation/config" && request.method === "GET") {
+        return Response.json(dictationConfig(dictation), { headers: { "cache-control": "no-store" } });
+      }
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
       if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
@@ -1975,7 +1982,7 @@ export function createServer(
       }
 
       // static client - public even when the API is gated, so the login UI can load
-      return serveStatic(pathname);
+      return serveStatic(pathname, dictation);
     },
 
     websocket: {

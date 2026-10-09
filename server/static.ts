@@ -9,6 +9,9 @@
 
 import { existsSync } from "node:fs";
 import { join, normalize } from "node:path";
+import { dictationPolicy, type DictationPolicy } from "./dictation.ts";
+
+const NO_DICTATION = dictationPolicy([]);
 
 // A URL's pathname is not a file path: on Windows it is `/C:/...`, and spaces come percent-encoded.
 const DIST_DIR = join(import.meta.dir, "..", "dist");
@@ -80,7 +83,9 @@ function cacheControlFor(pathname: string): string {
  * - `connect-src 'self'`: every fetch is a relative /api path, the terminal socket is
  *   window.location.host over ws:/wss: (which 'self' matches — confirmed in Chromium:
  *   an explicit `new WebSocket("ws://<same host>/ws")` and the machines event stream both
- *   connect under the enforcing header).
+ *   connect under the enforcing header). Direct dictation additionally permits only
+ *   administrator-approved exact HTTPS origins and their WSS counterparts, from the
+ *   same immutable policy as /api/dictation/config. File-viewer CSP remains separate.
  * - `media-src 'self'`: the file viewer's <video>/<audio>, same-origin.
  * - `frame-src 'self'`: the PDF viewer frames /api/fs/file, same-origin.
  * - `worker-src 'self'`: the service worker is /sw.js, same-origin.
@@ -112,20 +117,22 @@ const CSP_DIRECTIVES = [
  *   logs what the policy would have blocked and the app keeps working. `report-only` is the
  *   measurement mode; anything else enforces.
  */
-function cspHeader(): Record<string, string> {
+export function cspHeader(dictation: DictationPolicy = NO_DICTATION): Record<string, string> {
   const mode = process.env["HERDR_WEB_CSP"];
-  const policy = CSP_DIRECTIVES.join("; ");
+  const connections = dictation.allowed_origins.flatMap((origin) => [origin, origin.replace(/^https:/, "wss:")]);
+  const policy = CSP_DIRECTIVES.map((directive) => directive === "connect-src 'self'" && connections.length
+    ? `${directive} ${connections.join(" ")}` : directive).join("; ");
   return mode === "report-only"
     ? { "content-security-policy-report-only": policy }
     : { "content-security-policy": policy };
 }
 
-export async function serveStatic(pathname: string): Promise<Response> {
+export async function serveStatic(pathname: string, dictation: DictationPolicy = NO_DICTATION): Promise<Response> {
   const indexPath = join(DIST_DIR, "index.html");
   if (!existsSync(indexPath)) {
     return new Response(
       "herdr-web-ui server is running, but the browser client has not been built yet.\nRun: bun run build\n",
-      { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
+      { status: 200, headers: { "content-type": "text/plain; charset=utf-8", ...cspHeader(dictation) } },
     );
   }
   const relative = normalize(pathname).replace(/^(\.\.[/\\])+/, "");
@@ -134,11 +141,11 @@ export async function serveStatic(pathname: string): Promise<Response> {
     const file = Bun.file(candidate);
     if ((await file.exists()) && !(await file.stat()).isDirectory()) {
       return new Response(file, {
-        headers: { "content-type": contentTypeFor(candidate), "cache-control": cacheControlFor(pathname), ...cspHeader() },
+        headers: { "content-type": contentTypeFor(candidate), "cache-control": cacheControlFor(pathname), ...cspHeader(dictation) },
       });
     }
   }
   return new Response(Bun.file(indexPath), {
-    headers: { "content-type": "text/html; charset=utf-8", "cache-control": REVALIDATE, ...cspHeader() },
+    headers: { "content-type": "text/html; charset=utf-8", "cache-control": REVALIDATE, ...cspHeader(dictation) },
   });
 }

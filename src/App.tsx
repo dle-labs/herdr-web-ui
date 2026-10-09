@@ -959,7 +959,8 @@ export function App() {
         <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} viewing={viewing !== null} onOpenFile={viewFile} onClose={() => setFilesOpen(false)} />
       )}
       {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
-        <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} machineId={viewing.machineId} commentId={viewing.comment ?? null}
+        <FileViewer key={`${viewing.machineId}:${viewing.paneId}:${viewing.path}`} path={viewing.path} paneId={viewing.paneId} machineId={viewing.machineId} commentId={viewing.comment ?? null}
+          connected={connected && role === "interact" && viewing.machineId === selectedMachineId && viewing.paneId === selectedPaneId}
           paneFolder={(() => {
             // the pane's folder is known only for the PC whose panes are listed
             if (viewing.machineId !== selectedMachineId) return null;

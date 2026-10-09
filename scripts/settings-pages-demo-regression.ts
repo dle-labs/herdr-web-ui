@@ -10,8 +10,10 @@ import { openSettingsPage } from "./settings-page.ts";
 // the browser's Back button steps out of the dialog instead of out of the app. All files and
 // HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
-const PAGES = ["Appearance", "Chat", "Terminal", "File viewer", "Alerts", "Voice input", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "About"];
-const SETTINGS = { language: "en", showUsage: true, voiceInput: true, showQuickReplies: true };
+const PAGES = ["Appearance", "Chat", "Terminal", "File viewer", "Alerts", "Dictation", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "About"];
+// Persisted activation must never enable private speech traffic in the public demo.
+const PRIVATE_SPEECH = "https://dictation-private.invalid";
+const SETTINGS = { language: "en", showUsage: true, voiceInput: "on", showQuickReplies: true, dictation: { baseUrl: `${PRIVATE_SPEECH}/v1`, model: "test/installed-english", activated: true } };
 
 const dialogOf = (page: Page) => page.getByRole("dialog", { name: "Settings", exact: true });
 const openSettings = async (page: Page): Promise<void> => {
@@ -60,6 +62,11 @@ try {
         const context = await browser.newContext({ viewport: { width, height: 760 }, isMobile: true, hasTouch: true, locale: "en-US" });
         try {
           await context.addInitScript((settings) => { if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", settings); }, JSON.stringify(SETTINGS));
+          const privateRequests: string[] = [];
+          await context.route(`${PRIVATE_SPEECH}/**`, (route) => {
+            privateRequests.push(route.request().url());
+            return route.abort();
+          });
           const page = await context.newPage();
           const errors: string[] = [];
           page.on("pageerror", (error) => errors.push(error.message));
@@ -71,6 +78,13 @@ try {
             // what a page asks the server for (devices, the phone address, the accounts) has arrived
             await page.waitForFunction(() => ![...document.querySelectorAll(".settings-body [role='status']")].some((node) => /Loading…|Asking this PC/.test(node.textContent ?? "")));
             if (name === "Subscription usage") await page.locator(".usage-accounts-row").first().waitFor();
+            if (name === "Dictation") {
+              const policy = await page.evaluate(async () => (await fetch("/api/dictation/config")).json());
+              assert.deepEqual(policy, { enabled: false, allowed_origins: [] }, "demo policy ignores persisted private activation");
+              assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true);
+              assert.equal(await page.getByRole("button", { name: "Check", exact: true }).isDisabled(), true);
+              assert.equal(await page.getByRole("button", { name: "Apply", exact: true }).isDisabled(), true);
+            }
             assert.deepEqual(await cutOff(page), [], `${name} fits a ${width}px phone`);
           }
           // the quick replies are text fields beside a Remove button each: both stay in the card
@@ -81,6 +95,7 @@ try {
           assert.equal(await replies.count(), (JSON.parse(await page.evaluate(() => localStorage.getItem("herdr-web-ui:settings")!)) as { quickReplies: string[] }).quickReplies.length);
           await page.getByRole("button", { name: "Restore defaults", exact: true }).tap();
           assert.deepEqual(errors, []);
+          assert.deepEqual(privateRequests, [], "persisted activation and Settings never contact a private speech origin in demo");
           await page.getByRole("button", { name: "Close settings", exact: true }).tap();
           console.log(`PASS every Settings page fits a ${width}px phone, quick replies and their Remove buttons included`);
         } finally {

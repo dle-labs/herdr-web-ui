@@ -60,6 +60,7 @@ function useMarkdownPreview(text: string | null): Preview {
 }
 
 export interface FileViewerProps {
+  connected: boolean;
   /** absolute, `~/…`, or relative to the pane's folder */
   path: string;
   paneId: string | null;
@@ -108,7 +109,7 @@ function CopyFileButton({ text, sourceRef, onShowSource }: { text: string; sourc
  * text file raw), and anything can be downloaded: an installed app on a phone opens a new tab in
  * an in-app view, which does not always offer to save it.
  */
-export function FileViewer({ path: asked, paneId, machineId, paneFolder, onClose, onOpen, commentId = null, keyboardActive = true }: FileViewerProps) {
+export function FileViewer({ connected, path: asked, paneId, machineId, paneFolder, onClose, onOpen, commentId = null, keyboardActive = true }: FileViewerProps) {
   const t = useT();
   const { fetchFileInfo, fileUrl, fetchDirectories } = useMachineApi();
   // a remote PC's bridge reads a relative folder from the pane's folder only from its next bundle
@@ -192,7 +193,7 @@ export function FileViewer({ path: asked, paneId, machineId, paneFolder, onClose
     // one is the topmost overlay, so it takes the key, unless a native modal (Add PC) is over it
     /** Escape closes the open comment popover, else the viewer, from anywhere in it, unless something in it took the key. */
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape" || event.defaultPrevented || walkDialogOpen.current || nativeModalOver(surface.current)) return;
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229 || walkDialogOpen.current || nativeModalOver(surface.current)) return;
       if (commentEscape.current()) return;
       onClose();
     };
@@ -242,10 +243,10 @@ export function FileViewer({ path: asked, paneId, machineId, paneFolder, onClose
   [owner, commentView, filePath, paneFolder, sourceLines, wholeLines, cutShort]);
   const bodyRef = useRef<HTMLDivElement>(null);
   const contentRef = commentView === "preview" ? previewRef : sourceRef;
-  const comments = useFileCommentLayer(scope, bodyRef, contentRef);
+  const comments = useFileCommentLayer(scope, bodyRef, contentRef, connected);
   // the header's counter walks this file's comments, switching to the view one was written in
   const walk = useFileCommentWalk({
-    owner, view: commentView, comments: comments.comments, surface: bodyRef, content: contentRef,
+    owner, connected, view: commentView, comments: comments.comments, surface: bodyRef, content: contentRef,
     showView: (next: FileView) => setChosen({ path, mode: next === "code" ? "code" : "preview" }),
   });
   // Escape is the open popover's first, or the walk's dialog's, before it is the viewer's

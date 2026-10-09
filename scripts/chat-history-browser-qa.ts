@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
-import { VOICE_DEFAULTS, type VoiceStatus } from "../shared/voice.ts";
+import type { DictationConfigResponse } from "../shared/protocol.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-history-browser-"));
 let server: ReturnType<typeof Bun.serve> | undefined;
@@ -17,8 +17,8 @@ try {
     const path = new URL(request.url).pathname;
     if (path === "/ws") return new Response(null, { status: 404 });
     if (path.endsWith("/pane/commands")) return Response.json({ commands: [] });
-    // a desktop's composer asks whether dictation can work here before it shows the mic
-    if (path === "/api/voice") return Response.json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus);
+    // Capture is unavailable in this transcript-only fixture; no private speech requests.
+    if (path === "/api/dictation/config") return Response.json({ enabled: false, allowed_origins: [] } satisfies DictationConfigResponse);
     return path === "/" ? new Response('<html><head><link rel="stylesheet" href="/chat-history-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-history-fixture.js"></script></body></html>', { headers: { "Content-Type": "text/html" } }) : new Response(Bun.file(join(root, path.slice(1))));
   } });
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });

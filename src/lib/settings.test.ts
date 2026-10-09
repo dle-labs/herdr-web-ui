@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_DICTATION_CONFIG } from "./voiceTransport.ts";
+import { DICTATION_BASE_MAX_CHARS, DICTATION_MODEL_MAX_CHARS, sanitizeDictation, voiceButton } from "./settings.ts";
 import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
 import { alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
@@ -318,16 +320,78 @@ describe("microphone button", () => {
     for (const voiceInput of [null, 1, "yes", "ON"]) expect(sanitizeSettings({ voiceInput }).voiceInput).toBe("auto");
   });
 
-  it("is asked for in the chat off a phone on auto, everywhere when on and nowhere when off", () => {
-    expect(wantsVoiceInput("auto", "chat", false)).toBe(true);
-    expect(wantsVoiceInput("auto", "chat", true)).toBe(false);
-    expect(wantsVoiceInput("auto", "terminal", false)).toBe(false);
-    for (const mode of ["chat", "terminal"] as const) {
-      for (const phone of [false, true]) {
+  it("requests every draft surface on Auto and On, on phones too, but never on Off", () => {
+    for (const mode of ["chat", "terminal", "comment"] as const) {
+      for (const phone of [false, true, undefined]) {
+        expect(wantsVoiceInput("auto", mode, phone)).toBe(true);
         expect(wantsVoiceInput("on", mode, phone)).toBe(true);
         expect(wantsVoiceInput("off", mode, phone)).toBe(false);
       }
     }
+  });
+});
+
+describe("dictation settings", () => {
+  it("migrates legacy visibility explicitly and never activates a legacy record", () => {
+    for (const [old, expected] of [["off", "off"], ["on", "on"], ["auto", "auto"], [true, "on"], [false, "auto"], [undefined, "auto"], [null, "auto"], ["bad", "auto"]] as const) {
+      expect(voiceButton(old)).toBe(expected);
+      const migrated = sanitizeSettings({ voiceInput: old, voicePolishChat: true, voicePolishTerminal: true, api_key: "secret" });
+      expect(migrated.dictation).toEqual(DEFAULT_DICTATION_CONFIG);
+      expect(migrated.dictation.activated).toBe(false);
+      expect(migrated).not.toHaveProperty("voicePolishChat");
+      expect(migrated).not.toHaveProperty("voicePolishTerminal");
+      expect(migrated).not.toHaveProperty("api_key");
+    }
+  });
+
+  it("retains valid explicitly applied settings across storage and unrelated updates", () => {
+    const dictation = { baseUrl: "https://speech.example/v1/", model: " custom/model ", activated: true };
+    const saved = sanitizeSettings({ dictation, voiceInput: "off" });
+    expect(saved.dictation).toEqual({ baseUrl: "https://speech.example/v1", model: "custom/model", activated: true });
+    const reloaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
+    expect(reloaded.dictation).toEqual(saved.dictation);
+    expect(sanitizeSettings({ ...reloaded, theme: "light" }).dictation).toEqual(saved.dictation);
+    expect(reloaded.voiceInput).toBe("off");
+  });
+
+  it("requires explicit boolean activation and valid bounded fields", () => {
+    const valid = { baseUrl: "https://speech.example/v1", model: "custom/model", activated: true };
+    for (const activated of [false, undefined, null, "true", 1]) expect(sanitizeDictation({ ...valid, activated }).activated).toBe(false);
+    for (const baseUrl of [undefined, 7, "http://speech.example/v1", "https://user:pass@speech.example/v1", "https://speech.example/v1?q=1", "https://speech.example/v1#part", "x".repeat(DICTATION_BASE_MAX_CHARS + 1)]) {
+      const clean = sanitizeDictation({ ...valid, baseUrl });
+      expect(clean.activated).toBe(false);
+      expect(clean.baseUrl.length).toBeLessThanOrEqual(DICTATION_BASE_MAX_CHARS);
+    }
+    for (const model of [undefined, 7, "", "  ", "bad\nmodel", "bad\u0000model", "x".repeat(DICTATION_MODEL_MAX_CHARS + 1)]) {
+      const clean = sanitizeDictation({ ...valid, model });
+      expect(clean.activated).toBe(false);
+      expect(clean.model.length).toBeLessThanOrEqual(DICTATION_MODEL_MAX_CHARS);
+    }
+    for (const raw of [undefined, null, [], true, "bad"]) expect(sanitizeDictation(raw)).toEqual(DEFAULT_DICTATION_CONFIG);
+  });
+
+  it("invalidates capture at update-call time rather than in the React state updater", () => {
+    const source = readFileSync(join(import.meta.dir, "settings.ts"), "utf8");
+    const handler = source.slice(source.indexOf("const update = useCallback"), source.indexOf("const value = useMemo"));
+    expect(handler.indexOf("invalidateDictation()")).toBeGreaterThan(0);
+    expect(handler.indexOf("invalidateDictation()")).toBeLessThan(handler.indexOf("setSettings((current)"));
+    expect(handler).toContain('Object.hasOwn(patch, "dictation")');
+    expect(handler).toContain('Object.hasOwn(patch, "voiceInput")');
+  });
+
+  it("keeps speech-service requests explicit and never acquires a microphone in settings", () => {
+    const page = readFileSync(join(import.meta.dir, "..", "components", "DictationSettings.tsx"), "utf8");
+    const dialog = readFileSync(join(import.meta.dir, "..", "components", "SettingsDialog.tsx"), "utf8");
+    for (const source of [page, dialog]) {
+      expect(source).not.toContain("getUserMedia");
+      expect(source).not.toContain("fetchVoiceStatus");
+      expect(source).not.toContain("saveVoiceConfig");
+      expect(source).not.toContain("voicePolish");
+    }
+    expect(page).toContain("discoverDictationModels({ ...applied }, controller.signal)");
+    expect(page).toContain("generation !== request.current.generation");
+    expect(page).toContain("applied.activated && !urlEdited");
+    expect(dialog).toContain('case "voice": return <DictationSettings />');
   });
 });
 
