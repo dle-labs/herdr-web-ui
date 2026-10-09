@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { loadKatex, Markdown } from "../components/Markdown.tsx";
+import { loadKatex, Markdown, ParsedMarkdown } from "../components/Markdown.tsx";
 import { SettingsProvider } from "./settings.ts";
-import { FOLD_CODE_AFTER_LINES, FOLDED_CODE_LINES, foldCode, inlineMarks, isTableSeparator, mathNestsTooDeep, parseInline, parseMarkdown, safeMarkdownHref, trimUrl, type InlineNode, type ListBlock } from "./markdown.ts";
+import { FOLD_CODE_AFTER_LINES, FOLDED_CODE_LINES, foldCode, inlineMarks, isTableSeparator, mathNestsTooDeep, parseInline, parseMarkdown, parseMarkdownWithLines, previewHosts, safeMarkdownHref, trimUrl, type InlineNode, type ListBlock, type MarkdownBlock } from "./markdown.ts";
 
 describe("parseMarkdown", () => {
   it("renders inline and display math while leaving fenced code untouched", async () => {
@@ -415,9 +415,9 @@ describe("numbered lists as agents write them", () => {
     ]);
     const html = render("1. step\n   - [x] done\n   - [ ] open");
     // the box is named by the item's text, so a screen reader says "done, checkbox, checked"
-    const done = /<li class="markdown-task"><span class="markdown-task-box" role="checkbox" aria-checked="true" aria-disabled="true" aria-labelledby="([^"]+)"><svg[^]*?<\/svg><\/span><span id="([^"]+)"><span>done<\/span><\/span><\/li>/.exec(html);
+    const done = /<li class="markdown-task"><div class="markdown-item"><span class="markdown-task-box" role="checkbox" aria-checked="true" aria-disabled="true" aria-labelledby="([^"]+)"><svg[^]*?<\/svg><\/span><span id="([^"]+)"><span>done<\/span><\/span><\/div><\/li>/.exec(html);
     expect(done?.[1]).toBe(done?.[2]!);
-    const open = /<li class="markdown-task"><span class="markdown-task-box" role="checkbox" aria-checked="false" aria-disabled="true" aria-labelledby="([^"]+)"><\/span><span id="([^"]+)"><span>open<\/span><\/span><\/li>/.exec(html);
+    const open = /<li class="markdown-task"><div class="markdown-item"><span class="markdown-task-box" role="checkbox" aria-checked="false" aria-disabled="true" aria-labelledby="([^"]+)"><\/span><span id="([^"]+)"><span>open<\/span><\/span><\/div><\/li>/.exec(html);
     expect(open?.[1]).toBe(open?.[2]!);
     expect(done).not.toBeNull();
     expect(open).not.toBeNull();
@@ -459,7 +459,7 @@ describe("numbered lists as agents write them", () => {
     const source = "1. first\n\n   | a | b |\n   |---|---|\n   | 1 | 2 |\n\n1. second\n1. third";
     expect(lists(source)).toEqual([{ start: 1, items: 3 }]);
     const html = render(source);
-    expect(html).toContain('<ol class="markdown-list"><li><span>first</span><div class="markdown-table-wrap"><table>');
+    expect(html).toContain('<ol class="markdown-list"><li><div class="markdown-item"><span>first</span></div><div class="markdown-block"><div class="markdown-table-wrap"><table>');
     expect(html.match(/<ol/g)).toHaveLength(1);
   });
 
@@ -480,7 +480,7 @@ describe("numbered lists as agents write them", () => {
       { type: "paragraph", lines: [[{ value: "After the table." }], [{ value: "And more." }]] },
       { type: "paragraph", lines: [[{ value: "Another paragraph." }]] },
     ]);
-    expect(render(source)).toContain("</table></div><p>");
+    expect(render(source)).toContain("</table></div></div><p>");
   });
 
   it("ends the list at a quote after an item's table, as before tables nested", () => {
@@ -508,6 +508,120 @@ describe("numbered lists as agents write them", () => {
     expect(html).not.toContain("<script");
     expect(html).not.toContain("<img");
     expect(html).not.toContain("<b>");
+  });
+});
+
+describe("parseMarkdownWithLines", () => {
+  it("leaves parseMarkdown without source lines", () => {
+    expect(parseMarkdown("# A\n\ntext")).toEqual([{ type: "heading", level: 1, content: [{ type: "text", value: "A" }] }, { type: "paragraph", lines: [[{ type: "text", value: "text" }]] }]);
+  });
+
+  it("numbers headings, paragraph lines and rules", () => {
+    const [h, p, hr] = parseMarkdownWithLines("# A\n\none\ntwo\n\n---");
+    expect(h!.source).toEqual([1, 1]);
+    expect(p!.source).toEqual([3, 4]);
+    expect((p as { lineNumbers?: number[] }).lineNumbers).toEqual([3, 4]);
+    expect(hr!.source).toEqual([6, 6]);
+  });
+
+  it("numbers a fenced block from its fence, an indented one too", () => {
+    expect(parseMarkdownWithLines("x\n\n```ts\na\nb\n```")[1]!.source).toEqual([3, 6]);
+    expect(parseMarkdownWithLines("- item\n  ```\n  a\n  ```")[1]!.source).toEqual([2, 4]);
+  });
+
+  it("retains fenced blank lines without shifting their source line numbers", () => {
+    const markdown = "# A\r\n\r\n```text\r\n  a\r\n\r\n\r\n```";
+    expect(parseMarkdownWithLines(markdown)[1]).toEqual({ type: "code", language: "text", value: "  a\n\n", source: [3, 7] });
+    const html = render(true, markdown);
+    expect(html).toContain('<span class="hl-line" data-source-line="4">  a</span>\n<span class="hl-line" data-source-line="5"></span>\n<span class="hl-line" data-source-line="6"></span>');
+    expect(html).not.toContain('data-source-line="7"');
+  });
+
+  it("numbers list items by their own text, continuation lines included", () => {
+    const list = parseMarkdownWithLines("- one\n  more\n- two\n  - nested")[0] as ListBlock;
+    expect(list.items[0]!.source).toEqual([1, 2]);
+    expect(list.items[1]!.source).toEqual([3, 3]);
+    expect((list.items[1]!.blocks![0] as ListBlock).items[0]!.source).toEqual([4, 4]);
+  });
+
+  it("numbers table rows without the delimiter row", () => {
+    const table = parseMarkdownWithLines("text\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |")[1]!;
+    expect(table.source).toEqual([3, 6]);
+    expect((table as { rowLines?: number[] }).rowLines).toEqual([3, 5, 6]);
+  });
+
+  it("numbers a quote's contents by the file's lines", () => {
+    const quote = parseMarkdownWithLines("x\n\n> a\n>\n> b")[1] as Extract<MarkdownBlock, { type: "blockquote" }>;
+    expect(quote.source).toEqual([3, 5]);
+    expect(quote.blocks.map((b) => b.source)).toEqual([[3, 3], [5, 5]]);
+  });
+
+  it("numbers CRLF sources like LF ones", () => {
+    expect(parseMarkdownWithLines("# A\r\n\r\ntext")[1]!.source).toEqual([3, 3]);
+  });
+
+  it("lists the card hosts in document order", () => {
+    expect(previewHosts(parseMarkdownWithLines("# A\n\n- one\n  - two\n\n> q\n> r\n\n---\n\ntext"))).toEqual([[1, 1], [3, 3], [4, 4], [6, 7], [11, 11]]);
+  });
+
+  // every kind of block: heading 1, paragraph 3–4, table 6–8, item 10–11 with a nested item 12, quote 14–15, code 17–19, math 21–23
+  const sample = "# A\n\none\ntwo\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- item\n  more\n  - nested\n\n> q\n> r\n\n```ts\nx\n```\n\n\\[\ny\n\\]";
+  /**
+   * `sample` drawn as the app draws it (the settings read the browser's languages, as in the first
+   * test). A code block's fold uses a layout effect, which a static render warns about: that warning
+   * alone is left out.
+   */
+  const render = (sourceLines: boolean, markdown = sample): string => {
+    const languages = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    const error = console.error;
+    console.error = (...args: unknown[]) => { if (!String(args[0]).includes("useLayoutEffect does nothing on the server")) error(...args); };
+    try {
+      return renderToStaticMarkup(createElement(SettingsProvider, {
+        children: sourceLines
+          ? createElement(ParsedMarkdown, { blocks: parseMarkdownWithLines(markdown) })
+          : createElement(Markdown, { children: markdown }),
+      }));
+    } finally {
+      console.error = error;
+      if (languages) Object.defineProperty(navigator, "languages", languages);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  };
+
+  it("lists the hosts of every kind of block, as the preview draws them", () => {
+    expect(previewHosts(parseMarkdownWithLines(sample))).toEqual([[1, 1], [3, 4], [6, 8], [10, 11], [12, 12], [14, 15], [17, 19], [21, 23]]);
+  });
+
+  it("draws the chat's Markdown without source lines", () => {
+    expect(render(false)).not.toContain("data-source");
+  });
+
+  it("writes a preview's source lines on its line elements", () => {
+    const html = render(true);
+    expect(html).toContain('<h3 class="markdown-h1" data-source-line="1">');
+    expect(html).toContain('<span data-source-line="3">');
+    expect(html).toContain('<span data-source-line="4">');
+    expect(html).toContain('<tr data-source-line="6">');
+    expect(html).toContain('<tr data-source-line="8">');
+    expect(html).toContain('<div class="markdown-item" data-source-line="10" data-source-end="11">');
+    expect(html).toContain('<div class="markdown-item" data-source-line="12">');
+    // the quote's contents, by the file's lines; the fence's body from the line after the fence
+    expect(html).toContain('<span data-source-line="14">');
+    expect(html).toContain('<span class="hl-line" data-source-line="18">');
+    expect(html).toContain('<div class="markdown-block" data-source-line="21" data-source-end="23">');
+  });
+
+  it("names a folded block's last source line on its Show all button, and only in a preview", () => {
+    // the fence on line 3, its FOLD_CODE_AFTER_LINES + 5 lines from line 4 on: the last is line FOLD_CODE_AFTER_LINES + 8
+    const code = Array.from({ length: FOLD_CODE_AFTER_LINES + 5 }, (_, n) => `line ${n + 1}`).join("\n");
+    const long = `# A\n\n\`\`\`text\n${code}\n\`\`\``;
+    const html = render(true, long);
+    expect(html).toContain(`class="markdown-code-more" aria-expanded="false" data-fold-end="${FOLD_CODE_AFTER_LINES + 8}"`);
+    // the folded head only: the last line drawn is the fold's last
+    expect(html).toContain(`data-source-line="${3 + FOLDED_CODE_LINES}"`);
+    expect(html).not.toContain(`data-source-line="${4 + FOLDED_CODE_LINES}"`);
+    expect(render(false, long)).not.toContain("data-fold-end");
   });
 });
 

@@ -67,7 +67,7 @@ export function ConfirmDialog({ title, body, confirmLabel, onConfirm, escalation
   };
 
   return createPortal(
-    <div className="modal-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onClose(); }}>
+    <div className="modal-scrim confirm-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onClose(); }}>
       <div ref={surface} className="modal confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-body`} tabIndex={-1}>
         <header className="modal-header"><h2 className="modal-title" id={`${id}-title`}>{title}</h2></header>
         <div className="modal-body">

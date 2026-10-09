@@ -4,6 +4,8 @@ interface FilePreview {
   path: string;
   paneId: string | null;
   machineId: string;
+  /** the id of a file comment of the pane to open the viewer at (the composer's walk) */
+  comment?: string;
 }
 const HISTORY_KEY = "herdr-web-ui:file-preview";
 
@@ -12,8 +14,9 @@ function previewFromState(state: unknown): FilePreview | null {
   const preview = (state as Record<string, unknown>)[HISTORY_KEY];
   if (preview === null || typeof preview !== "object") return null;
   const value = preview as Record<string, unknown>;
-  return typeof value.path === "string" && typeof value.machineId === "string" &&
-    (value.paneId === null || typeof value.paneId === "string") ? { path: value.path, machineId: value.machineId, paneId: value.paneId } : null;
+  if (typeof value.path !== "string" || typeof value.machineId !== "string" || (value.paneId !== null && typeof value.paneId !== "string")) return null;
+  if (value.comment !== undefined && typeof value.comment !== "string") return null;
+  return { path: value.path, machineId: value.machineId, paneId: value.paneId, ...(value.comment === undefined ? {} : { comment: value.comment }) };
 }
 
 /** Android Back traverses history: a preview must be an entry above the chat, not just a modal. */

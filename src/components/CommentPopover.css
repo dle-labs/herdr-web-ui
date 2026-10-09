@@ -1,0 +1,281 @@
+/* The open comment (CommentPopover.tsx): beside its pin, a small card over the text, placed by
+   CommentPins.tsx inside `.comment-popover-place`; as a dialog, the shared modal primitive, which is
+   a bottom sheet at phone width. The card is the input box: beside its pin, the field alone (a file
+   comment's file and lines only for assistive tech), then a saved comment's Delete at the left and ↑ at the right. A dialog and a
+   sheet first quote what the comment is on, with ✕ at the right. */
+.comment-popover {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(360px, 100vw - 2 * var(--space-4));
+  padding: var(--space-4);
+  background: var(--bg-panel);
+  border: var(--hairline) solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  /* the chat's face (Settings → Chat font, ChatView.css `.chat-transcript`), at the transcript's size and
+     scaled with it (Settings → Chat font size): the popover lies beside the text it is on, in a pin layer outside the
+     transcript, or in a portal, so it says both itself */
+  font-family: var(--font-chat, var(--font-ui));
+  font-size: calc(var(--fs-chat) * var(--chat-scale, 1));
+  line-height: var(--lh-base);
+  overflow-y: auto;
+}
+
+/* a dialog's scrim lies over the surface it was opened from, the file viewer too (FileViewer.css lifts the viewer
+   one step above a modal, over the file browser); Settings opened by its shortcut over it, and every question, lie
+   above it (+ 3, SettingsDialog.css, ConfirmDialog.css) */
+.comment-popover-scrim {
+  z-index: calc(var(--z-modal) + 2);
+}
+
+/* the card is the input box: its edge takes the accent while its field has the focus */
+.comment-popover:focus-within {
+  border-color: var(--accent);
+}
+
+/* the box takes the focus as a saved comment opens on a touch screen, where its field does not (no keyboard rises):
+   it is the dialog, not a control in it */
+.comment-popover:focus {
+  outline: none;
+}
+
+/* as a dialog (`.modal`): as narrow as beside a pin, its frame the modal's */
+.modal.comment-popover {
+  width: min(100%, 360px);
+  border-radius: var(--radius-lg);
+}
+
+/* the sheet's grip: only where the dialog is a sheet */
+.comment-popover-grip {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .modal.comment-popover {
+    width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .comment-popover-grip {
+    display: block;
+    align-self: center;
+    flex: none;
+    width: var(--space-8);
+    height: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--border-strong);
+  }
+
+  /* the keyboard covers the home indicator: the sheet drops the room it kept for it (styles.css `[data-keyboard] .modal`) */
+  [data-keyboard] .modal.comment-popover {
+    padding-bottom: var(--space-3);
+  }
+}
+
+/* the top row: what the comment is on, and a dialog's ✕ beside it at the right, level with its first line */
+.comment-popover-top {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.comment-popover-context {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.comment-popover-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-1);
+  margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-1)) 0 0;
+}
+
+.comment-popover-action {
+  width: var(--space-6);
+  height: var(--space-6);
+}
+
+/* fingers: a full touch target */
+@media (pointer: coarse) {
+  .comment-popover-action {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+}
+
+/* the file and lines a comment is on (FileReference.tsx), then why it is shown here: small and quiet */
+.comment-popover-reference,
+.comment-popover-note {
+  margin: 0;
+}
+
+.comment-popover-note {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+/* the text commented, quoted as the message will carry it: context, so quiet, a rail and dimmed text
+   without a box of its own; at most about five lines, then it scrolls */
+.comment-popover-quote {
+  flex: none;
+  max-height: 5lh;
+  overflow: auto;
+  padding: 0 var(--space-2);
+  border-left: var(--rail-w) solid var(--border-strong);
+  color: var(--text-dim);
+  font-size: calc(var(--fs-md) * var(--chat-scale, 1));
+  line-height: var(--lh-base);
+}
+
+/* a quoted block takes the quote's size, not the transcript's (ChatView.css `.markdown`) */
+.comment-popover-quote .markdown {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* the quote is context, not a widget: a code box and a table sit in it without their own frame */
+.comment-popover-quote .markdown-code {
+  margin-bottom: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.comment-popover-quote .markdown-table-wrap {
+  margin-bottom: 0;
+}
+
+.comment-popover-quote th,
+.comment-popover-quote td {
+  border-width: 0 0 var(--hairline) 0;
+}
+
+.comment-popover-plain {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* a file's lines, as the viewer shows them: in the code font, their indentation kept */
+pre.comment-popover-plain {
+  font-family: var(--font-mono);
+  font-size: calc(var(--fs-sm) * var(--chat-scale, 1));
+}
+
+/* the form: the card itself is the input box, as the inline form before it was. The field bare in it, then a row with a
+   saved comment's Delete at the left and the ↑ save button at the right, both at the control height, well apart */
+.comment-popover-edit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* a comment's field (CommentDraft.tsx `CommentField`), bare in the card: two lines tall at first, grows with the
+   comment (CommentDraft.tsx), then scrolls */
+.comment-editor-field {
+  display: block;
+  width: 100%;
+  min-height: 2lh;
+  max-height: 6lh;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-strong);
+  font: inherit;
+  /* never under --fs-input on a touch screen, the smallest size iOS does not zoom the page for (Composer.css) */
+  font-size: max(var(--fs-input), calc(var(--fs-chat) * var(--chat-scale, 1)));
+  line-height: var(--lh-base);
+  resize: none;
+  overflow-y: auto;
+}
+
+/* with a mouse the comment is typed at the popover's own size, as the message box is (Composer.css) */
+@media (hover: hover) and (pointer: fine) {
+  .comment-editor-field {
+    font-size: inherit;
+  }
+}
+
+.comment-editor-field:focus {
+  outline: none;
+}
+
+.comment-popover-edit-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+/* Delete, always in view on a saved comment: an icon button of the app's (`.icon-button`) at the control height, dim,
+   the danger colour only under a pointer or the keyboard's focus. Pushed to the left, away from ↑ */
+.comment-popover-delete {
+  width: var(--control-h);
+  height: var(--control-h);
+  margin-right: auto;
+  color: var(--text-dim);
+}
+
+.comment-popover-delete svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.comment-popover-delete:focus-visible {
+  color: var(--status-blocked);
+}
+
+@media (hover: hover) {
+  .comment-popover-delete:hover:not(:disabled) {
+    color: var(--status-blocked);
+  }
+}
+
+/* ↑: the composer's send button by its tokens (Composer.css `.composer-send`), round at the control height */
+.comment-popover-save {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--control-h);
+  height: var(--control-h);
+  padding: 0;
+  background: var(--primary);
+  border: 0;
+  border-radius: var(--radius-pill);
+  color: var(--primary-text);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+
+.comment-popover-save svg {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+/* nothing to save (a new comment empty, a saved one unchanged): dimmed, as a disabled button is (styles.css `.btn`) */
+.comment-popover-save:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .comment-popover-save:hover:not(:disabled) {
+    background: var(--primary-hover);
+  }
+}
+
+/* fingers: a full touch target, Delete's too */
+@media (pointer: coarse) {
+  .comment-popover-save,
+  .comment-popover-delete {
+    width: var(--touch-target);
+    height: var(--touch-target);
+  }
+}
