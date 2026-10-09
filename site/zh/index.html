@@ -393,14 +393,14 @@
           <div class="n">01</div>
           <div>
             <h3>聊天与终端，共用一个窗格。<span class="arw" aria-hidden="true">→</span></h3>
-            <p>阅读 Claude Code、Codex、omp、omo、gjc 和 pi 的原生会话记录，以及 herdr 识别出的 OpenCode 2 会话，一键切换到实时终端。聊天内容来自智能体自己的会话数据，而不是屏幕文字，每一轮的命令和编辑会折叠成一个块。智能体工作时可以先写好下一条消息：它会在下一轮发出，也可以用 Send now 立即发送。</p>
+            <p>阅读 Claude Code、Codex、omp、omo、gjc 和 pi 的原生会话记录，以及 herdr 识别出的 OpenCode 2 和 Devin CLI 会话，一键切换到实时终端。聊天内容来自智能体自己的会话数据，而不是屏幕文字，每一轮的命令和编辑会折叠成一个块。智能体工作时可以先写好下一条消息：它会在下一轮发出，也可以用 Send now 立即发送。</p>
           </div>
           <div class="ev" aria-hidden="true">
             <div class="seg"><span class="on">聊天</span><span>终端</span></div>
             <div class="ev-row"><span>claude</span><b>原生会话记录</b></div>
             <div class="ev-row"><span>codex</span><b>原生 rollout</b></div>
             <div class="ev-row"><span>omp · omo · gjc · pi</span><b>会话文件</b></div>
-            <div class="ev-row"><span>OpenCode 2</span><b>会话数据库</b></div>
+            <div class="ev-row"><span>OpenCode 2 · Devin CLI</span><b>会话数据库</b></div>
             <div class="ev-row"><span>其他程序</span><b>终端文字</b></div>
           </div>
         </a>
@@ -440,7 +440,7 @@
           </div>
           <div class="ev" aria-hidden="true">
             <div class="cmdline">tailscale serve --bg --https=443 http://127.0.0.1:7317</div>
-            <div class="keys"><kbd>esc</kbd><kbd>tab</kbd><kbd>ctrl</kbd><kbd>alt</kbd><kbd>shift</kbd><kbd>⏎</kbd><kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd><kbd>^C</kbd></div>
+            <div class="keys"><kbd>esc</kbd><kbd>tab</kbd><kbd>^C</kbd><kbd>ctrl</kbd><kbd>alt</kbd><kbd>shift</kbd><kbd>⏎</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd></div>
           </div>
         </a>
         <a class="row" href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#how-it-works">
@@ -608,7 +608,7 @@
           </div>
           <div class="qa">
             <dt>聊天视图支持哪些智能体？</dt>
-            <dd>Claude Code、Codex、omp、omo、gjc 和 pi 直接从各自的会话文件读取。OpenCode 2 会从 OpenCode 自己的数据库读取 herdr 报告的会话；处于主屏幕或使用 1.x 数据库时则显示实时终端。其他程序显示实时终端和状态。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#supported-agents">支持的智能体 →</a></dd>
+            <dd>Claude Code、Codex、omp、omo、gjc 和 pi 直接从各自的会话文件读取。OpenCode 2 会从 OpenCode 自己的数据库读取 herdr 报告的会话；处于主屏幕或使用 1.x 数据库时则显示实时终端。Devin CLI 在 herdr 或运行中的进程指明其会话时（例如用 <code>devin --resume</code> 加会话 ID 启动时）显示为聊天，直接运行 <code>devin</code> 则显示实时终端。其他程序显示实时终端和状态。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#supported-agents">支持的智能体 →</a></dd>
           </div>
           <div class="qa">
             <dt>它会取代 herdr 自带的 TUI 吗？</dt>
@@ -620,7 +620,7 @@
           </div>
           <div class="qa">
             <dt>我的代码或对话会离开我的电脑吗？</dt>
-            <dd>会话文件保留在运行各个智能体的电脑上，内容会发送到你连接的浏览器。本应用没有自有的云端中继或账号服务。可选的语音输入会把录音发送给配置的服务商；启用文字整理时也会发送文本。启用用量显示后，会连接服务商的 API。更新、远程电脑设置和推送提醒也可能连接外部服务。智能体自身如何连接模型，取决于它的配置。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">数据传输与访问 →</a></dd>
+            <dd>会话文件保留在运行各个智能体的电脑上，内容会发送到你连接的浏览器。本应用没有自有的云端中继或账号服务。可选的语音输入会把录音发送给配置的服务商；启用文字整理时也会发送文本。启用用量显示后，会连接服务商的 API。更新、远程电脑设置和推送提醒也可能连接外部服务。应用在安装时和每次更新时会发送一次匿名计数（版本、操作系统、安装方式和一个随机 ID，不保存 IP 地址），可在 Settings → About → Anonymous usage counts 中查看发送内容并关闭。智能体自身如何连接模型，取决于它的配置。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">数据传输与访问 →</a></dd>
           </div>
           <div class="qa">
             <dt>支持 Windows 吗？</dt>

@@ -45,6 +45,12 @@ import { useMediaQuery } from "../lib/useMediaQuery.ts";
 /** How long a resize must rest before the grid refits and the pty follows it. */
 const RESIZE_SETTLE_MS = 120;
 
+// Only a tab the user is in drives the shared grid. A window left open behind another app
+// still turns visible when the screen wakes, and reconnects, reloads or moves on to the next pane
+// in the background: taking the pane then sized it for nobody, and herdr's own TUI drew it cut
+// off at its split's edge
+const inUse = (): boolean => document.visibilityState === "visible" && document.hasFocus();
+
 export interface PaneTerminalProps {
   /** The pane this terminal attaches to; null renders the placeholder. */
   paneId: string | null;
@@ -852,13 +858,14 @@ export function PaneTerminal({
         if (message.pane_id === paneRef.current) { setEnded(true); term.options.disableStdin = true; }
       } else if (message.type === "role-ack") {
         // the server is the authority on the role; only after this ack may an
-        // interact client reclaim the shared grid it stopped owning
+        // interact client reclaim the shared grid it stopped owning (a tab out of use
+        // reclaims it when the user comes back: the refit below)
         const nowObserving = message.mode === "observe";
         observeRef.current = nowObserving;
         setObserving(nowObserving);
         term.options.disableStdin = nowObserving || secretRef.current !== null || heldRef.current;
         onRoleAckRef.current?.(message.mode);
-        if (!nowObserving && !fixedGridRef.current && !chatViewRef.current) {
+        if (!nowObserving && !fixedGridRef.current && !chatViewRef.current && inUse()) {
           try {
             fit.fit();
           } catch {
@@ -1104,8 +1111,9 @@ export function PaneTerminal({
         } catch {
           return;
         }
+        // a window the system moves or resizes in the background fits its own grid only
         const current = paneRef.current;
-        if (current) socket.resize(current, term.cols, term.rows);
+        if (current && inUse()) socket.resize(current, term.cols, term.rows);
       }, RESIZE_SETTLE_MS);
     });
     observer.observe(host);
@@ -1160,7 +1168,8 @@ export function PaneTerminal({
     // The pty is shared per pane: a client on another device (typically a phone)
     // resizes it to its own geometry, and this tab's viewport never changed, so
     // the ResizeObserver above stays silent and the pane is left at the other
-    // device's size. Re-assert our geometry whenever this tab comes back. Observe
+    // device's size. Re-assert our geometry whenever the user comes back to this
+    // tab: its window takes the focus, or it turns visible with the focus. Observe
     // connections never do this: they own no geometry to re-assert.
     const refit = (): void => {
       const current = paneRef.current;
@@ -1172,11 +1181,19 @@ export function PaneTerminal({
       }
       socket.resize(current, term.cols, term.rows, true);
     };
-    const onVisible = (): void => {
-      if (document.visibilityState === "visible") refit();
+    // out of use, a reconnect attaches at the size the pane has instead of taking it
+    // (keepSize, as under the chat lens); the refit takes it back once the user is here
+    const leave = (): void => {
+      const current = paneRef.current;
+      if (current && !observeRef.current && !fixedGridRef.current) socket.keepSize(current);
+    };
+    const onVisibility = (): void => {
+      if (inUse()) refit();
+      else leave();
     };
     window.addEventListener("focus", refit);
-    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("blur", leave);
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       disposed = true;
@@ -1196,7 +1213,8 @@ export function PaneTerminal({
       stopEdge();
       selectionChange.dispose();
       window.removeEventListener("focus", refit);
-      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("blur", leave);
+      document.removeEventListener("visibilitychange", onVisibility);
       onModifiedEnter.dispose();
       onCommandBackspace.dispose();
       host.removeEventListener("keydown", onCommandArrow);
@@ -1251,8 +1269,10 @@ export function PaneTerminal({
       } catch {
         return;
       }
+      // a chosen font loads after every attach: out of use (a reload behind another app), only
+      // this grid fits, and the refit takes the pane once the user is here
       const pane = paneRef.current;
-      if (pane) socketRef.current?.resize(pane, term.cols, term.rows, true);
+      if (pane && inUse()) socketRef.current?.resize(pane, term.cols, term.rows, true);
     };
     if (fontFamily === TERMINAL_FONT_STACK) apply();
     else void loadFontStack(fontFamily, terminalFontSize).then(apply);
@@ -1278,8 +1298,10 @@ export function PaneTerminal({
     } catch {
       return;
     }
+    // this runs on every load too, right after the attach: out of use (a reload behind another
+    // app), only this grid fits, and the refit takes the pane once the user is here
     const pane = paneRef.current;
-    if (pane && term) socketRef.current?.resize(pane, term.cols, term.rows, true);
+    if (pane && term && inUse()) socketRef.current?.resize(pane, term.cols, term.rows, true);
     if (!autoSelected && !coarseRef.current) term?.focus();
   }, [chatView]);
 
@@ -1319,7 +1341,9 @@ export function PaneTerminal({
     } catch {
       /* not laid out yet; the ResizeObserver will follow up */
     }
-    socket.attach(paneId, term.cols, term.rows, chatViewRef.current);
+    // out of use (the pane closed in herdr and the app moved on to the next one, or a reload behind
+    // another app), the attach adopts the pane's size; the refit takes it once the user is here
+    socket.attach(paneId, term.cols, term.rows, chatViewRef.current || !inUse());
     // the chat lens covers the grid and its composer takes the keyboard: focusing the hidden
     // grid sent the keys straight to the pane, and showed a phone's IME text mid-screen
     if (!chatViewRef.current && !autoSelected && !coarseRef.current) term.focus();
