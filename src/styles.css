@@ -52,6 +52,8 @@
   --status-done-tint: rgba(147, 195, 107, 0.14);
   --danger-tint: rgba(255, 123, 112, 0.12);
   --danger-text: #ffd9d4;
+  /* a note that the view is partial (a file cut short, code left plain): warning yellow */
+  --notice: #e8c55c;
 
   /* overlays */
   --scrim: rgba(8, 6, 4, 0.55);
@@ -69,6 +71,21 @@
   --term-fg: #d8d0c3;
   --term-cursor: #f0a830;
   --term-selection: #4a3d26;
+
+  /* syntax highlighting (components/HighlightedCode.css): the four derived roles follow the
+     palette because they are resolved on <html>, where data-theme and data-palette sit */
+  /* the file viewer's line numbers: tertiary text, quieter than the code beside them */
+  --line-number: var(--text-dim);
+  --syntax-comment: var(--text-dim);
+  --syntax-function: var(--accent);
+  --syntax-inserted: var(--status-done);
+  --syntax-deleted: var(--status-blocked);
+  --syntax-keyword: #e8875f;
+  --syntax-string: #a8c17c;
+  --syntax-number: #d6a0c9;
+  --syntax-type: #6cb8d6;
+  --syntax-variable: #e0c08f;
+  --syntax-meta: #b49dd6;
 
   /* type (comfortable density; compact overrides below) */
   --font-ui: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", "Malgun Gothic", sans-serif;
@@ -134,7 +151,8 @@
   --content-w: 820px;
   /* the chat lane: transcript, composer column, held list (Settings → Chat width, lib/settings.ts).
      At the Default step PaneTerminal writes the pane's own lane on .terminal-stack, as one
-     length (chatLaneLength: 71.43% of the pane in px, min 820px, max 60rem); this is that rule's floor, for a
+     length (chatLaneLength: 71.43% of the pane in px, min 820px, max 60rem), and a file viewer
+     writes the lane of the pane that opened it on itself; this is that rule's floor, for a
      pane not measured yet. Never a percentage here: each column would resolve it against its
      own box and the columns would differ by their gutters */
   --chat-w: var(--content-w);
@@ -205,6 +223,7 @@
   --status-done-tint: rgba(47, 99, 23, 0.12);
   --danger-tint: rgba(168, 35, 35, 0.1);
   --danger-text: #8f1d1d;
+  --notice: #7a5a00;
   --scrim: rgba(40, 32, 22, 0.35);
   --shadow-drawer: 0 0 40px rgba(40, 32, 22, 0.22);
   --shadow-pop: 0 16px 48px rgba(40, 32, 22, 0.16), 0 0 0 1px var(--border);
@@ -213,6 +232,12 @@
   --term-fg: #2a251f;
   --term-cursor: #8c5000;
   --term-selection: #f0d9ae;
+  --syntax-keyword: #a33a17;
+  --syntax-string: #4b6b18;
+  --syntax-number: #8a3f7a;
+  --syntax-type: #155a72;
+  --syntax-variable: #7a5418;
+  --syntax-meta: #5d4791;
 }
 
 /* Dark report palette (Settings → Appearance → Colors): a near-black blue-grey canvas
@@ -229,6 +254,7 @@
 }
 
 [data-theme="dark"][data-palette="report"] {
+  --notice: #f5b544;
   --bg: #0a0d12;
   --bg-panel: #0f1319;
   --bg-elevated: #141922;
@@ -261,11 +287,18 @@
   --term-fg: #c9d1dc;
   --term-cursor: #4c9aff;
   --term-selection: #1f3a66;
+  --syntax-keyword: #f78c6c;
+  --syntax-string: #3ddc97;
+  --syntax-number: #f5b544;
+  --syntax-type: #7fd4ff;
+  --syntax-variable: #c9d1dc;
+  --syntax-meta: #b392f0;
 }
 
 /* Report and charcoal share plain paper in light; charcoal's own light block below
    swaps the blue for ink */
 [data-theme="light"]:is([data-palette="report"], [data-palette="charcoal"]) {
+  --notice: #8a5300;
   --bg: #f2f2f0;
   --bg-panel: #fafaf9;
   --bg-elevated: #efefed;
@@ -290,12 +323,19 @@
   --term-fg: #242424;
   --term-cursor: #1f5fcc;
   --term-selection: #cfe0fb;
+  --syntax-keyword: #b3261e;
+  --syntax-string: #22743a;
+  --syntax-number: #8a5300;
+  --syntax-type: #0b6e8a;
+  --syntax-variable: #3b3b3b;
+  --syntax-meta: #6f42c1;
 }
 
 /* Charcoal: neutral charcoal, a Ghostty-style terminal (the panel is its #171717), no
    chrome hue - selection, focus, cursor and the user's action are near-white; agent
    states are muted as in the terminal palette. Light keeps the base paper with ink. */
 [data-theme="dark"][data-palette="charcoal"] {
+  --notice: #d9b26a;
   --bg: #0f0f0f;
   --bg-panel: #171717;
   --bg-elevated: #1f1f1f;
@@ -327,6 +367,12 @@
   --term-fg: #cbc7c0;
   --term-cursor: #cbc7c0;
   --term-selection: #49443d;
+  --syntax-keyword: #d7a08a;
+  --syntax-string: #a7b789;
+  --syntax-number: #c2a2af;
+  --syntax-type: #9fb4c2;
+  --syntax-variable: #dcd8d0;
+  --syntax-meta: #b8a5c9;
 }
 
 [data-theme="light"][data-palette="charcoal"] {
@@ -347,6 +393,9 @@
    surfaces, so the style guide's "legibility first" applies: each keeps its hue and is
    darkened until it passes AA (Mauve 17%, Red 18%, Blue 22%, Green 37%). */
 [data-theme="dark"][data-palette="catppuccin"] {
+  --notice: #f9e2af;
+  /* overlay2: --text-dim (subtext1) is nearly --text here */
+  --line-number: #9399b2;
   --bg: #1e1e2e;
   --bg-panel: #181825;
   --bg-elevated: #181825;
@@ -379,9 +428,20 @@
   --term-fg: #cdd6f4;
   --term-cursor: #f5e0dc;
   --term-selection: #3b3d4f;
+  /* Catppuccin's own mapping: keywords mauve, so functions take blue instead of --accent */
+  --syntax-keyword: #cba6f7;
+  --syntax-string: #a6e3a1;
+  --syntax-number: #fab387;
+  --syntax-type: #f9e2af;
+  --syntax-variable: #f5e0dc;
+  --syntax-meta: #f5c2e7;
+  --syntax-function: #89b4fa;
 }
 
 [data-theme="light"][data-palette="catppuccin"] {
+  --notice: #8a5710;
+  /* subtext0, darkened to 4.5:1 on --bg */
+  --line-number: #64677d;
   --bg: #eff1f5;
   --bg-panel: #e6e9ef;
   --bg-elevated: #e6e9ef;
@@ -415,6 +475,13 @@
   --term-fg: #4c4f69;
   --term-cursor: #dc8a78;
   --term-selection: #d2d4dc;
+  --syntax-keyword: #712fc6;
+  --syntax-string: #2f7620;
+  --syntax-number: #b44201;
+  --syntax-type: #905c13;
+  --syntax-variable: #4c4f69;
+  --syntax-meta: #bc1d91;
+  --syntax-function: #0b59f4;
 }
 
 /* Lilac: one quiet lavender. Light is the look it was drawn for: a lavender canvas (`--bg`)
@@ -1037,6 +1104,15 @@ button {
   background: var(--danger-tint);
   border-color: var(--status-blocked);
   color: var(--danger-text);
+}
+
+/* under the pointer it stays a danger button, a shade stronger: the neutral .btn:hover would
+   turn it into the grey of Cancel beside it */
+@media (hover: hover) {
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--status-blocked) 22%, transparent);
+    border-color: var(--status-blocked);
+  }
 }
 
 .btn-ghost {

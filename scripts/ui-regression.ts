@@ -151,6 +151,10 @@ try {
   await until(() => painted.has(paneA), "owned pane paint");
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   await composer.waitFor();
+  // the message box is prose: a phone keyboard keeps its suggestions, autocorrect and capitals
+  assert.equal(await composer.getAttribute("autocorrect"), null, "the message box leaves autocorrect to the keyboard");
+  assert.equal(await composer.getAttribute("spellcheck"), null, "the message box leaves spell checking to the browser");
+  assert.equal(await composer.getAttribute("autocapitalize"), "sentences", "the message box capitalizes sentences");
   await page.locator(".composer .voice-mic").waitFor();
   console.log("PASS a desktop's chat offers the mic before Settings is asked");
   assert.equal(await workspaceHeader(workspaces[0]!).locator(".workspace-name").textContent(), "herdr-web-ui-test-browser-a",

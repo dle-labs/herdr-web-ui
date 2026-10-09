@@ -1,8 +1,10 @@
-/* The Settings shortcut can open it while a file preview still holds its history entry: only
-   then is it raised, over the preview. On its own it stays on the layer every dialog shares, so
-   the file browser, later in the document, still opens above it; the palette has a layer of its own. */
-.settings-over-preview {
-  z-index: calc(var(--z-modal) + 2);
+/* The Settings shortcut can open it while a file preview still holds its history entry, or while a
+   comment's dialog is up (CommentPopover.tsx): only then is it raised, over both (the layers above
+   --z-modal: the preview + 1, a comment's dialog + 2, this and every ConfirmDialog + 3, the
+   palette + 5). On its own it stays on the layer every dialog
+   shares, so the file browser, later in the document, still opens above it. */
+.settings-raised {
+  z-index: calc(var(--z-modal) + 3);
 }
 
 /* Two columns from 641px: the list of pages, and the page it opened. A phone shows one of the

@@ -26,6 +26,10 @@ describe("bridge update progress", () => {
     expect(formatBytes(256 * 1024)).toBe("256 KB");
     expect(formatBytes(MB)).toBe("1 MB");
     expect(formatBytes(130 * MB)).toBe("130 MB");
+    // below 10 MB one decimal tells a 1.3 MB file from its first 1 MB; a whole number keeps none
+    expect(formatBytes(1.3 * MB)).toBe("1.3 MB");
+    expect(formatBytes(9.96 * MB)).toBe("10 MB");
+    expect(formatBytes(2 * MB)).toBe("2 MB");
   });
 
   it("rounds a guess instead of pretending to precision", () => {

@@ -413,14 +413,17 @@
 
 /* the message is the card's first row at its full width; under it one row: add and the task
    chip | the status content | the one round Send/Stop button. The attachment strip is its own
-   row above both. The three cells of the last row stretch and centre what they hold, so the
-   controls and the model share one centre line */
+   row above both, and the comments' context bar (.composer-comments-bar) a row between the strip
+   and the message (a row without an element takes no space; the DOM is in this order too). The
+   three cells of the last row stretch and centre what they hold, so the controls and the model
+   share one centre line */
 .composer-surface {
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas:
     "attachments attachments attachments"
+    "comments comments comments"
     "text text text"
     "left status right";
   background: var(--bg-elevated);
@@ -743,6 +746,32 @@
   white-space: nowrap;
 }
 
+/* The comments a held message takes along (PaneTerminal.tsx), before its Send now: the
+   background-task chip's grammar (BackgroundTasks.css), a pill with an icon and a count, accent-tinted
+   as comments are that go with a send. It only informs. The comments stored for the pane are the
+   context bar between the attachments and the message (.composer-comments-bar). */
+.composer-comments-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--chip-h);
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--accent-tint);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-comments-chip svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--accent);
+}
+
 .composer-attachments {
   grid-area: attachments;
   display: flex;
@@ -1056,6 +1085,11 @@
   }
 }
 
+/* a message of comments only: its empty box says so, dimly */
+.composer-queue-text::placeholder {
+  color: var(--text-dim);
+}
+
 .composer-queue-text:focus-visible {
   padding-inline: var(--space-2);
   border-color: var(--accent);
@@ -1066,6 +1100,12 @@
 .composer-queue-actions {
   display: flex;
   gap: var(--space-2);
+}
+
+/* the comments this message takes along, before Send now: it informs, so it keeps its own height
+   instead of stretching to the buttons beside it */
+.composer-queue-comments {
+  align-self: center;
 }
 
 .composer-queue-send,
@@ -1231,6 +1271,122 @@
 @media (pointer: coarse) {
   .composer-quick-reply {
     min-height: calc(var(--touch-target) + var(--space-1));
+  }
+}
+
+/* The comments stored for this pane are a row between the attachment strip and the message, a "Replying to…"
+   box with no rail: its left and right edges are the content column's (the strip's tiles and the message's text:
+   --space-5, --space-4 on a phone), --space-2 below the strip, or --space-3 from the card's top (the strip's own top
+   padding) when it is the first row; the message below takes --space-2 of top padding instead of its own while the
+   bar is there. A --bg-hover fill, a comment icon with their count and an X on the right. One line (the text
+   ellipsizes). The row has no space of its own when there is no box (.composer-surface's grid). The comments are
+   shown where they were written (BlockComments.css); the text is one button that walks to them. Under the
+   pointer the whole box takes a stronger fill, so the button inside it has none of its own. Going with the next
+   send (.is-going) the icon is accent. Waiting (.is-waiting: a command, an answer, no agent) the icon and the text
+   are dim and say "waiting", so colour is never the only signal; the reason is in the button's name and title.
+   The X removes every comment, and the box goes with them. */
+.composer-comments-bar {
+  --bar-hover: color-mix(in srgb, var(--bg-hover) 94%, var(--text));
+  --bar-hover-strong: color-mix(in srgb, var(--bg-hover) 88%, var(--text));
+  grid-area: comments;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  /* one control high, whatever its buttons are */
+  min-height: var(--control-h);
+  margin: var(--space-3) var(--space-5) 0;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--bg-hover);
+}
+
+.composer-attachments + .composer-comments-bar {
+  margin-top: var(--space-2);
+}
+
+/* the message gives up the part of its top padding the box's own gap replaces (and the same of its floor: one
+   line, the padding, the bottom space). Its box is that much shorter, and the space under its text is the
+   same: the first line is as far above the controls as without the bar */
+.composer-surface:has(> .composer-comments-bar) .composer-text {
+  padding-top: var(--space-2);
+  min-height: calc(1lh + var(--space-5) - var(--space-2));
+}
+
+@media (hover: hover) {
+  .composer-comments-bar:hover {
+    background: var(--bar-hover);
+  }
+}
+
+.composer-comments-walk {
+  display: flex;
+  flex: 1 1 auto;
+  align-self: stretch;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  /* tucked into the box's padding like the X, so the button is the box's full height (a finger's on touch) */
+  margin-block: calc(-1 * var(--space-1));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-comments-bar.is-waiting .composer-comments-walk {
+  color: var(--text-dim);
+}
+
+.composer-comments-walk svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.composer-comments-bar.is-going .composer-comments-walk svg {
+  color: var(--accent);
+}
+
+.composer-comments-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* the buttons keep their own size and tuck into the box's padding, so the box is one line high and their
+   glyph, not their box, is what lines up; over the box's fill they take a stronger one */
+.composer-comments-remove {
+  margin-block: calc(-1 * var(--space-1));
+  margin-inline-end: calc(-1 * var(--space-1));
+}
+
+@media (hover: hover) {
+  .composer-comments-remove:hover:not(:disabled) {
+    background: var(--bar-hover-strong);
+  }
+}
+
+@media (pointer: coarse) {
+  .composer-comments-bar {
+    min-height: var(--touch-target);
+  }
+}
+
+/* a phone's content column is --space-4 in: the strip's and the message's own phone padding (above) */
+@media (max-width: 480px) {
+  .composer-comments-bar {
+    margin-inline: var(--space-4);
+  }
+
+  .composer-surface:has(> .composer-comments-bar) .composer-text {
+    min-height: calc(1lh + var(--space-5) - var(--space-1));
   }
 }
 

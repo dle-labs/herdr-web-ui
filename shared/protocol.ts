@@ -650,12 +650,21 @@ export type ClientMessage =
    * the message as written (agent.prompt pastes it itself), `payload` the same shaped for the
    * pane's bracketed-paste mode, typed when no agent is in front. `typed`: the terminal's own
    * input line, which types `payload` like the keyboard would even into an agent's open menu.
+   * `agent_only` (servers listing "submit-agent-only"): only an agent gets it, never the pane's
+   * input, so a message quoting a reply never reaches a shell; refused, nothing typed, with a code named
+   * for the pane's condition: agent_not_found (no agent in front), agent_not_ready (an agent whose input
+   * state is not known) or agent_queue_busy (a Codex blocked by its own queue). Bridges before these
+   * names answered agent_only, agent_only_not_ready and agent_only_busy. With `delivery:queue` the flag
+   * needs no record of its own: a message is queued only with an agent in front (else agent_not_found;
+   * agent_not_ready on older bridges), and it is bound to the agent, terminal
+   * and session that accepted it, so one whose agent left before its turn is refused with
+   * pending_target_changed, nothing typed (server/pending-input.contract.test.ts).
    * `delivery:queue` requires "pending-input" and a live interact attachment: while the agent
    * works the bridge keeps the message until its next turn, or the owner explicitly steers it.
    * Omission keeps the legacy immediate submission. Queued messages never resume after lease loss.
    * Queue request ids increase monotonically per connection; recent duplicates replay their
    * receipt, and retired ids are rejected rather than executed after history eviction. */
-  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue" }
+  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue"; agent_only?: boolean }
   | { type: "pending-action"; id: number; pane_id: string; pending_id: string; action: "steer" | "discard" }
   /** Masked input: revalidate the visible prompt, type literal bytes + Enter immediately.
    * Never queued, retried, sent through agent.prompt, or echoed in a result. */
@@ -666,7 +675,7 @@ export type ClientMessage =
   | { type: "role"; mode: ClientRole };
 
 /** What a server supports beyond the base protocol, listed in its first snapshot; older bridges list nothing. */
-export type ServerFeature = "submit" | "pending-input" | "secret-input" | "input-ready" | "take-over";
+export type ServerFeature = "submit" | "pending-input" | "secret-input" | "input-ready" | "take-over" | "submit-agent-only";
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: SessionSnapshot; features?: ServerFeature[] }
@@ -681,8 +690,11 @@ export type ServerMessage =
   | { type: "pane-geometry"; pane_id: string; cols: number; rows: number; fixed?: boolean }
   | { type: "role-ack"; mode: ClientRole }
   /** ok after Enter delivery, or bridge acceptance (`pending`); never an agent execution acknowledgement. */
-  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; code?: string; message?: string }
-  | { type: "pending-result"; id: number; pane_id: string; pending_id: string; ok: boolean; code?: string; message?: string }
+  /** `typed: false` (a refusal only): the server knows nothing of the message reached the pane. Absent,
+   * some of it may have, or the bridge is older than the field and the client judges by `code`. */
+  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; code?: string; message?: string; typed?: false }
+  /** `typed: false` as on submit-result: this action typed nothing of the pending message, and nothing of it was typed before. */
+  | { type: "pending-result"; id: number; pane_id: string; pending_id: string; ok: boolean; code?: string; message?: string; typed?: false }
   /** Owner-only receipt and state; only an explicit removed outcome permits deleting a retained client message. */
   | { type: "pending-messages"; pane_id: string; messages: PendingMessage[]; removed?: Array<{ id: string; outcome: "sent" | "discarded" }> }
   | { type: "secret-result"; id: number; pane_id: string; ok: boolean; code?: string }

@@ -57,12 +57,14 @@ run_script scripts/settings-pages-demo-regression.ts
 run_script scripts/chat-history-browser-qa.ts
 run_script scripts/math-browser-qa.ts
 run_script scripts/file-viewer-regression.ts
+run_script scripts/file-viewer-comments-regression.ts
 run_script scripts/keyboard-viewport-regression.ts
 run_script scripts/file-viewer-mobile-regression.ts
 run_script scripts/droplet-demo-regression.ts
 run_script scripts/chat-greeting-demo-regression.ts
 run_script scripts/composer-fit-demo-regression.ts
 run_script scripts/held-rows-demo-regression.ts
+run_script scripts/block-comments-regression.ts
 run_script scripts/sidebar-activity-demo-regression.ts
 run_script scripts/prompt-dock-demo-regression.ts
 run_script scripts/machine-dialog-regression.ts

@@ -39,7 +39,9 @@ export function readNotesFile(path: string): string {
 }
 const SHA = /^[0-9a-f]{40,64}$/;
 /** A release is a plain `vX.Y.Z` tag: `remote-v*` bundle tags and pre-releases never qualify. */
-const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+// fork: a `next` release is tagged vX.Y.Z-next.N (upstream X.Y.Z plus the open features); git's
+// version sort puts it after vX.Y.Z and before vX.Y.(Z+1)
+const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)(-next\.\d+)?$/;
 
 function packageVersion(directory: string): string | null {
   try {

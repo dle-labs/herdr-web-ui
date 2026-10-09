@@ -2,15 +2,16 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useReducer, useRef
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { ChevronRight, Clock, TriangleAlert, X } from "lucide-react";
+import { ChevronRight, Clock, MessageSquare, TriangleAlert, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import "./PaneTerminal.css";
 
-import { HerdrSocket, type SubmitResult } from "../lib/ws.ts";
+import { HerdrSocket, type SubmitOptions, type SubmitResult } from "../lib/ws.ts";
 import { clipboardKey, hasModifiers, physicalKey, terminalChord, navigationSequence, keyFromData, ctrlEnterSequence, modifyOtherKeysLevel, NO_STICKY_MODIFIERS, type StickyModifiers } from "../lib/keys.ts";
 import { keyBarInputSequence, type KeyBarKeyItem } from "../lib/keyBar.ts";
 import { EMPTY_DRAFT, applyToDraft, draftIsEmpty, restoreDraft, type InputDraft } from "../lib/draft.ts";
-import { messageQueues } from "../lib/messageQueue.ts";
+import { composeWithComments, hasQuotedLine, type PaneComment } from "../lib/blockComments.ts";
+import { heldAgentOnly, heldMessageText, messageQueues } from "../lib/messageQueue.ts";
 import { pendingMessages } from "../lib/pendingMessages.ts";
 import { heldCountShown, heldOpenAtFold, heldOpenOnFocus, heldRefocusDue, heldRowError, heldRowsFold, heldRowsHidden, heldToggleShown, SHORT_PHONE_QUERY } from "../lib/heldRows.ts";
 import { MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, agentDisplayLabel, composerDelivery, composerMessage, composerPayload, submitNote, submitNotTyped } from "../lib/compose.ts";
@@ -31,7 +32,8 @@ import { Composer } from "./Composer.tsx";
 import { PendingMessages } from "./PendingMessages.tsx";
 import type { AgentStatus, ClientRole, ConversationMetadata, InteractivePrompt, ServerMessage } from "../../shared/protocol.ts";
 import type { PaneView } from "../lib/actions.ts";
-import { chatLaneLength, useSettings, terminalTheme, type Palette, type ResolvedTheme } from "../lib/settings.ts";
+import { usePaneLane } from "../lib/chatLane.ts";
+import { useSettings, terminalTheme, type Palette, type ResolvedTheme } from "../lib/settings.ts";
 import { loadFontStack, TERMINAL_FONT_STACK, terminalFontStack } from "../lib/fontFamily.ts";
 import { useT } from "../lib/i18n.ts";
 import { isAppShortcut } from "../lib/shortcuts.ts";
@@ -201,24 +203,8 @@ export function PaneTerminal({
   /** read by the OSC 52 handler, which is attached once for the terminal's life */
   const osc52AllowedRef = useRef(settings.paneClipboard);
   osc52AllowedRef.current = settings.paneClipboard;
-  // Settings → Chat width, Default: the lane follows this pane. One length on the stack, which
-  // the transcript, the composer column, the held list and the menus all inherit: a percentage
-  // would resolve against each one's own box and leave them a gutter apart. The other steps are
-  // fixed and stay with the stylesheet (styles.css). The lane's ceiling stays 60rem inside the
-  // length, so a change of the browser's font size moves it at once, as it moves Wide's 72rem
-  useLayoutEffect(() => {
-    const stack = stackRef.current;
-    if (!stack) return;
-    if (settings.chatWidth !== "default") {
-      stack.style.removeProperty("--chat-w");
-      return;
-    }
-    const apply = (): void => stack.style.setProperty("--chat-w", chatLaneLength(stack.clientWidth));
-    apply();
-    const observer = new ResizeObserver(apply);
-    observer.observe(stack);
-    return () => observer.disconnect();
-  }, [settings.chatWidth]);
+  // Settings → Chat width, Default: the lane follows this pane, on the stack its columns share
+  usePaneLane(stackRef);
   const directTyping = settings.terminalInputMode === "direct" || (settings.terminalInputMode === "auto" && (!coarse || storedDirectTyping()));
   const inputLine = !directTyping && !chatView;
   const inputLineRef = useRef(inputLine);
@@ -1407,15 +1393,16 @@ export function PaneTerminal({
   // the composer goes straight to the socket, not through onData: an armed key-bar Ctrl
   // must not turn a one-letter message into a control key. Offline it sends nothing and
   // keeps its text (never-queue); a message the server could not deliver keeps it too,
-  // with the reason. Bracketed-paste wrapping follows the pane program's mode.
-  const submitComposerMessage = useCallback((text: string, delivery: "queue" | "immediate" = "immediate"): Promise<SubmitResult> | null => {
+  // with the reason. Bracketed-paste wrapping follows the pane program's mode. `agentOnly`: a
+  // message with comments, refused rather than typed into a pane whose agent is gone
+  const submitComposerMessage = useCallback((text: string, { delivery = "immediate", agentOnly = false }: SubmitOptions = {}): Promise<SubmitResult> | null => {
     const term = termRef.current;
     const socket = socketRef.current;
     const pane = paneRef.current;
     if (!term || !socket || pane === null || secretRef.current !== null || heldRef.current) return null;
     // not the scope itself: a message sent right after a reconnect leaves before the snapshot that names it
     const epoch = pendingEpochRef.current;
-    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), false, delivery);
+    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), { delivery, agentOnly });
     if (sent === null) return null;
     term.scrollToBottom();
     if (delivery === "immediate") setChatSent((current) => current + 1);
@@ -1427,7 +1414,7 @@ export function PaneTerminal({
     return sent.then((result) => {
       // a message refused before anything was typed leaves the greeting as it was; each answer
       // settles its own message only, so one on its way beside it (a queued "Send now") is not undone
-      const typed = result.ok ? result.pending === undefined : !submitNotTyped(result.code);
+      const typed = result.ok ? result.pending === undefined : !submitNotTyped(result);
       if (delivery === "immediate") {
         rememberGreeting(owner, afterSettled(greetingMemory(owner), typed, history)); redrawGreeting();
       } else if (typed) {
@@ -1450,9 +1437,9 @@ export function PaneTerminal({
     });
   }, [onChatSuggestion, machineId]);
 
-  const sendComposerText = useCallback((text: string, delivery: "queue" | "immediate" = "immediate"): false | Promise<true | string> => {
-    const result = submitComposerMessage(text, delivery);
-    return result === null ? false : result.then((answer) => answer.ok ? true : submitNote(answer.code, answer.message));
+  const sendComposerText = useCallback((text: string, options: SubmitOptions = {}): false | Promise<true | string> => {
+    const result = submitComposerMessage(text, options);
+    return result === null ? false : result.then((answer) => answer.ok ? true : submitNote(answer.code, answer.message, options.agentOnly === true));
   }, [submitComposerMessage]);
 
   // the terminal's input line: the text typed like the keyboard would, into an agent's open
@@ -1464,7 +1451,7 @@ export function PaneTerminal({
     if (!term || !socket || pane === null || secretRef.current !== null) return false;
     const message = composerMessage(text);
     const payload = message.includes("\n") ? composerPayload(text, term.modes.bracketedPasteMode) : message;
-    const sent = socket.submit(pane, message, payload, true);
+    const sent = socket.typeLine(pane, message, payload);
     if (sent === null) return false;
     term.scrollToBottom();
     return sent.then((result) => (result.ok ? true : submitNote(result.code, result.message)));
@@ -1594,7 +1581,7 @@ export function PaneTerminal({
   }, [greetingDue, paneId]);
 
   const composerSend = useCallback(
-    (text: string): boolean | string | Promise<boolean | string> => {
+    (text: string, { comments = [] }: { comments?: readonly PaneComment[] } = {}): boolean | string | Promise<boolean | string> => {
       const pane = paneRef.current;
       // Codex's queue open in the terminal holds the input: a message would become the answer
       if (pane !== null && heldByOpenQueue) {
@@ -1618,8 +1605,10 @@ export function PaneTerminal({
         );
       }
       if (!socketRef.current?.connected || heldRef.current || secretRef.current !== null) return false;
-      // an older bridge is told apart by the socket, once this connection's snapshot has said what it supports
-      return sendComposerText(text, composerDelivery(agent, agentStatus));
+      // an older bridge is told apart by the socket, once this connection's snapshot has said what it supports.
+      // The comments go inside the text: a queued message is bound to the agent session that took it,
+      // and an immediate one carrying them is refused rather than typed into a shell
+      return sendComposerText(composeWithComments(comments, text), { delivery: composerDelivery(agent, agentStatus), agentOnly: comments.length > 0 });
     },
     [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, sendComposerText, queueStore, machineId],
   );
@@ -1643,7 +1632,7 @@ export function PaneTerminal({
           return;
         }
         const answer = await result;
-        if (!answer.ok) pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, answer.code === "pending_not_found" || !submitNotTyped(answer.code));
+        if (!answer.ok) pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, answer.code === "pending_not_found" || !submitNotTyped(answer));
         // Only the matching server removal receipt removes an authoritative item.
       } else if (action === "discard") {
         pendingMessages.removeCopy(owner, id);
@@ -1652,14 +1641,15 @@ export function PaneTerminal({
           pendingMessages.fail(owner, id, { code: "unsaved", message: t("Queue could not be saved. Keep this tab open or copy the messages before reloading.") }, false);
           return;
         }
-        const result = submitComposerMessage(message.text, "immediate");
+        // a copy kept only the text: one that quotes (comments) still goes to an agent only
+        const result = submitComposerMessage(message.text, { agentOnly: hasQuotedLine(message.text) });
         if (!result) {
           pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not sent. Reconnect and try again.") }, false);
           return;
         }
         const answer = await result;
         if (answer.ok) pendingMessages.removeCopy(owner, id);
-        else pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, !submitNotTyped(answer.code));
+        else pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, !submitNotTyped(answer));
       }
     } catch {
       pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not confirmed. Check the terminal before sending again.") }, true);
@@ -1824,7 +1814,8 @@ export function PaneTerminal({
               id={`queued-${message.id}`}
               className="composer-queue-text"
               value={message.text}
-              rows={Math.min(4, message.text.split("\n").length)}
+              rows={Math.max(1, Math.min(4, message.text.split("\n").length))}
+              placeholder={message.comments?.length ? t("Comments only") : undefined}
               aria-label={t("Queued message {n}", { n: index + 1 })}
               maxLength={MAX_COMPOSER_CHARS}
               disabled={queueStore.isSending(message.id)}
@@ -1832,15 +1823,25 @@ export function PaneTerminal({
               onChange={(event) => { queueStore.edit(queueOwner, message.id, event.target.value); }}
             />
             <div className="composer-queue-actions">
+              {message.comments?.length ? (() => {
+                const count = t("Comments with this message: {count}", { count: message.comments.length });
+                return <span className="composer-comments-chip composer-queue-comments" role="img" aria-label={count} title={count}><MessageSquare aria-hidden="true" />{message.comments.length}</span>;
+              })() : null}
               <button type="button" className="composer-queue-send"
-                disabled={!connected || held || secretActive || queueSending !== null || queued.some((item) => queueStore.isSending(item.id)) || heldByOpenQueue || message.text.trim().length === 0}
+                disabled={!connected || held || secretActive || queueSending !== null || queued.some((item) => queueStore.isSending(item.id)) || heldByOpenQueue || heldMessageText(message).trim().length === 0}
                 title={heldByOpenQueue ? t("Codex has a question open in the terminal: answer it above first") : undefined}
                 onClick={() => {
+                  // composed now, as the composer does: the comments and what is typed here
+                  const outgoing = heldMessageText(message);
+                  if (outgoing.length > MAX_COMPOSER_CHARS) {
+                    setQueueError({ owner: queueOwner, id: message.id, text: t("Too long to send. Shorten the message or remove comments.") });
+                    return;
+                  }
                   if (sendingRef.current || !queueStore.beginSend(queueOwner, message.id)) return;
                   sendingRef.current = true;
                   setQueueSending(message.id); setQueueError(null);
                   const owner = queueOwner;
-                  void Promise.resolve(sendComposerText(message.text))
+                  void Promise.resolve(sendComposerText(outgoing, { agentOnly: heldAgentOnly(message) }))
                     .then((result) => {
                       if (result === true) { queueStore.remove(owner, message.id); }
                       else setQueueError({ owner, id: message.id, text: typeof result === "string" ? result : t("Not sent. Reconnect and try again.") });

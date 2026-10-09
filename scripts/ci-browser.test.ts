@@ -56,7 +56,9 @@ describe("browser lane", () => {
   it("summarizes every script and exits zero on success without enabling local evidence", async () => {
     const { text, code, evidence } = await lane();
     expect(code).toBe(0);
-    expect(rows(text)).toHaveLength(19);
+    expect(rows(text)).toHaveLength(21);
+    expect(rows(text).map((row) => row.script)).toContain("scripts/file-viewer-comments-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/block-comments-regression.ts");
     expect(rows(text).every((row) => row.code === 0 && row.seconds >= 0)).toBe(true);
     expect(rows(text).at(-1)?.script).toBe("scripts/machine-conflict-regression.ts");
     expect(evidence).toBe(false);

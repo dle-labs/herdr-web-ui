@@ -220,9 +220,37 @@ describe("connection-owned pending input", () => {
     const f = await setup("no-agent", "plain");
     expect((await sessionSnapshot()).panes.find((pane) => pane.pane_id === f.pane)?.agent ?? null).toBeNull();
     f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "for the agent", payload: "unused", delivery: "queue" });
-    expect(await f.socket.result(1)).toMatchObject({ ok: false, code: "agent_not_ready" });
+    expect(await f.socket.result(1)).toMatchObject({ ok: false, code: "agent_not_found", typed: false });
     expect(f.bytes()).toBe("");
     expect(f.socket.seen.some((frame) => frame.type === "pending-messages")).toBe(false);
+  }, 30_000);
+
+  it("refuses a queued agent-only message whose agent left before its turn, typing nothing into what is there now", async () => {
+    // a program herdr knows as no agent, reported as a working Claude: released, the pane has no agent in front
+    const f = await setup("agent-only-left", "plain");
+    const from = f.socket.seen.length;
+    await herdrRpc("pane.report_agent", { pane_id: f.pane, source: "manual", agent: "claude", state: "working" });
+    await f.socket.wait((frame) => frame.type === "pane-status" && frame.pane_id === f.pane && frame.agent_status === "working", from);
+    // a comment's quote: a shell would take "> " for a redirect and run $(…)
+    f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "> quoted $(touch pwned)\nlooks wrong", payload: "unused", delivery: "queue", agent_only: true });
+    const answer = await f.socket.result(1);
+    expect(answer.ok).toBe(true);
+    const message = answer.pending as PendingMessage;
+    expect(message).toBeDefined();
+    await herdrRpc("pane.release_agent", { pane_id: f.pane, source: "manual", agent: "claude" });
+    const gone = Date.now() + 8_000;
+    while (((await sessionSnapshot()).panes.find((pane) => pane.pane_id === f.pane)?.agent ?? null) !== null) {
+      if (Date.now() >= gone) throw new Error("the agent was not released");
+      await Bun.sleep(25);
+    }
+    f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
+    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "pending_target_changed", typed: false });
+    // a later serialized request proves nothing of the message is still on its way
+    f.socket.send({ type: "submit", id: 20, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
+    expect(await f.socket.result(20)).toMatchObject({ ok: true });
+    await f.waitBytes("barrier\r");
+    expect(f.bytes()).toBe("barrier\r");
+    expect(f.socket.seen.some((frame) => frame.type === "pending-messages" && frame.removed?.some((item: any) => item.id === message.id && item.outcome === "sent"))).toBe(false);
   }, 30_000);
 
   it("keeps a request that finds the agent ready behind the messages already waiting", async () => {
@@ -396,7 +424,7 @@ describe("connection-owned pending input", () => {
     other.send({ type: "submit", id: 1, pane_id: f.pane, text: "not attached", payload: "not attached", delivery: "queue" });
     expect(await other.result(1)).toMatchObject({ ok: false, code: "input_not_ready" });
     f.socket.send({ type: "submit", id: 2, pane_id: f.pane, text: "escape\u001b[201~\r", payload: "unused", delivery: "queue" });
-    expect(await f.socket.result(2)).toMatchObject({ ok: false, code: "invalid_submit_text" });
+    expect(await f.socket.result(2)).toMatchObject({ ok: false, code: "invalid_submit_text", typed: false });
     expect(f.bytes()).toBe(""); expect(f.socket.seen.some((frame) => frame.type === "pending-messages")).toBe(false);
   }, 30_000);
 
@@ -444,7 +472,10 @@ describe("connection-owned pending input", () => {
     await f.waitBytes("\u001b[201~"); await f.showScreen("Enter passphrase:");
     await herdrRpc("pane.report_agent", { pane_id: f.pane, source: "manual", agent: "claude", state: "working" });
     expect((await sessionSnapshot()).panes.find((pane) => pane.pane_id === f.pane)?.agent_status).toBe("working");
-    expect(await f.socket.action(10)).toMatchObject({ ok: false, code: "submit_changed" });
+    const changed = await f.socket.action(10);
+    expect(changed).toMatchObject({ ok: false, code: "submit_changed" });
+    // pasted, its Enter withheld: the bridge does not claim nothing was typed
+    expect(changed.typed).toBeUndefined();
     await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: PendingMessage) => item.id === message.id && item.state === "uncertain"));
     expect(f.bytes()).toBe(paste("ordinary message"));
   }, 30_000);

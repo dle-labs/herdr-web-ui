@@ -13,18 +13,46 @@ describe("composerMessage and submitNote", () => {
     expect(submitNote("submit_timeout", "x")).toMatch(/^Not sent: .*nothing was typed/);
     expect(submitNote("disconnected", "x")).toMatch(/^Not confirmed: .*Check the terminal/);
     expect(submitNote("pane_not_found", "pane w1:p9 not found")).toBe("Not sent: pane w1:p9 not found");
+    expect(submitNote("pending_input_unsupported", "x")).toBe("Update this PC to send messages in the next turn. Your draft stayed here.");
   });
 
-  it("knows a refusal that typed nothing from a message that may have reached the pane", () => {
-    expect(["submit_timeout", "agent_blocked", "read_only"].map(submitNotTyped)).toEqual([true, true, true]);
-    expect(["disconnected", "timeout", "submit_failed"].map(submitNotTyped)).toEqual([false, false, false]);
-    expect(["pending_input_unsupported", "invalid_delivery", "invalid_submit_text", "agent_not_ready", "pending_limit"].map(submitNotTyped)).toEqual([true, true, true, true, true]);
-    expect(["pane_not_found", "retired_submit_id"].map(submitNotTyped)).toEqual([true, true]);
+  it("names an agent-only message's refusal by the pane's condition, and a plain one's by the bridge's message", () => {
+    const none = "Not sent: comments go to an agent only, and none runs in this pane now.";
+    const notReady = "Not sent: the agent is not ready for a message yet. Nothing was typed. Send it again when it is ready.";
+    const busy = "Not sent: the agent is busy with questions it queued. Nothing was typed. Send it again when it is ready.";
+    expect(submitNote("agent_not_found", "x", true)).toBe(none);
+    expect(submitNote("agent_not_ready", "x", true)).toBe(notReady);
+    expect(submitNote("agent_queue_busy", "x", true)).toBe(busy);
+    expect(submitNote("agent_queue_busy", "x")).toBe(busy);
+    // a plain queued message whose agent left, or whose input state is not known
+    expect(submitNote("agent_not_found", "No agent is in front of this pane now; nothing was typed")).toBe("Not sent: No agent is in front of this pane now; nothing was typed");
+    expect(submitNote("agent_not_ready", "The agent's current input state is not known")).toBe("Not sent: The agent's current input state is not known");
+    // the codes of bridges before the condition-named ones
+    expect(submitNote("agent_only", "x")).toBe(none);
+    expect(submitNote("agent_only_not_ready", "x")).toBe(notReady);
+    expect(submitNote("agent_only_busy", "x")).toBe(busy);
+  });
+
+  it("knows a refusal that typed nothing from the bridge's typed:false", () => {
+    expect(submitNotTyped({ code: "submit_failed", typed: false })).toBe(true);
+    expect(submitNotTyped({ code: "timeout", typed: false })).toBe(true);
+    expect(submitNotTyped({ code: "some_new_refusal", typed: false })).toBe(true);
+    expect(submitNotTyped({ code: "some_new_refusal" })).toBe(false);
+  });
+
+  it("judges a refusal from a bridge that does not send typed by its code", () => {
+    const legacy = (code: string) => submitNotTyped({ code });
+    expect(["submit_timeout", "agent_blocked", "read_only"].map(legacy)).toEqual([true, true, true]);
+    expect(["agent_only", "agent_only_busy", "agent_only_not_ready", "agent_only_unsupported"].map(legacy)).toEqual([true, true, true, true]);
+    expect(["agent_not_found", "agent_not_ready", "agent_queue_busy"].map(legacy)).toEqual([true, true, true]);
+    expect(["disconnected", "timeout", "submit_failed"].map(legacy)).toEqual([false, false, false]);
+    expect(["pending_input_unsupported", "invalid_delivery", "invalid_submit_text", "pending_limit"].map(legacy)).toEqual([true, true, true, true]);
+    expect(["pane_not_found", "retired_submit_id"].map(legacy)).toEqual([true, true]);
+    expect(legacy("submit_changed")).toBe(false);
+    expect(legacy("pending_uncertain")).toBe(false);
     // refused before the paste because Claude's input box held a draft (#609)
-    expect(submitNotTyped("input_draft")).toBe(true);
-    expect(submitNote("pending_input_unsupported", "x")).toBe("Update this PC to send messages in the next turn. Your draft stayed here.");
-    expect(submitNotTyped("submit_changed")).toBe(false);
-    expect(submitNotTyped("pending_uncertain")).toBe(false);
+    expect(legacy("input_draft")).toBe(true);
+    expect(submitNote("input_draft", "x")).toBe("Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.");
   });
 });
 

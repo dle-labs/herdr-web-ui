@@ -9,6 +9,7 @@ import "./ChatView.css";
 
 import { AgentMark } from "./AgentMark.tsx";
 import { Markdown } from "./Markdown.tsx";
+import { useCommentSurface, type SurfaceComment } from "./useCommentSurface.tsx";
 import { PromptCard } from "./PromptCard.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { turnRevision } from "../lib/turnRevision.ts";
@@ -30,7 +31,10 @@ import { useFacesArrived } from "../lib/fontFaces.ts";
 import { OpenFileContext } from "../lib/filePaths.ts";
 import { patchText } from "../../shared/patch.ts";
 import { toolVerb } from "../lib/toolVerbs.ts";
-import { machinePath } from "../../shared/machines.ts";
+import { machinePath, paneStorageId } from "../../shared/machines.ts";
+import { BlockCommentContext, blockComments, blockContent, commentTarget, isReplyComment, quoteExcerpt, replyPart, selectionTarget, useBlockComments, type CommentTarget, type ReplyPart } from "../lib/blockComments.ts";
+import { commentPartOf, paneComposer, pointOnText, selectionComment, type SelectionComment } from "../lib/commentSelection.ts";
+import { draftRanges, showPendingComment, watchCommentHighlights } from "../lib/commentHighlight.ts";
 import { fileUrl } from "../lib/api.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { lineDiff } from "../lib/diff.ts";
@@ -40,6 +44,8 @@ import { formatElapsed, taskCallItems, taskResultMarkdown } from "../lib/omoTask
 /** The pane this chat shows, for what its rows fetch on request (a tool call's whole output). */
 const ChatPaneContext = createContext<string | null>(null);
 const ChatHistoryContext = createContext("");
+/** Bound once: a class method handed on loses its `this`. */
+const persistReplyComment = blockComments.save.bind(blockComments);
 import type { TypedAnswer } from "../lib/promptAnswer.ts";
 import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationTurn, InteractivePrompt, OmoTaskResult } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
@@ -414,6 +420,17 @@ interface TurnProps {
   /** ...and "Needs you" while the agent is blocked */
   waiting: boolean;
   showThinking: boolean;
+  /**
+   * Position in the transcript, which anchors comments on a turn without a timestamp. Pass it only
+   * for such a turn (-1 otherwise): older history prepended shifts every index, and would re-render
+   * every memoised turn for nothing.
+   */
+  index: number;
+  /**
+   * false: no comments on this turn. The scrollback drawn without an agent is not a reply: what the
+   * composer sends there is typed into the pane, a shell perhaps, and comments only go to an agent.
+   */
+  commentable?: boolean;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -455,13 +472,22 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
   return first.length > 96 ? `${first.slice(0, 95)}…` : first;
 }
 
-// a turn that did not change keeps its object across polls: skip re-rendering it
-const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking }: TurnProps) {
+/**
+ * One turn of the conversation. A turn that did not change keeps its object across polls, so the
+ * memo skips re-rendering it. The final-answer parts of a turn that is not live are commentable.
+ */
+const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, index, commentable = true }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useState(false);
   const copyError = copyFailed && <p className="chat-copy-error" role="alert">{t("Couldn't copy. Select the text and copy it manually.")}</p>;
   const copied = (ok: boolean): void => setCopyFailed(!ok);
+  const machineId = useMachineId();
+  const { work, answer } = splitTurn(turn.parts);
+  // one value per final-answer part, the same objects across polls, so the memoised turn's
+  // blocks keep theirs; none while the answer is still being written
+  const replies = useMemo((): (ReplyPart | null)[] => Array.from({ length: answer.length }, (_, part) =>
+    live || !commentable ? null : replyPart(paneStorageId(machineId, paneId), turn.ts, index, part)), [machineId, paneId, turn.ts, index, live, commentable, answer.length]);
   const time = formatTime(turn.ts);
   const compact = turn.parts.find((part): part is Extract<ConversationPart, { kind: "compact" }> => part.kind === "compact");
   if (compact !== undefined) {
@@ -501,14 +527,13 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking }: T
       <SkillActivityList parts={turn.parts} />
     </article>;
   }
-  const { work, answer } = splitTurn(turn.parts);
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
   return <article className="chat-turn chat-turn-agent">
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}
     {work.length > 0 && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, turn.parts)} showThinking={showThinking} />}
-    {answer.map((part, index) => <Markdown key={index}>{part.text}</Markdown>)}
+    {answer.map((part, n) => <BlockCommentContext.Provider key={n} value={replies[n] ?? null}><Markdown>{part.text}</Markdown></BlockCommentContext.Provider>)}
     {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
       <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>
@@ -519,16 +544,18 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking }: T
   </article>;
 });
 
+/** A scrollback message drawn as a turn when no agent runs in the pane: shown, but not commentable. */
 function FallbackTurn({ paneId, message }: { paneId: string; message: TranscriptMessage }) {
   if (message.role === "status") return null;
   const turn: ConversationTurn = { role: message.role === "user" ? "user" : "assistant", ts: null, parts: [{ kind: "text", text: message.text }] };
-  return <Turn paneId={paneId} turn={turn} live={false} waiting={false} showThinking={false} />;
+  return <Turn paneId={paneId} turn={turn} live={false} waiting={false} showThinking={false} index={-1} commentable={false} />;
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
 export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
+  const machineId = useMachineId();
   const { settings } = useSettings();
   // polls pause while the page is hidden and pick up at once when it is back
   const visible = usePageVisible();
@@ -832,6 +859,14 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
     const node = scroller.current;
     if (node !== null && stickToBottom.current) node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
   }, [faces]);
+  // the text of each selection comment shown here is highlighted, this view's ranges only (lib/commentHighlight.ts); with
+  // comments turned off none is, even one another tab that still has them on stores meanwhile
+  const commentsOn = settings.comments;
+  useEffect(() => {
+    const node = scroller.current;
+    const transcript = node?.firstElementChild;
+    return !commentsOn || node === null || transcript === null || transcript === undefined ? undefined : watchCommentHighlights(node, transcript);
+  }, [commentsOn]);
   // a tap or a drag down the transcript puts a phone's keyboard away to read (lib/keyboard.ts)
   useEffect(() => {
     const node = scroller.current;
@@ -867,7 +902,63 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
   // the chat left the screen (another lens): nothing is known of it until it is read again
   useLayoutEffect(() => () => onRead?.(paneId, null), [onRead, paneId]);
 
-  return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
+  // The chat's comments (`useCommentSurface`): a pin opens its comment to edit, its field filled with it, a block clicked
+  // or tapped or a mouse's drag over text a new one to write, or the block's or selection's comment where it has one.
+  // The popover is drawn beside its pin, or as a dialog where it has none and on a phone. The agent may start again
+  // while a comment is written, and the reply turn live: the popover and what is typed in it stay until it is saved or
+  // closed. A pin for each of this pane's reply comments whose text is drawn, named as the comment; none while comments
+  // are off
+  const owner = paneStorageId(machineId, paneId);
+  const stored = useBlockComments(owner);
+  const surfaceComments = useMemo<SurfaceComment<CommentTarget>[]>(() => stored.filter(isReplyComment).map((comment) => ({
+    id: comment.id,
+    anchor: comment.anchor,
+    label: t("Comment on “{quote}”: {comment}", { quote: quoteExcerpt(comment.quote ?? blockContent(comment.block)), comment: comment.comment }),
+    ...(comment.point === undefined ? {} : { point: comment.point }),
+    target: commentTarget(comment),
+    comment: comment.comment,
+  })), [stored, t]);
+  const commentSurface = useCommentSurface<CommentTarget, SelectionComment>({
+    surface: scroller,
+    enabled: settings.comments,
+    persist: persistReplyComment,
+    owner,
+    comments: surfaceComments,
+    anchorOf: (target) => target.anchor,
+    // the block's or selection's comment where it has one: it keeps its pin where it was
+    existing: (targetOwner, target) => {
+      const found = blockComments.get(targetOwner, target);
+      return found === undefined ? null : { id: found.id, comment: found.comment, target };
+    },
+    // a new comment's pin goes where the block was clicked or the drag let go, on the text its highlight will cover (`draftRanges`)
+    pointed: (targetOwner, target, at) => {
+      const node = scroller.current;
+      const point = node === null ? undefined : pointOnText(draftRanges(node, targetOwner, target), at);
+      return point === undefined ? target : { ...target, point };
+    },
+    // a click on a reply block comments on all of it, or on the part of it that was clicked
+    targetAtClick: (element) => {
+      const part = element.closest(".is-commentable");
+      const found = part === null ? undefined : commentPartOf(part);
+      return found === undefined ? null : { owner: found.owner, target: found.target };
+    },
+    selection: {
+      measure: selectionComment,
+      target: (found) => ({ owner: found.owner, target: selectionTarget(found.target, found.text, found.start, found.end, found.until) }),
+    },
+    describe: ({ target }) => ({ quote: target.quote ? { text: target.quote.text } : { block: target.block } }),
+    // a Delete with no pin left, or a comment whose pin is gone, gives the focus to the composer
+    focusFallback: paneComposer,
+    // its text shows as the comment's will, a selection's (the field took the browser's selection away) or a whole block's
+    showPending: (targetOwner, target) => {
+      const node = scroller.current;
+      if (node === null) return () => {};
+      showPendingComment(node, { owner: targetOwner, target });
+      return () => showPendingComment(node, null);
+    },
+  });
+
+  return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><div className="chat-view" {...commentSurface.surfaceProps} ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
     <div className="chat-transcript">
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
           its leaf without writing anything, so nothing here could say they were ever there. First
@@ -895,7 +986,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
             const last = index === turns.length - 1;
             const live = isLiveWorkTurn(turn, last, agentStatus, finishedBeforeSend);
             return <RenderBoundary key={`${paneId}:${historyId ?? ""}:${turn.role}:${turn.ts ?? index}`} resetKey={turnRevision(turn)} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here. The terminal has it.")}</p>}>
-              <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} />
+              <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} index={turn.ts === null ? index : -1} />
             </RenderBoundary>;
           })
         : agent !== null
@@ -907,6 +998,8 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, sentKey = 0
       {loaded && empty && error === null && prompt === null && !(greeted && blank) && <div className="chat-empty"><AgentMark agent={agent ?? "agent"} size={32} /><p>{t("No conversation yet — say something below")}</p></div>}
       {ended && <p className="chat-endcap">{t("terminal ended")}</p>}
     </div>
+    {/* after the transcript: the pins come after the reply's own controls in the tab order, in reading order */}
+    {commentSurface.overlay}
     {newMessages ? <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
       : away && <button type="button" className="btn chat-new-messages is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>}
   </div>
