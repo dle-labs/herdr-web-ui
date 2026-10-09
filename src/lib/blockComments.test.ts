@@ -93,12 +93,12 @@ describe("outgoingMessage", () => {
   });
   it("puts comments first, in reading order, then the typed text", () => {
     const out = outgoingMessage([b, a], "text");
-    expect(out.message).toBe("> first\nc1\n\n> second\nc2\n\ntext");
+    expect(out.message).toBe("> first\n\nc1\n\n> second\n\nc2\n\ntext");
     expect(out.sentIds).toEqual(["a", "b"]);
   });
   it("sends comments alone when the typed text is only whitespace", () => {
     const out = outgoingMessage([a], "   ");
-    expect(out.message).toBe("> first\nc1");
+    expect(out.message).toBe("> first\n\nc1");
     expect(out.sendable).toBe(true);
   });
   it("has nothing to send without comments and text", () => {
@@ -482,7 +482,7 @@ describe("composeWithComments", () => {
     for (const [comments, text] of [[[late, early], "typed"], [[late, early], ""], [[], "typed"]] as const) {
       expect(composeWithComments(comments, text)).toBe(outgoingMessage(comments, text).message);
     }
-    expect(composeWithComments([late, early], "typed")).toBe("> First\nearlier\n\n> Second\nlater\n\ntyped");
+    expect(composeWithComments([late, early], "typed")).toBe("> First\n\nearlier\n\n> Second\n\nlater\n\ntyped");
   });
   it("tells a composed message by its quoted lines, wherever they start, and plain text by none", () => {
     expect(hasQuotedLine(composeWithComments([late, early], "typed"))).toBe(true);
@@ -599,23 +599,39 @@ describe("isBlockComment with a selection", () => {
 });
 
 describe("composing selection comments", () => {
+  it("ends each selection's blockquote before its note, with the chat draft last", () => {
+    const quoteA = "worth testing through whisper.cpp’s Vulkan backend";
+    const quoteB = "avoid downloading multiple large container images and model variants unnecessarily.";
+    const a = stored("a", "I'd like to incorperate this in the tests", selectionTarget(at([0], quoteA), quoteA, 0, quoteA.length));
+    const b = stored("b", "don't worry about this, I'll free up some space", selectionTarget(at([1], quoteB), quoteB, 0, quoteB.length));
+    const draft = "in the UI, ensure that the record option is also available when adding commets";
+    expect(outgoingMessage([b, a], draft).message).toBe(
+      `> ${quoteA}\n\nI'd like to incorperate this in the tests\n\n> ${quoteB}\n\ndon't worry about this, I'll free up some space\n\n${draft}`,
+    );
+  });
+
+  it("keeps every line of a multiline note outside the quote", () => {
+    const entry = stored("a", "first line\nsecond line", selectionTarget(at([0], "quoted"), "quoted", 0, 6));
+    expect(composeWithComments([entry], "")).toBe("> quoted\n\nfirst line\nsecond line");
+  });
+
   const part = at([2], "Alpha beta gamma");
   const selection = (id: string, text: string, start: number, end: number, note: string) => stored(id, note, selectionTarget(part, text, start, end));
 
   it("quotes the selected text instead of the block", () => {
-    expect(composeWithComments([selection("a", "beta", 6, 10, "why")], "typed")).toBe("> beta\nwhy\n\ntyped");
+    expect(composeWithComments([selection("a", "beta", 6, 10, "why")], "typed")).toBe("> beta\n\nwhy\n\ntyped");
   });
   it("prefixes every line of a multi-line selection, blank lines inside become a bare \">\"", () => {
-    expect(composeWithComments([selection("a", "one\ntwo\n\nthree", 0, 14, "note")], "")).toBe("> one\n> two\n>\n> three\nnote");
+    expect(composeWithComments([selection("a", "one\ntwo\n\nthree", 0, 14, "note")], "")).toBe("> one\n> two\n>\n> three\n\nnote");
   });
   it("keeps the one-line excerpt of the block for a legacy comment", () => {
     const legacy = comment("l", [0], "first", "old");
-    expect(composeWithComments([legacy], "")).toBe("> first\nold");
+    expect(composeWithComments([legacy], "")).toBe("> first\n\nold");
   });
   it("sends two selections of one part in the order they stand in the text, whichever was written first", () => {
     const later = selection("b", "gamma", 11, 16, "second");
     const earlier = selection("a", "Alpha", 0, 5, "first");
-    expect(composeWithComments([later, earlier], "")).toBe("> Alpha\nfirst\n\n> gamma\nsecond");
+    expect(composeWithComments([later, earlier], "")).toBe("> Alpha\n\nfirst\n\n> gamma\n\nsecond");
     expect(outgoingMessage([later, earlier], "").sentIds).toEqual(["a", "b"]);
   });
   it("sends a selection in a list item before the item's nested blocks, whatever offset it starts at", () => {
@@ -624,7 +640,7 @@ describe("composing selection comments", () => {
     const parent = blockTarget(reply, [0, 0], list, 0);
     const words = stored("p", "parent", selectionTarget(parent, "words", 12, 17));
     const child = stored("c", "child", blockTarget(reply, [0, 0, 0, 0], nested, 0));
-    expect(composeWithComments([child, words], "")).toBe("> words\nparent\n\n> child item\nchild");
+    expect(composeWithComments([child, words], "")).toBe("> words\n\nparent\n\n> child item\n\nchild");
     expect(outgoingMessage([child, words], "").sentIds).toEqual(["p", "c"]);
     // the comment on the whole item still comes first
     const whole = stored("w", "whole", parent);
@@ -632,7 +648,7 @@ describe("composing selection comments", () => {
   });
   it("puts a selection after the comment on the whole block, which comes first on a tie", () => {
     const whole = stored("w", "whole", part);
-    expect(composeWithComments([selection("a", "beta", 6, 10, "sel"), whole], "")).toBe("> Alpha beta gamma\nwhole\n\n> beta\nsel");
+    expect(composeWithComments([selection("a", "beta", 6, 10, "sel"), whole], "")).toBe("> Alpha beta gamma\n\nwhole\n\n> beta\n\nsel");
   });
 });
 
@@ -778,7 +794,7 @@ describe("selections across parts", () => {
   });
 
   it("quotes the whole selection, line by line", () => {
-    expect(composeWithComments([spanned], "")).toBe("> beta\n> one\n> two\n> Omega\nacross");
+    expect(composeWithComments([spanned], "")).toBe("> beta\n> one\n> two\n> Omega\n\nacross");
   });
 
   it("orders it by where it starts, among the part's single selections and its comment on the whole part", () => {
@@ -1062,7 +1078,7 @@ describe("a file comment's point", () => {
 describe("composeWithComments with file comments", () => {
   it("sends reply comments first, then file comments grouped by file, then the text", () => {
     const message = composeWithComments([fileB, reply1, fileA], "Thanks");
-    expect(message).toBe("> backfill it from updated_at\nBackfill in batches.\n\n> docs/spec.md:42-43\n> Older revision | 409\n> Newer revision | 200\nAlso return the revision.\n\n> src/sync.ts:8\n> if (a < b) {\nCompare with <=.\n\nThanks");
+    expect(message).toBe("> backfill it from updated_at\n\nBackfill in batches.\n\n> docs/spec.md:42-43\n> Older revision | 409\n> Newer revision | 200\n\nAlso return the revision.\n\n> src/sync.ts:8\n> if (a < b) {\n\nCompare with <=.\n\nThanks");
   });
 
   it("carries file comments in outgoingMessage and holds them back like replies", () => {
