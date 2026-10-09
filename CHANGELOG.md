@@ -8,6 +8,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Fixed
+- This fork uses `dle-labs.herdr-web-ui` for its plugin identity, phone setup actions and config-directory lookup.
 - Open tabs take turns chiming for the same alert. A question or a finish is still heard if
   the tab that claimed it closes or cannot play it, including on plain-HTTP LAN addresses.
   ([#632](https://github.com/devswha/herdr-web-ui/pull/632))

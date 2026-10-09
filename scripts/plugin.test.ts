@@ -33,7 +33,7 @@ beforeEach(() => {
   mkdirSync(configDir);
   mkdirSync(join(scratch, "bin"));
   const herdr = join(scratch, "bin", "herdr");
-  writeFileSync(herdr, `#!/bin/sh\n[ "$1 $2" = "plugin config-dir" ] && echo "${configDir}"\n`);
+  writeFileSync(herdr, `#!/bin/sh\n[ "$1 $2 $3" = "plugin config-dir dle-labs.herdr-web-ui" ] && echo "${configDir}"\n`);
   chmodSync(herdr, 0o755);
 });
 
