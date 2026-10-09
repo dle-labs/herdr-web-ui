@@ -24,9 +24,6 @@ export function inAnotherDialog(target: EventTarget | null, box: Element | null)
   return dialog !== null && !(box !== null && dialog.contains(box));
 }
 
-/** Longest comment, in UTF-16 units as `maxLength` counts. */
-export const COMMENT_MAX_CHARS = 2000;
-
 /** A comment being written in the popover: its text, its field and its keys. */
 export interface CommentDraft {
   /** the editor's own box */
@@ -223,7 +220,6 @@ export function CommentField({ draft }: { draft: CommentDraft }) {
     ref={draft.field}
     className="comment-editor-field"
     value={draft.value}
-    maxLength={COMMENT_MAX_CHARS}
     rows={1}
     aria-label={t("Comment")}
     placeholder={t("Write a comment…")}

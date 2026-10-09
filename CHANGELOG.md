@@ -130,6 +130,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   takes the unused height, and an empty one follows the folded section directly. The Agents height
   cap, independent scrolling and fixed footer stay unchanged.
   ([#780](https://github.com/devswha/herdr-web-ui/pull/780) by @vibewriter-hand)
+- Comment editors no longer stop at 2,000 characters; the combined message is still checked against the send limit.
 - Chat selection comments keep list bullets, numbering and task checkbox markers in their quotes.
 - Comments sent from chat or file selections stay outside the quoted text in terminal Markdown renderers.
 - This fork uses `dle-labs.herdr-web-ui` for its plugin identity, phone setup actions and config-directory lookup.
