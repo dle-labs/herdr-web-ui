@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { restoreFocusTarget, sliceText, spanText } from "./commentSelection.ts";
+import { restoreFocusTarget, selectionListMarker, sliceText, spanText } from "./commentSelection.ts";
+import { parseMarkdown } from "./markdown.ts";
 
 describe("sliceText", () => {
   it("takes the characters start–end across the text units", () => {
@@ -31,6 +32,15 @@ describe("sliceText", () => {
   });
 });
 
+describe("selectionListMarker", () => {
+  it("restores unordered, ordered and task list markers from the comment target", () => {
+    for (const [source, marker] of [["- item", "- "], ["3. item", "3. "], ["- [ ] item", "- [ ] "], ["- [x] item", "- [x] "]] as const) {
+      expect(selectionListMarker(parseMarkdown(source)[0]!)).toBe(marker);
+    }
+    expect(selectionListMarker(parseMarkdown("paragraph")[0]!)).toBe("");
+  });
+});
+
 describe("spanText", () => {
   const para = (text: string) => [text];
   it("quotes a selection inside one part as sliceText does", () => {
@@ -52,6 +62,30 @@ describe("spanText", () => {
   it("drops the trailing spaces of each part's text", () => {
     const slices = [{ units: para("Alpha beta  "), start: 6, end: 12 }, { units: para("one "), start: 0, end: 4 }, { units: para("Omega end"), start: 0, end: 6 }];
     expect(spanText(slices)).toEqual({ first: 0, last: 2, text: "beta\none\nOmega" });
+  });
+  it("keeps bullets when a selection spans a paragraph and list items", () => {
+    const heading = "Added regression tests for your example and multiline notes.";
+    const items = ["187 targeted tests passed", "Typecheck passed", "Full unit suite timed out after 120 seconds"];
+    const slices = [
+      { units: [heading], start: 0, end: heading.length },
+      ...items.map((text) => ({ units: [text], start: 0, end: text.length, marker: "- " })),
+    ];
+    expect(spanText(slices)).toEqual({ first: 0, last: 3, text: `${heading}\n${items.map((text) => `- ${text}`).join("\n")}` });
+    // Synthetic markers are never counted in selection/highlight offsets.
+    expect(slices[1]!.end).toBe(items[0]!.length);
+  });
+  it("keeps numbering and checkbox state at item starts, but not for an interior selection", () => {
+    expect(spanText([
+      { units: ["first"], start: 0, end: 5, marker: "3. " },
+      { units: ["second"], start: 0, end: 6, marker: "4. " },
+      { units: ["done"], start: 0, end: 4, marker: "- [x] " },
+    ])?.text).toBe("3. first\n4. second\n- [x] done");
+    expect(spanText([{ units: ["partial item"], start: 8, end: 12, marker: "- " }])?.text).toBe("item");
+    expect(spanText([{ units: ["partial item"], start: 0, end: 7, marker: "- " }])?.text).toBe("- partial");
+  });
+  it("does not quote a marker for a blank or unselected list item", () => {
+    expect(spanText([{ units: ["item"], start: 0, end: 0, marker: "- " }])).toBeNull();
+    expect(spanText([{ units: [" "], start: 0, end: 1, marker: "- " }])).toBeNull();
   });
   it("is null when nothing but blanks is selected", () => {
     expect(spanText([])).toBeNull();

@@ -11,6 +11,7 @@
  * geometry is lib/commentPins.ts.
  */
 import type { CommentTarget, PartLookup } from "./blockComments.ts";
+import type { MarkdownBlock } from "./markdown.ts";
 import { PINS_SELECTOR } from "./commentDom.ts";
 import { pointIn, unionBox, type CommentPoint, type PinBox } from "./commentPins.ts";
 
@@ -103,11 +104,21 @@ export function sliceText(units: readonly (string | Separator)[], start: number,
   return out;
 }
 
+/** The rendered list marker is not a text node: keep it in the quote, never in highlight offsets. */
+export function selectionListMarker(block: MarkdownBlock): string {
+  if (block.type !== "list") return "";
+  const item = block.items[0];
+  if (item?.checked !== undefined) return item.checked ? "- [x] " : "- [ ] ";
+  return block.ordered ? `${block.start ?? 1}. ` : "- ";
+}
+
 /** A part a selection runs over: its text units (`partUnits`, text as strings) and the selection's offsets in its text. */
 export interface PartSlice {
   units: readonly (string | Separator)[];
   start: number;
   end: number;
+  /** A list item's marker, included only when its first character is selected. */
+  marker?: string;
 }
 
 /**
@@ -125,7 +136,7 @@ export function spanText(slices: readonly PartSlice[]): { first: number; last: n
     if (text.trim() === "") return;
     if (first < 0) first = index;
     last = index;
-    texts.push(text.replace(/[ \t]+$/, ""));
+    texts.push(`${slice.start === 0 ? slice.marker ?? "" : ""}${text.replace(/[ \t]+$/, "")}`);
   });
   return first < 0 ? null : { first, last, text: texts.join("\n") };
 }
@@ -207,6 +218,7 @@ export function selectionComment(selection: Selection | null, view: Element): Se
       units: units.map((unit) => unit instanceof Text ? unit.data : unit),
       start: offsetIn(nodes, ...from),
       end: offsetIn(nodes, ...to),
+      marker: selectionListMarker(found.target.block),
     });
   }
   const span = spanText(slices);
