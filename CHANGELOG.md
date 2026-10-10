@@ -7,7 +7,11 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- Undo the last inserted dictation segment without clearing earlier takes or unrelated draft text.
+
 ### Changed
+- Dictation starts on pointer-down rather than release and explicitly shows when the microphone is still starting.
 - Replace cloud/browser voice input with direct, self-hosted English dictation in desktop and mobile chat, terminal lines, reply comments and file comments. Settings now applies a speech URL/model explicitly; interrupted takes are cancelled and changed drafts require review before insertion. Direct speech origins require an administrator CSP allowlist. Live streaming is not enabled yet. ([#1](https://github.com/dle-labs/herdr-web-ui/pull/1) by @polaroidkidd)
 
 ### Fixed

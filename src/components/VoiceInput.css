@@ -1,6 +1,6 @@
 /* The same in-flow dictation controls in composers, terminal lines and comment sheets. */
-.voice-mic-wrap { position: relative; display: inline-grid; flex: none; }
-.voice-mic-ring { position: absolute; inset: 0; border-radius: var(--radius-pill); background: var(--accent); opacity: 0; pointer-events: none; }
+.voice-mic-wrap { position: relative; display: inline-flex; align-items: center; flex: none; }
+.voice-mic-ring { position: absolute; top: 0; left: 0; width: var(--control-h); height: var(--control-h); border-radius: var(--radius-pill); background: var(--accent); opacity: 0; pointer-events: none; }
 .voice-mic-wrap[data-state="recording"] .voice-mic-ring { opacity: 0.25; }
 .voice-mic, .voice-pill-button {
   position: relative;
@@ -19,10 +19,10 @@
   touch-action: manipulation;
 }
 .voice-mic svg, .voice-pill-button svg { width: var(--icon-size); height: var(--icon-size); }
-.voice-mic:disabled { opacity: 0.7; cursor: default; }
+.voice-mic:disabled, .voice-pill-button:disabled { opacity: 0.7; cursor: default; }
 .voice-mic[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 @media (hover: hover) {
-  .voice-mic:hover:not(:disabled):not([aria-pressed="true"]), .voice-pill-button:hover { background: var(--bg-hover); }
+  .voice-mic:hover:not(:disabled):not([aria-pressed="true"]), .voice-pill-button:hover:not(:disabled) { background: var(--bg-hover); }
 }
 .voice-pill {
   grid-column: 1 / -1;
@@ -48,7 +48,7 @@
 .voice-meter > span { display: block; width: 100%; height: 100%; background: var(--accent); transform-origin: left center; transform: scaleX(0); }
 .voice-timer { color: var(--text-dim); font-family: var(--font-mono); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
 @media (pointer: coarse) {
-  .voice-mic, .voice-pill-button { width: var(--touch-target); height: var(--touch-target); }
+  .voice-mic-ring, .voice-mic, .voice-pill-button { width: var(--touch-target); height: var(--touch-target); }
 }
 @media (prefers-reduced-motion: reduce) {
   .voice-bars, .voice-mic-ring { display: none; }

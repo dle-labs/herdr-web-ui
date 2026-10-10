@@ -1352,6 +1352,11 @@ One set for both themes: the card is island black wherever it shows.
 - One microphone control family serves chat, terminal lines and reply/file comment editors, including
   saved comments and mobile sheets. Tap Start/Finish or use Mod+Shift+Space. Text edits drafts only,
   never sends, saves or executes a terminal command. Secret fields have no microphone.
+- Pointer-down starts microphone acquisition; the status says Starting microphone until capture is
+  active. Audio before browser permission/device readiness cannot be captured; no background mic is held.
+- Undo beside the microphone removes the last inserted take, including its added spacing, while
+  retaining earlier takes and unrelated edits. Takes edited internally are no longer undoable as a unit.
+  Undo is disabled during capture/inference/recovery, and its history clears with the draft owner.
 - `voiceInput`: `auto`, `on` or `off`; default `auto`. Auto shows controls after explicit configuration
   activation when browser capture and server-origin policy allow it, including on phones. On also
   shows unavailable controls disabled with a reason. Off hides them; Settings stays accessible.

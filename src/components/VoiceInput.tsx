@@ -1,12 +1,13 @@
 /** One direct dictation control family for draft fields. Nothing here sends or saves. */
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Mic, Square, X } from "lucide-react";
+import { Mic, Square, Undo2, X } from "lucide-react";
 import "./VoiceInput.css";
 import { useT, type Translate } from "../lib/i18n.ts";
 import { useSettings, wantsVoiceInput } from "../lib/settings.ts";
 import { isMacPlatform, isVoiceShortcut } from "../lib/shortcuts.ts";
 import { insertAtCaret, subscribeDictationInvalidation, useVoiceInput, type VoiceInput, type VoiceText } from "../lib/voice.ts";
 import { createDictationDraft, type DictationSnapshot } from "../lib/dictationDraft.ts";
+import { createDictationUndo } from "../lib/dictationUndo.ts";
 import { VOICE_MAX_SECONDS } from "../../shared/voice.ts";
 
 function errorNote(t: Translate, error: string): string | null {
@@ -109,6 +110,8 @@ export interface Dictation {
   press: () => void;
   recovery: string | null;
   insertRecovery: () => void;
+  canUndo: boolean;
+  undo: () => void;
 }
 
 export function useDictation(options: DictationOptions): Dictation {
@@ -118,6 +121,8 @@ export function useDictation(options: DictationOptions): Dictation {
   const latest = useRef(options);
   latest.current = options;
   const tracker = useRef(createDictationDraft());
+  const history = useRef(createDictationUndo());
+  const [canUndo, setCanUndo] = useState(false);
   const take = useRef<{ snapshot: DictationSnapshot; config: string } | null>(null);
   const composing = useRef(false);
   const insertedCaret = useRef<{ owner: string; value: string; caret: number } | null>(null);
@@ -138,6 +143,8 @@ export function useDictation(options: DictationOptions): Dictation {
   const sync = useCallback((): void => {
     const { box, read } = latest.current;
     const value = read();
+    history.current.observe(value);
+    setCanUndo(history.current.available());
     // DOM selection is valid only for the revision the DOM is displaying.
     const element = box.current;
     tracker.current.observe(value, element?.value === value
@@ -145,11 +152,17 @@ export function useDictation(options: DictationOptions): Dictation {
   }, []);
   const insert = useCallback((text: string, selection: { start: number; end: number }): boolean => {
     const { read, write, maxLength, onNote } = latest.current;
-    const next = insertAtCaret(read(), selection.start, selection.end, text);
+    const before = read();
+    if (!text.trim()) { clear(); return true; }
+    const next = insertAtCaret(before, selection.start, selection.end, text);
     if (next.value.length > (maxLength ?? Infinity)) {
       onNote(t("The dictation does not fit in the box"));
       return false;
     }
+    const from = Math.max(0, Math.min(selection.start, selection.end, before.length));
+    const to = Math.min(before.length, Math.max(selection.start, selection.end, from));
+    history.current.record(before, next.value, from, to);
+    setCanUndo(history.current.available());
     insertedCaret.current = { owner: latest.current.owner, value: next.value, caret: next.end };
     write(next.value, next.end);
     onNote(null);
@@ -172,16 +185,31 @@ export function useDictation(options: DictationOptions): Dictation {
   voiceRef.current = voice;
   const cancel = useCallback((): void => { clear(); voiceRef.current.cancel(); }, [clear]);
   const shown = wanted && (settings.voiceInput === "on" || voice.available);
+  const undo = useCallback((): void => {
+    if (voiceRef.current.state !== "idle" || recoveryRef.current !== null || composing.current) return;
+    const current = latest.current;
+    const result = history.current.undo(current.read());
+    setCanUndo(history.current.available());
+    if (!result) return;
+    tracker.current.changed();
+    insertedCaret.current = { owner: current.owner, value: result.value, caret: result.caret };
+    current.write(result.value, result.caret);
+    current.onNote(null);
+  }, []);
 
   // The setter's synchronous invalidation clears even idle, IME-held recovery before a settings commit.
   useEffect(() => subscribeDictationInvalidation(clear), [clear]);
   useLayoutEffect(() => {
+    history.current.clear(latest.current.read());
+    setCanUndo(false);
     cancel();
     return cancel;
   }, [options.owner, options.connected, wanted, configKey, cancel]);
   const lastValue = useRef(options.read());
   useLayoutEffect(() => {
     const value = latest.current.read();
+    history.current.observe(value);
+    setCanUndo(history.current.available());
     if (lastValue.current !== value) {
       tracker.current.observe(value, null);
       if (value === "") cancel();
@@ -206,6 +234,9 @@ export function useDictation(options: DictationOptions): Dictation {
     const input = (): void => {
       // Count edits even if undo returns to the text captured at take start.
       tracker.current.changed();
+      // Do not set React state in the native input listener: a render here can restore a
+      // controlled textarea's old value before its delegated onChange reads the edit.
+      history.current.observe(element.value);
       selection();
       if (element.value === "") cancel();
     };
@@ -279,13 +310,14 @@ export function useDictation(options: DictationOptions): Dictation {
   }, [shown, options.mode, options.box, cancel, press]);
   const unavailableNote = !options.connected ? t("Not sent: the terminal is disconnected.")
     : voice.unavailableReason ? errorNote(t, voice.unavailableReason) : null;
-  return { shown, connected: options.connected, unavailableNote, statusId, voice: { ...voice, cancel }, cancel, press, recovery, insertRecovery };
+  return { shown, connected: options.connected, unavailableNote, statusId, voice: { ...voice, cancel }, cancel, press, recovery, insertRecovery, canUndo, undo };
 }
 
 /** Tap-to-toggle also works with Enter/Space. Pointer presses never force the keyboard open. */
 export function MicButton({ dictation, className = "" }: { dictation: Dictation; className?: string }) {
   const t = useT();
   const { voice, connected, press, recovery } = dictation;
+  const pointerClick = useRef(false);
   const recording = voice.state === "starting" || voice.state === "recording";
   const reason = !connected ? t("Not sent: the terminal is disconnected.")
     : voice.unavailableReason ? errorNote(t, voice.unavailableReason) : null;
@@ -295,9 +327,23 @@ export function MicButton({ dictation, className = "" }: { dictation: Dictation;
     <button type="button" className="voice-mic" aria-label={label} aria-pressed={recording} title={reason ?? label}
       aria-describedby={reason ? dictation.statusId : undefined}
       disabled={!voice.available || !connected || voice.state === "transcribing" || recovery !== null}
-      onPointerDown={(event) => { if (event.button === 0) event.preventDefault(); }} onClick={press}>
+      onPointerDown={(event) => {
+        if (event.button !== 0 || !event.isPrimary) return;
+        event.preventDefault();
+        pointerClick.current = true;
+        press();
+      }}
+      onPointerCancel={() => { pointerClick.current = false; }}
+      onClick={(event) => {
+        if (pointerClick.current && event.detail !== 0) { pointerClick.current = false; return; }
+        pointerClick.current = false;
+        press();
+      }}>
       {recording ? <Square aria-hidden="true" /> : <Mic aria-hidden="true" />}
     </button>
+    {dictation.canUndo && <button type="button" className="voice-pill-button" aria-label={t("Undo last dictation")} title={t("Undo last dictation")}
+      disabled={voice.state !== "idle" || recovery !== null || !connected}
+      onPointerDown={(event) => event.preventDefault()} onClick={dictation.undo}><Undo2 aria-hidden="true" /></button>}
   </span>;
 }
 
@@ -309,7 +355,7 @@ export function VoiceRecordingPill({ dictation, align }: { dictation: Dictation;
   const seconds = Math.floor(voice.elapsedMs / 1000);
   const label = recovery !== null ? t("Draft changed. Review the dictation before inserting.")
     : voice.state === "transcribing" ? t("Transcribing…")
-    : voice.state === "starting" ? t("Ready…") : unavailableNote ?? (voice.silent ? t("No microphone input") : t("Recording"));
+    : voice.state === "starting" ? t("Starting microphone…") : unavailableNote ?? (voice.silent ? t("No microphone input") : t("Recording"));
   return <div className={`voice-pill${open ? " is-open" : ""}`} data-state={voice.state} data-align={align} hidden={!open}>
     <span id={statusId} className="voice-pill-label" role="status" aria-live="polite">{open ? label : ""}</span>
     {recovery !== null ? <>

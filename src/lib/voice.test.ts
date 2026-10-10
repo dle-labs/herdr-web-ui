@@ -55,6 +55,16 @@ describe("dictation coordinator", () => {
     a.uploads[0]!.resolve("hello"); await drain();
     expect(a.texts[0]).toMatchObject({ text: "hello", phase: "raw" }); expect(a.timers.size).toBe(0);
   });
+  it("starts as soon as permission resolves and uploads the first audio chunk", async () => {
+    const a = harness(); a.voice.press();
+    expect(a.states.at(-1)).toBe("starting");
+    await a.grant();
+    expect(a.recorder.state).toBe("recording");
+    expect(a.states.at(-1)).toBe("recording");
+    a.recorder.ondataavailable?.({ data: new Blob(["first words"]) });
+    a.voice.finish(); await drain();
+    expect(await a.uploads[0]!.blob.text()).toBe("first wordsaudio");
+  });
   it("global invalidation aborts uploads and notifies synchronously; late results stay discarded", async () => {
     const a = harness(); a.voice.press(); await a.grant(); a.voice.finish(); await drain();
     let notified = false; const unsubscribe = subscribeDictationInvalidation(() => { notified = true; });

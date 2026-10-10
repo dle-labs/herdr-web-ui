@@ -60,7 +60,16 @@ async function start(page: Page, surface: Locator, keyboard = false): Promise<vo
   await page.evaluate(() => { (window as any).__dictationBytes = 0; });
   const button = surface.getByRole("button", { name: "Start dictation", exact: true });
   if (keyboard) { await button.focus(); await page.keyboard.press("Enter"); }
-  else await button.click();
+  else {
+    await button.scrollIntoViewIfNeeded();
+    const bounds = (await button.boundingBox())!;
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    try {
+      await surface.locator('.voice-mic-wrap[data-state="recording"]').waitFor();
+      assert.equal(await surface.locator('.voice-mic-wrap[data-state="recording"]').count(), 1, "capture starts before pointer release");
+    } finally { await page.mouse.up(); }
+  }
   try { await surface.locator('.voice-mic-wrap[data-state="recording"]').waitFor(); }
   catch (error) {
     console.error("Dictation start failure:", { posts: posts().length, surface: await surface.innerText(), state: await surface.locator(".voice-mic-wrap").getAttribute("data-state"), locks: await page.evaluate(() => navigator.locks.query()) });
@@ -239,6 +248,22 @@ try {
       assert.ok(upload.fileSize! > 0);
       assert.match(upload.fileType!, /^audio\/(webm|mp4|ogg)/);
       assert.match(upload.fileName!, /\.(webm|mp4|m4a|ogg)$/);
+
+      // Undo takes, not the whole draft, including repeated text and insertion at the caret.
+      await caret(message, (await message.inputValue()).length);
+      await start(page, composer);
+      await finish(page, composer);
+      await until("second take inserted", async () => await message.inputValue() === "prefix spoken words suffix spoken words");
+      if (process.env.UI_EVIDENCE_DIR) {
+        mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dictation-undo-${mobile ? "phone" : "desktop"}.png`) });
+      }
+      await composer.getByRole("button", { name: "Undo last dictation", exact: true }).click();
+      assert.equal(await message.inputValue(), "prefix spoken words suffix");
+      await composer.getByRole("button", { name: "Undo last dictation", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      assert.equal(await message.inputValue(), "prefix suffix");
+      assert.equal(await composer.getByRole("button", { name: "Undo last dictation", exact: true }).count(), 0);
 
       // Both recording-time edits and caret-only movement must recover, not overwrite.
       for (const change of ["text", "caret"]) {
