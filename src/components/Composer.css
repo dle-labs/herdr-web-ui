@@ -506,8 +506,8 @@
   border-radius: var(--radius-sm);
 }
 
-/* Recording, transcription and recovery share the message field, not a separate card.
-   They stay in flow so an existing draft remains readable and editable. */
+/* Dictation replaces the visible message field, not a separate card. The textarea
+   stays mounted while hidden, preserving its draft and captured insertion caret. */
 .composer-draft {
   grid-area: text;
   min-width: 0;

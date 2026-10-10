@@ -1344,8 +1344,9 @@ One set for both themes: the card is island black wherever it shows.
 - One microphone control family serves chat, terminal lines and reply/file comment editors, including
   saved comments and mobile sheets. Tap Start/Finish or use Mod+Shift+Space. Text edits drafts only,
   never sends, saves or executes a terminal command. Secret fields have no microphone.
-- Pointer-down starts microphone acquisition; the status says Starting microphone until capture is
-  active. Audio before browser permission/device readiness cannot be captured; no background mic is held.
+- Pointer-down starts microphone acquisition; the status says Starting microphone until the
+  recorder emits its start event. Startup shows no level bars, elapsed timer or recording indicator.
+  Audio before browser permission/device readiness cannot be captured; no background mic is held.
 - Undo beside the microphone removes the last inserted take, including its added spacing, while
   retaining earlier takes and unrelated edits. Takes edited internally are no longer undoable as a unit.
   Undo is disabled during capture/inference/recovery, and its history clears with the draft owner.
@@ -1355,9 +1356,11 @@ One set for both themes: the card is island black wherever it shows.
   draft line is also available beside direct grid typing when dictation controls are enabled.
 - Dictation settings explicitly applies a HTTPS speech URL and model. Recognition is English;
   recording is uploaded directly on Finish, with no vendor fallback or polishing. Live streaming is gated.
-- The in-flow, wrapping status row shows Cancel, status, level bars and a mono timer. In the chat
-  composer it shares the message field above any draft text, replacing the placeholder during capture
-  and transcription, without a separate border or card. The draft remains editable. It does not
+- The in-flow, wrapping status row shows Cancel and status, with live level bars to the left of
+  the recording label and a mono timer only during actual capture. In the chat composer it replaces
+  the visible message field during startup, recording and transcription, without a separate border
+  or card. The retained draft returns afterwards; no text is discarded, and Send is disabled
+  while that draft is hidden. Silent bars remain stationary rather than simulating activity. It does not
   float over the draft or extend beyond narrow popovers. Changed drafts/selections get an owner-scoped
   transcript with Insert at cursor / Discard. Error text uses `role="alert"`; status uses `role="status"`.
   Accent only while recording; danger tokens stay for errors. Touch controls use `--touch-target`.

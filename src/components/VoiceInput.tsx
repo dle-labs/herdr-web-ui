@@ -319,10 +319,11 @@ export function MicButton({ dictation, className = "" }: { dictation: Dictation;
   const t = useT();
   const { voice, connected, press, recovery } = dictation;
   const pointerClick = useRef(false);
-  const recording = voice.state === "starting" || voice.state === "recording";
+  const recording = voice.state === "recording";
+  const starting = voice.state === "starting";
   const reason = !connected ? t("Not sent: the terminal is disconnected.")
     : voice.unavailableReason ? errorNote(t, voice.unavailableReason) : null;
-  const label = recording ? t("Finish dictation") : t("Start dictation");
+  const label = starting ? t("Cancel dictation") : recording ? t("Finish dictation") : t("Start dictation");
   return <span className={`voice-mic-wrap ${className}`} data-state={voice.state}>
     <span className="voice-mic-ring" ref={voice.bindRing} aria-hidden="true" />
     <button type="button" className="voice-mic" aria-label={label} aria-pressed={recording} title={reason ?? label}
@@ -340,7 +341,7 @@ export function MicButton({ dictation, className = "" }: { dictation: Dictation;
         pointerClick.current = false;
         press();
       }}>
-      {recording ? <Square aria-hidden="true" /> : <Mic aria-hidden="true" />}
+      {starting ? <X aria-hidden="true" /> : recording ? <Square aria-hidden="true" /> : <Mic aria-hidden="true" />}
     </button>
     {dictation.canUndo && <button type="button" className="voice-pill-button" aria-label={t("Undo last dictation")} title={t("Undo last dictation")}
       disabled={voice.state !== "idle" || recovery !== null || !connected}
@@ -358,15 +359,17 @@ export function VoiceRecordingPill({ dictation, align }: { dictation: Dictation;
     : voice.state === "transcribing" ? t("Transcribing…")
     : voice.state === "starting" ? t("Starting microphone…") : unavailableNote ?? (voice.silent ? t("No microphone input") : t("Recording"));
   return <div className={`voice-pill${open ? " is-open" : ""}`} data-state={voice.state} data-align={align} hidden={!open}>
+    {voice.state === "recording" && recovery === null && unavailableNote === null && <>
+      <span className="voice-bars" ref={voice.bindBars} aria-hidden="true">{Array.from({ length: 7 }, (_, i) => <span key={i} data-voice-bar="" />)}</span>
+      <span className="voice-meter" aria-hidden="true"><span ref={voice.bindMeter} /></span>
+    </>}
     <span id={statusId} className="voice-pill-label" role="status" aria-live="polite">{open ? label : ""}</span>
     {recovery !== null ? <>
       <p className="voice-recovery-text">{recovery}</p>
       <button type="button" className="btn" onPointerDown={(event) => event.preventDefault()} onClick={dictation.insertRecovery}>{t("Insert at cursor")}</button>
       <button type="button" className="btn btn-ghost" onClick={dictation.cancel}>{t("Discard")}</button>
     </> : unavailableNote !== null ? null : <>
-      <span className="voice-bars" ref={voice.bindBars} aria-hidden="true">{Array.from({ length: 7 }, (_, i) => <span key={i} data-voice-bar="" />)}</span>
-      <span className="voice-meter" aria-hidden="true"><span ref={voice.bindMeter} /></span>
-      <span className="voice-timer" aria-hidden="true">{Math.min(seconds, VOICE_MAX_SECONDS)}s</span>
+      {voice.state === "recording" && <span className="voice-timer" aria-hidden="true">{Math.min(seconds, VOICE_MAX_SECONDS)}s</span>}
       <button type="button" className="voice-pill-button" aria-label={t("Cancel dictation")} title={t("Cancel dictation")}
         onPointerDown={(event) => event.preventDefault()} onClick={dictation.cancel}><X aria-hidden="true" /></button>
     </>}

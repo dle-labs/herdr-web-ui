@@ -26,7 +26,8 @@ export function levelFromRms(rms: number): number { return rms > 0 ? Math.min(1,
 export function barScales(level: number, timeMs: number): number[] {
   const amount = Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : 0;
   return [0.45, 0.65, 0.85, 1, 0.85, 0.65, 0.45].map((weight, index) => {
-    const base = 0.12 + 0.08 * weight * (0.5 + 0.5 * Math.sin(timeMs / 600));
+    // Silence is stationary: motion must come from captured audio, not an idle pulse.
+    const base = 0.12;
     return Math.min(1, base + (1 - base) * amount * weight * (0.7 + 0.3 * (0.5 + 0.5 * Math.sin(timeMs / 110 + index * 1.9))));
   });
 }
@@ -107,7 +108,7 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
     current.timers.clear();
     const recorder = current.recorder;
     if (recorder) {
-      recorder.ondataavailable = recorder.onstop = recorder.onerror = null;
+      recorder.ondataavailable = recorder.onstop = recorder.onerror = recorder.onstart = null;
       try { if (recorder.state !== "inactive") recorder.stop(); } catch { /* already stopped */ }
     }
     stopTracks(current);
@@ -206,13 +207,20 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
       recorder.onerror = () => fail(current, "format");
       // An unexpected recorder termination is cancellation, never permission to upload.
       recorder.onstop = () => { if (valid(current)) cancel(); };
-      try { recorder.start(250); } catch { fail(current, "format"); return; }
-      if (!valid(current)) return;
-      setPhase("recording"); startMeter(current);
-      const started = deps.now();
-      const tick = () => { io.setElapsed(Math.min(120_000, deps.now() - started)); schedule(current, tick, 250); };
-      schedule(current, tick, 250);
-      schedule(current, finish, 120_000);
+      // Permission is not capture readiness: only the recorder's start event may
+      // enable recording indicators, the level meter and the elapsed timer.
+      recorder.onstart = () => {
+        if (!valid(current) || phase !== "starting") return;
+        for (const timer of current.timers) deps.clearTimer(timer);
+        current.timers.clear();
+        setPhase("recording"); startMeter(current);
+        const started = deps.now();
+        const tick = () => { io.setElapsed(Math.min(120_000, deps.now() - started)); schedule(current, tick, 250); };
+        schedule(current, tick, 250);
+        schedule(current, finish, 120_000);
+      };
+      schedule(current, () => fail(current, "timeout"), 30_000);
+      try { recorder.start(250); } catch { fail(current, "format"); }
     } catch (error) { if (valid(current)) fail(current, micErrorReason(error instanceof Error ? error.name : "")); }
   }
   function press(): void {

@@ -12,8 +12,10 @@ class Recorder {
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  onstart: (() => void) | null = null;
   delayed = false;
-  start() { this.state = "recording"; }
+  delayedStart = false;
+  start() { this.state = "recording"; if (!this.delayedStart) this.onstart?.(); }
   stop() { this.state = "inactive"; if (!this.delayed) this.flush(); }
   flush() { this.ondataavailable?.({ data: new Blob(["audio"]) }); this.onstop?.(); }
 }
@@ -65,6 +67,30 @@ describe("dictation coordinator", () => {
     a.voice.finish(); await drain();
     expect(await a.uploads[0]!.blob.text()).toBe("first wordsaudio");
   });
+  it("waits for recorder readiness before announcing recording or starting its timer", async () => {
+    const a = harness(); a.recorder.delayedStart = true;
+    a.voice.press(); await a.grant();
+    expect(a.states.at(-1)).toBe("starting");
+    expect([...a.timers.values()].some((timer) => timer.ms === 250 || timer.ms === 120_000)).toBe(false);
+    a.recorder.onstart?.();
+    expect(a.states.at(-1)).toBe("recording");
+    expect([...a.timers.values()].some((timer) => timer.ms === 120_000)).toBe(true);
+  });
+  it("cancels a starting recorder without letting a late start announce recording", async () => {
+    const a = harness(); a.recorder.delayedStart = true;
+    a.voice.press(); const stream = await a.grant();
+    const lateStart = a.recorder.onstart;
+    a.voice.cancel(); lateStart?.();
+    expect(stream.stopped).toBe(true); expect(a.states.at(-1)).toBe("idle");
+    expect(a.states).not.toContain("recording"); expect(a.uploads).toHaveLength(0);
+  });
+  it("bounds recorder startup after microphone permission was granted", async () => {
+    const a = harness(); a.recorder.delayedStart = true;
+    a.voice.press(); const stream = await a.grant();
+    [...a.timers.values()].find((timer) => timer.ms === 30_000)!.callback();
+    expect(a.errors.at(-1)).toBe("timeout"); expect(stream.stopped).toBe(true);
+    expect(a.states).not.toContain("recording");
+  });
   it("global invalidation aborts uploads and notifies synchronously; late results stay discarded", async () => {
     const a = harness(); a.voice.press(); await a.grant(); a.voice.finish(); await drain();
     let notified = false; const unsubscribe = subscribeDictationInvalidation(() => { notified = true; });
@@ -113,6 +139,9 @@ describe("caret, format and meter helpers", () => {
   it("selects Safari mp4 without pretending an unsupported format works", () => {
     expect(pickRecorderMime((mime) => mime === "audio/mp4")?.extension).toBe("m4a");
     expect(pickRecorderMime(() => false)).toBeNull();
+  });
+  it("keeps silent bars stationary instead of simulating microphone activity", () => {
+    for (const time of [0, 110, 600, 3000]) expect(barScales(0, time)).toEqual(Array(7).fill(0.12));
   });
   it("bounds bars and uses faster attack than decay", () => {
     expect(levelFromRms(0)).toBe(0); expect(levelFromRms(1)).toBe(1);

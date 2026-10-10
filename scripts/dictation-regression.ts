@@ -69,6 +69,7 @@ async function assertInlineComposerStatus(surface: Locator): Promise<void> {
       && style.borderTopWidth === "0px" && style.borderRadius === "0px";
   }), "dictation status shares the editable message area without a separate border");
   assert.equal(await surface.locator("textarea").getAttribute("placeholder"), "", "recording/transcribing takes the placeholder's place");
+  assert.equal(await surface.locator("textarea").isVisible(), false, "active dictation replaces the field and its visible draft");
 }
 async function start(page: Page, surface: Locator, keyboard = false): Promise<void> {
   await surface.locator(".voice-mic").waitFor();
@@ -96,6 +97,11 @@ async function start(page: Page, surface: Locator, keyboard = false): Promise<vo
   assert.equal(await surface.locator('.voice-pill [role="status"]').getAttribute("aria-live"), "polite");
   assert.ok(await surface.locator(".voice-pill").evaluate((node) => !["absolute", "fixed"].includes(getComputedStyle(node).position)), "status is in flow");
   await assertInlineComposerStatus(surface);
+  assert.ok(await surface.locator(".voice-pill").evaluate((node) => {
+    const bars = node.querySelector(".voice-bars")!.getBoundingClientRect();
+    const label = node.querySelector(".voice-pill-label")!.getBoundingClientRect();
+    return bars.right <= label.left && bars.top < label.bottom && label.top < bars.bottom;
+  }), "live recording bars appear to the left of the recording label");
 }
 async function finish(page: Page, surface: Locator, keyboard = false): Promise<void> {
   const before = posts().length;
@@ -169,6 +175,10 @@ try {
         localStorage.setItem(`herdr-web-ui:view:${pane}`, "chat");
         const Recorder = window.MediaRecorder;
         window.MediaRecorder = class extends Recorder {
+          start(timeslice?: number) {
+            if ((window as any).__delayDictationStart) (window as any).__startDictation = () => super.start(timeslice);
+            else super.start(timeslice);
+          }
           constructor(stream: MediaStream, options?: MediaRecorderOptions) {
             super(stream, options);
             // A cancelled recorder may still emit its final chunk while the next permission is pending.
@@ -204,7 +214,8 @@ try {
       assert.ok(!/connect-src[^;]*(?:\shttps:|\swss:)(?:\s|;)/.test(csp), "no wildcard scheme permission");
       await page.locator(".conn-live").waitFor();
       const composer = page.locator(".composer");
-      const message = page.getByRole("textbox", { name: "Message", exact: true });
+      // The retained textarea leaves the accessibility tree while recording replaces it.
+      const message = page.locator(".composer-text");
       await message.waitFor();
       await composer.locator(".voice-mic").waitFor();
       assert.equal(await composer.locator(".voice-mic").isDisabled(), true, "unconfigured dictation stays visible with a setup reason on both layouts");
@@ -256,6 +267,27 @@ try {
       await lockPage.evaluate(() => (window as any).__releaseDictationLock());
       await lockPage.close();
 
+      // Delay actual recorder startup after permission, without mocking the capture stream.
+      await message.fill("waiting draft");
+      await page.evaluate(() => { (window as any).__delayDictationStart = true; });
+      await composer.locator(".voice-mic").click();
+      await composer.getByText("Starting microphone…", { exact: true }).waitFor();
+      await assertInlineComposerStatus(composer);
+      assert.equal(await message.inputValue(), "waiting draft", "the replaced draft is retained");
+      assert.equal(await composer.locator(".voice-bars, .voice-meter, .voice-timer").count(), 0, "no recording indicators before the recorder starts");
+      assert.equal(await composer.locator(".voice-mic").getAttribute("aria-pressed"), "false", "startup is not announced as recording");
+      if (process.env.UI_EVIDENCE_DIR) {
+        mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dictation-starting-${mobile ? "phone" : "desktop"}.png`) });
+      }
+      await page.waitForFunction(() => typeof (window as any).__startDictation === "function");
+      await page.evaluate(() => { (window as any).__delayDictationStart = false; (window as any).__startDictation(); });
+      await composer.locator('.voice-mic-wrap[data-state="recording"]').waitFor();
+      await page.waitForFunction(() => (window as any).__dictationBytes > 0);
+      await finish(page, composer);
+      await until("startup take inserted", async () => await message.inputValue() === "waiting draft spoken words");
+      assert.equal(await message.isVisible(), true, "the retained field returns after transcription");
+
       await message.fill("prefix suffix");
       await caret(message, 7);
       await start(page, composer, true);
@@ -293,7 +325,11 @@ try {
         await message.fill("keep this draft");
         await caret(message, 4);
         await start(page, composer);
-        if (change === "text") await message.fill("new visible draft");
+        // An external edit to the retained (currently hidden) draft still forces recovery.
+        if (change === "text") await message.evaluate((node: HTMLTextAreaElement) => {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(node, "new visible draft");
+          node.dispatchEvent(new Event("input", { bubbles: true }));
+        });
         await caret(message, 0);
         await finish(page, composer);
         const insert = composer.getByRole("button", { name: "Insert at cursor", exact: true });
@@ -309,13 +345,17 @@ try {
       await finish(page, composer);
       await composer.locator('.voice-pill[data-state="transcribing"]').waitFor();
       await assertInlineComposerStatus(composer);
-      assert.equal(await message.inputValue(), "visible only", "transcription leaves the editable draft visible");
+      assert.equal(await message.inputValue(), "visible only", "transcription retains the replaced draft");
+      assert.equal(await composer.locator(".voice-bars, .voice-meter, .voice-timer").count(), 0, "transcribing does not indicate live recording");
       if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dictation-inline-transcribing-${mobile ? "phone" : "desktop"}.png`) });
       await composer.getByRole("button", { name: "Cancel dictation", exact: true }).click();
       await release(page);
       assert.equal(await message.inputValue(), "visible only", "late cancelled result cannot insert");
       await start(page, composer);
       await finish(page, composer);
+      assert.equal(await page.getByRole("button", { name: "Send message", exact: true }).isDisabled(), true, "Send cannot submit the replaced, invisible draft");
+      await composer.getByRole("button", { name: "Cancel dictation", exact: true }).click();
+      await message.waitFor({ state: "visible" });
       await page.getByRole("button", { name: "Send message", exact: true }).click();
       await until("explicit Send clears draft", async () => await message.inputValue() === "");
       await release(page);

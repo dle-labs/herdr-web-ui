@@ -809,7 +809,8 @@ export function Composer({
 
   const send = useCallback(() => {
     if (composingRef.current) return;
-    if (!connected || uploading || sending || !outgoing.sendable) return;
+    // The draft is retained but not visible while dictation replaces its field.
+    if (!connected || uploading || sending || !outgoing.sendable || dictation.voice.state !== "idle") return;
     // a comment still being written in this pane's chat would not go with the message: its form is
     // shown and takes the focus instead (inside the press, so a phone raises its keyboard there). This pane's: the
     // chat view in its stack; a dialog anywhere is modal, so it is the one being written in
@@ -849,7 +850,7 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [attachments, commentOwner, connected, dictation.cancel, draftKey, onSend, outgoing, sending, text, uploading]);
+  }, [attachments, commentOwner, connected, dictation.cancel, dictation.voice.state, draftKey, onSend, outgoing, sending, text, uploading]);
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
@@ -1116,7 +1117,7 @@ export function Composer({
           );
         })()}
 
-        <div className="composer-draft">
+        <div className="composer-draft" data-voice-state={dictation.voice.state}>
           {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
         <textarea
           ref={textareaRef}
@@ -1124,6 +1125,7 @@ export function Composer({
         onCompositionEnd={() => { composingRef.current = false; }}
           className={`composer-text${manualHeight !== null ? " is-sized" : ""}`}
           rows={1}
+          hidden={dictation.voice.state !== "idle"}
           maxLength={MAX_COMPOSER_CHARS}
           value={text}
           placeholder={dictation.voice.state !== "idle" ? "" : placeholder}
@@ -1244,7 +1246,7 @@ export function Composer({
               className="composer-action composer-send"
               aria-label={withComments(t("Send message"))}
               title={withComments(t("Send message"))}
-              disabled={!connected || uploading || sending || !outgoing.sendable}
+              disabled={!connected || uploading || sending || !outgoing.sendable || dictation.voice.state !== "idle"}
               onClick={() => send()}
             >
               <ArrowUp aria-hidden="true" />
