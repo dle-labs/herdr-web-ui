@@ -20,6 +20,7 @@ const transcript = "spoken words";
 const requests: Array<{ path: string; method: string; origin: string | null; authorization: string | null; cookie: string | null; referer: string | null; fields?: Record<string, string>; fileSize?: number; fileType?: string; fileName?: string }> = [];
 let appOrigin = "";
 let hold = false;
+let speechResult: "ok" | "empty" | "error" = "ok";
 const pending: Array<() => void> = [];
 let completed = 0;
 let server: ReturnType<typeof createServer> | undefined;
@@ -182,7 +183,8 @@ try {
     if (path === "/v1/audio/transcriptions" && request.method === "POST") {
       if (hold) await new Promise<void>((resolve) => pending.push(resolve));
       completed++;
-      return Response.json({ text: transcript }, { headers });
+      if (speechResult === "error") return new Response("fixture failure", { status: 500 });
+      return Response.json({ text: speechResult === "empty" ? "" : transcript }, { headers });
     }
     return new Response("unexpected speech request", { status: 404, headers });
   } });
@@ -270,10 +272,12 @@ try {
         if (url.pathname.startsWith("/api/voice")) legacy.push(request.url());
         if (/^https?:$/.test(url.protocol) && url.origin !== appOrigin) crossOriginSpeech.push(request.url());
       });
+      let disconnect: (() => void) | undefined;
       // Only transcript and outgoing PTY input are fixtures. CSP, policy, media capture and speech HTTP are real.
       await page.route("**/api/pane/conversation?*", (route) => route.fulfill({ json: { source: "claude-transcript", history_id: "dictation-fixture", turns: [{ role: "assistant", ts: "2026-01-01T00:00:00Z", end_ts: "2026-01-01T00:00:01Z", parts: [{ kind: "text", text: `A fictional reply for dictation comments.\n\n[dictation.txt](${join(root, "dictation.txt")})` }] }] } }));
       await page.routeWebSocket(/^wss?:\/\/[^/]+\/ws(?:\?|$)/, (socket) => {
         const upstream = socket.connectToServer();
+        disconnect = () => { socket.close({ code: 1012, reason: "fixture reconnect" }); upstream.close(); };
         upstream.onMessage((raw) => socket.send(raw));
         socket.onMessage((raw) => {
           const frame = JSON.parse(String(raw));
@@ -467,6 +471,79 @@ try {
       assert.equal(await message.inputValue(), "composition draft", "Apply invalidates an old model's pending response");
       hold = false;
 
+      // Explicit Send owns exactly one continuation, with the latest committed text (including an empty initial draft).
+      async function directSend(surface: Locator, field: Locator, live = false): Promise<void> {
+        for (const initial of ["", "prefix"]) {
+          await field.fill(initial);
+          await caret(field, initial.length);
+          if (live) {
+            await surface.getByRole("button", { name: "Start dictation", exact: true }).click();
+            await surface.getByRole("region", { name: "Dictation preview", exact: true }).waitFor();
+          } else await start(page, surface);
+          const before = sent.length;
+          const send = surface.locator(".composer-send, .terminal-input-send");
+          assert.equal(await send.isDisabled(), false, "recording Send is enabled even for an empty draft");
+          // Synchronous repeated clicks exercise the intent claim before a React rerender.
+          await send.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+          await until("direct dictation Send acknowledged", async () => sent.length === before + 1 && await field.inputValue() === "");
+          assert.equal((sent.at(-1) as { text: string }).text, initial ? `${initial} ${transcript}` : transcript, "Send sees the committed final draft, not its stale closure");
+          await frames(page);
+          assert.equal(sent.length, before + 1, "a take sends exactly once");
+        }
+      }
+      async function rejectedSend(surface: Locator, field: Locator): Promise<void> {
+        for (const reason of ["cancel", "escape", "edit", "caret", "ime", "empty", "error", "offline", "disconnect", "pagehide", "settings"]) {
+          const initial = reason === "empty" || reason === "error" ? "" : "retained draft";
+          await field.fill(initial);
+          await caret(field, initial.length);
+          hold = true;
+          speechResult = reason === "empty" || reason === "error" ? reason : "ok";
+          await start(page, surface);
+          const before = sent.length;
+          await surface.locator(".composer-send, .terminal-input-send").click();
+          await until("held direct Send inference", () => pending.length === 1);
+          assert.equal(await surface.locator(".composer-send, .terminal-input-send").isDisabled(), true, "transcribing cannot create another Send intent");
+          if (reason === "cancel") await surface.getByRole("button", { name: "Cancel dictation", exact: true }).click();
+          if (reason === "escape") {
+            await surface.getByRole("button", { name: "Cancel dictation", exact: true }).focus();
+            await page.keyboard.press("Escape");
+          }
+          if (reason === "disconnect") {
+            disconnect!();
+            await page.locator(".conn-live").waitFor({ state: "detached" });
+            await page.locator(".conn-live").waitFor();
+          }
+          if (reason === "edit") await field.evaluate((node: HTMLTextAreaElement) => {
+            Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(node, "edited draft");
+            node.dispatchEvent(new Event("input", { bubbles: true }));
+          });
+          if (reason === "caret") await caret(field, 0);
+          if (reason === "ime") await field.dispatchEvent("compositionstart", { data: "" });
+          if (reason === "offline" || reason === "pagehide") await page.evaluate((name) => window.dispatchEvent(new Event(name)), reason);
+          if (reason === "settings") {
+            await settings(page);
+            const modelField = page.locator("#dictation-model");
+            await modelField.fill(await modelField.inputValue() === model ? "test/second-model" : model);
+            await page.getByRole("button", { name: "Apply", exact: true }).click();
+            await closeSettings(page);
+          }
+          await release(page);
+          hold = false;
+          speechResult = "ok";
+          await surface.locator('.voice-mic-wrap[data-state="idle"]').waitFor();
+          if (reason === "ime") await field.dispatchEvent("compositionend", { data: "" });
+          const recovery = surface.getByRole("button", { name: "Insert at cursor", exact: true });
+          if (await recovery.count()) {
+            await caret(field, 0);
+            await recovery.click();
+            await frames(page);
+          }
+          assert.equal(sent.length, before, `${reason} and subsequent draft recovery never send (not even bare Enter)`);
+        }
+      }
+      await directSend(composer, message);
+      await rejectedSend(composer, message);
+
       // Reply comments: new, saved, Escape from footer, keyboard Save while inference is pending.
       const reply = page.locator(".chat-view p.is-commentable", { hasText: "A fictional reply" });
       await reply.click();
@@ -599,6 +676,15 @@ try {
       assert.ok((await stores(page)).some((entry) => entry.comment === "visible saved-dialog edit"), "Composer saved-comment Save keeps only the visible edit");
       hold = false;
 
+      const beforeOverflow = sent.length;
+      await message.fill("x".repeat(Number(await message.getAttribute("maxlength")) - 5));
+      await start(page, composer);
+      await composer.locator(".composer-send").click();
+      await composer.getByRole("button", { name: "Insert at cursor", exact: true }).waitFor();
+      assert.equal(sent.length, beforeOverflow, "the final dictation cannot bypass the outgoing size limit");
+      await composer.getByRole("button", { name: "Discard", exact: true }).click();
+      await message.fill("");
+
       // Direct grid typing must not hide the separate dictation draft, even on desktop.
       await page.keyboard.press("ControlOrMeta+Shift+Comma");
       await openSettingsPage(page, "Terminal");
@@ -624,6 +710,8 @@ try {
         assert.equal(posts().length, beforeInterrupted, `${event} cancels without an automatic upload`);
         assert.equal(await line.inputValue(), "echo spoken words");
       }
+      await directSend(terminal, line);
+      await rejectedSend(terminal, line);
       // Real AudioWorklet + authenticated backend WS + backend-segmented HTTPS inference.
       // No Playwright route fulfils either dictation route or the speech service.
       await page.locator('.view-switch button[title^="Chat"]').click();
@@ -662,6 +750,11 @@ try {
       const afterLiveCancel = posts().length;
       await frames(page);
       assert.equal(posts().length, afterLiveCancel, "Cancel never replays buffered audio");
+
+      await directSend(composer, message, true);
+      await page.locator('.view-switch button[title^="Live terminal"]').click();
+      await directSend(terminal, line, true);
+      await page.locator('.view-switch button[title^="Chat"]').click();
 
       await settings(page);
       await page.getByRole("button", { name: "Off", exact: true }).click();

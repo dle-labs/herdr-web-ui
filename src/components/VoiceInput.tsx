@@ -1,4 +1,4 @@
-/** One direct dictation control family for draft fields. Nothing here sends or saves. */
+/** Dictation controls insert drafts; an explicit caller-owned Send may continue after the draft commits. */
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Mic, Square, Undo2, X } from "lucide-react";
 import "./VoiceInput.css";
@@ -48,7 +48,9 @@ function eligibleTargets(eventTarget: EventTarget | null): VoiceTarget[] {
   const modal = element?.closest("[aria-modal='true'], dialog[open]");
   return [...targets].filter((target) => {
     const box = target.box.current;
-    return box !== null && box.getClientRects().length > 0 && (!modal || modal.contains(box));
+    // The composer replaces its textarea while recording; its visible surface still owns Escape.
+    const visible = box && (box.getClientRects().length > 0 || (target.active() && (target.surface()?.getClientRects().length ?? 0) > 0));
+    return Boolean(visible) && (!modal || modal.contains(box));
   });
 }
 
@@ -109,6 +111,8 @@ export interface Dictation {
   voice: VoiceInput;
   cancel: () => void;
   press: () => void;
+  /** Finish this take, then continue only after safe insertion and a committed idle draft. */
+  finishAndSubmit: (submit: () => void) => void;
   recovery: string | null;
   insertRecovery: () => void;
   canUndo: boolean;
@@ -125,6 +129,7 @@ export function useDictation(options: DictationOptions): Dictation {
   const history = useRef(createDictationUndo());
   const [canUndo, setCanUndo] = useState(false);
   const take = useRef<{ snapshot: DictationSnapshot; config: string } | null>(null);
+  const submitIntent = useRef<{ take: NonNullable<typeof take.current>; submit: () => void; value?: string; caret?: number } | null>(null);
   const composing = useRef(false);
   const insertedCaret = useRef<{ owner: string; value: string; caret: number } | null>(null);
   const recoveryRef = useRef<string | null>(null);
@@ -136,6 +141,7 @@ export function useDictation(options: DictationOptions): Dictation {
   const enabled = useRef(wanted);
   enabled.current = wanted;
   const clear = useCallback((): void => {
+    submitIntent.current = null;
     tracker.current.cancel();
     take.current = null;
     recoveryRef.current = null;
@@ -176,8 +182,16 @@ export function useDictation(options: DictationOptions): Dictation {
     if (!captured || !enabled.current || !current.connected || captured.config !== liveConfig.current
       || !tracker.current.current(captured.snapshot, current.owner)) return;
     sync();
+    const intent = submitIntent.current;
+    submitIntent.current = null;
     if (!composing.current && tracker.current.unchanged(captured.snapshot)
-      && insert(result.text, captured.snapshot.selection)) return;
+      && insert(result.text, captured.snapshot.selection)) {
+      // insert clears the capture lifecycle, not this explicitly requested continuation.
+      if (result.text.trim() && intent?.take === captured) {
+        submitIntent.current = { ...intent, value: latest.current.read(), caret: insertedCaret.current?.caret };
+      }
+      return;
+    }
     recoveryRef.current = result.text;
     setRecovery(result.text);
   }, [insert, sync]);
@@ -213,6 +227,7 @@ export function useDictation(options: DictationOptions): Dictation {
     history.current.observe(value);
     setCanUndo(history.current.available());
     if (lastValue.current !== value) {
+      if (submitIntent.current?.value !== value) submitIntent.current = null;
       tracker.current.observe(value, null);
       if (value === "") cancel();
       lastValue.current = value;
@@ -232,9 +247,17 @@ export function useDictation(options: DictationOptions): Dictation {
   useEffect(() => {
     const element = options.box.current;
     if (!element) return;
-    const selection = (): void => tracker.current.observe(element.value, { start: element.selectionStart, end: element.selectionEnd });
+    const selection = (): void => {
+      tracker.current.observe(element.value, { start: element.selectionStart, end: element.selectionEnd });
+      const intent = submitIntent.current;
+      if (intent && (intent.value === undefined ? !tracker.current.unchanged(intent.take.snapshot)
+        : element.value !== intent.value || element.selectionStart !== intent.caret || element.selectionEnd !== intent.caret)) {
+        submitIntent.current = null;
+      }
+    };
     const input = (): void => {
       // Count edits even if undo returns to the text captured at take start.
+      submitIntent.current = null;
       tracker.current.changed();
       // Do not set React state in the native input listener: a render here can restore a
       // controlled textarea's old value before its delegated onChange reads the edit.
@@ -242,7 +265,7 @@ export function useDictation(options: DictationOptions): Dictation {
       selection();
       if (element.value === "") cancel();
     };
-    const start = (): void => { composing.current = true; tracker.current.changed(); };
+    const start = (): void => { submitIntent.current = null; composing.current = true; tracker.current.changed(); };
     const end = (): void => { composing.current = false; };
     element.addEventListener("input", input);
     element.addEventListener("select", selection);
@@ -286,6 +309,30 @@ export function useDictation(options: DictationOptions): Dictation {
     }
     engine.press();
   }, [sync]);
+  const finishAndSubmit = useCallback((submit: () => void): void => {
+    const captured = take.current;
+    if (submitIntent.current || voiceRef.current.state !== "recording" || !captured
+      || !latest.current.connected || !enabled.current || composing.current
+      || recoveryRef.current !== null || captured.config !== liveConfig.current) return;
+    sync();
+    if (!tracker.current.current(captured.snapshot, latest.current.owner) || !tracker.current.unchanged(captured.snapshot)) {
+      voiceRef.current.press(); // Finish as a recoverable draft, never submit an edited take.
+      return;
+    }
+    submitIntent.current = { take: captured, submit };
+    voiceRef.current.press();
+  }, [sync]);
+  useEffect(() => {
+    const intent = submitIntent.current;
+    if (!intent || voice.state !== "idle") return;
+    submitIntent.current = null; // Claim before calling out: no retry or duplicate, including reentrant renders.
+    const current = latest.current;
+    if (intent.value === undefined || voice.error || composing.current || !current.connected || !enabled.current
+      || intent.take.snapshot.owner !== current.owner || intent.take.config !== liveConfig.current
+      || document.hidden || current.read() !== intent.value || current.box.current?.value !== intent.value
+      || current.box.current.selectionStart !== intent.caret || current.box.current.selectionEnd !== intent.caret) return;
+    intent.submit();
+  });
   const insertRecovery = useCallback((): void => {
     const captured = take.current;
     const text = recoveryRef.current;
@@ -312,7 +359,7 @@ export function useDictation(options: DictationOptions): Dictation {
   }, [shown, options.mode, options.box, cancel, press]);
   const unavailableNote = !options.connected ? t("Not sent: the terminal is disconnected.")
     : voice.unavailableReason ? errorNote(t, voice.unavailableReason) : null;
-  return { shown, connected: options.connected, unavailableNote, statusId, voice: { ...voice, cancel }, cancel, press, recovery, insertRecovery, canUndo, undo };
+  return { shown, connected: options.connected, unavailableNote, statusId, voice: { ...voice, cancel }, cancel, press, finishAndSubmit, recovery, insertRecovery, canUndo, undo };
 }
 
 /** Tap-to-toggle also works with Enter/Space. Pointer presses never force the keyboard open. */

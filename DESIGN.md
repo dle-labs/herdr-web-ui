@@ -1343,7 +1343,10 @@ One set for both themes: the card is island black wherever it shows.
 ### Voice input
 - One microphone control family serves chat, terminal lines and reply/file comment editors, including
   saved comments and mobile sheets. Tap Start/Finish or use Mod+Shift+Space. Text edits drafts only,
-  never sends, saves or executes a terminal command. Secret fields have no microphone.
+  never sends, saves or executes a terminal command by itself. An explicit chat/terminal Send during
+  recording finishes capture, waits for safe final insertion and the committed draft, then submits once
+  through the surface's normal validation. Errors, cancellation, changed drafts/IME, settings, owner or
+  connection changes abandon that intent. Normal Finish remains draft-only. Secret fields have no microphone.
 - Pointer-down starts microphone acquisition; the status says Starting microphone until the
   recorder emits its start event. Startup shows no level bars, elapsed timer or recording indicator.
   Audio before browser permission/device readiness cannot be captured; no background mic is held.
