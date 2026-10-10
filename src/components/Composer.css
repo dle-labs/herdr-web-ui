@@ -516,10 +516,43 @@
 }
 
 .composer-draft > .voice-pill {
-  padding: var(--space-4) var(--space-5) var(--space-1);
+  padding: var(--space-4) var(--space-5);
   border: 0;
   border-radius: 0;
   background: transparent;
+}
+
+/* Waveform first, then the compact label, timer and close button. The waveform
+   owns the remaining width; dense bars shrink to fit even a narrow phone. */
+.composer-draft > .voice-pill[data-state="recording"] {
+  flex-wrap: nowrap;
+}
+
+.composer-draft .voice-bars {
+  flex: 1 1 0;
+  min-width: calc(var(--space-8) * 2);
+  height: var(--space-6);
+  justify-content: space-between;
+  gap: var(--hairline);
+}
+
+.composer-draft .voice-bars [data-voice-bar] {
+  flex: 0 1 var(--space-1);
+  min-width: 0;
+}
+
+.composer-draft .voice-pill[data-state="recording"] .voice-pill-label {
+  flex: 0 1 auto;
+}
+
+.composer-draft .voice-timer {
+  flex: none;
+}
+
+/* Reduced motion uses the same available width for a stationary audio meter. */
+.composer-draft .voice-meter {
+  flex: 1 1 0;
+  min-width: var(--space-8);
 }
 
 .composer-draft > .voice-pill.is-open + .composer-text {

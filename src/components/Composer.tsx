@@ -1118,7 +1118,7 @@ export function Composer({
         })()}
 
         <div className="composer-draft" data-voice-state={dictation.voice.state}>
-          {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
+          {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" barCount={48} />}
         <textarea
           ref={textareaRef}
         onCompositionStart={() => { composingRef.current = true; }}

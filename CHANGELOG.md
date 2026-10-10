@@ -11,6 +11,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Undo the last inserted dictation segment without clearing earlier takes or unrelated draft text.
 
 ### Changed
+- The recording input is taller, with a full-width waveform followed by the recording label, seconds and close button.
 - Recording and transcription replace the visible message field without discarding its draft; live bars sit to the left of the recording label, with no bars or recording indicator until capture actually starts.
 - Selecting text offers a Comment quick action instead of immediately opening and focusing the editor, preserving native copying on desktop and mobile.
 - Dictation stays discoverable in desktop and mobile composers, terminal drafts and comment editors; unavailable microphones explain why instead of disappearing.

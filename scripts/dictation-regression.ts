@@ -71,6 +71,28 @@ async function assertInlineComposerStatus(surface: Locator): Promise<void> {
   assert.equal(await surface.locator("textarea").getAttribute("placeholder"), "", "recording/transcribing takes the placeholder's place");
   assert.equal(await surface.locator("textarea").isVisible(), false, "active dictation replaces the field and its visible draft");
 }
+async function assertExpandedComposerWaveform(surface: Locator): Promise<void> {
+  if (!await surface.evaluate((node) => node.classList.contains("composer"))) return;
+  const layout = await surface.locator(".voice-pill").evaluate((node) => {
+    const bars = node.querySelector<HTMLElement>(".voice-bars")!;
+    const label = node.querySelector<HTMLElement>(".voice-pill-label")!;
+    const timer = node.querySelector<HTMLElement>(".voice-timer")!;
+    const close = node.querySelector<HTMLElement>(".voice-pill-button")!;
+    const [wave, text, seconds, button] = [bars, label, timer, close].map((element) => element.getBoundingClientRect());
+    const style = getComputedStyle(node);
+    const gap = parseFloat(style.columnGap);
+    return {
+      order: wave.right <= text.left && text.right <= seconds.left && seconds.right <= button.left,
+      sameRow: [text, seconds, button].every((rect) => Math.abs(rect.top + rect.height / 2 - wave.top - wave.height / 2) < 1),
+      fillsSpace: Math.abs(text.left - wave.right - gap) < 1 && getComputedStyle(bars).flexGrow === "1",
+      compactLabel: getComputedStyle(label).flexGrow === "0",
+      dense: bars.childElementCount === 48,
+      taller: parseFloat(style.paddingBottom) === parseFloat(style.paddingTop) && parseFloat(style.paddingBottom) >= 16,
+      fits: wave.left >= node.getBoundingClientRect().left && button.right <= node.getBoundingClientRect().right,
+    };
+  });
+  assert.deepEqual(layout, { order: true, sameRow: true, fillsSpace: true, compactLabel: true, dense: true, taller: true, fits: true }, "the taller input gives remaining width to the waveform before label, seconds and close");
+}
 async function start(page: Page, surface: Locator, keyboard = false): Promise<void> {
   await surface.locator(".voice-mic").waitFor();
   assert.equal(await surface.locator(".voice-mic").count(), 1, "one replacement microphone per surface");
@@ -102,6 +124,7 @@ async function start(page: Page, surface: Locator, keyboard = false): Promise<vo
     const label = node.querySelector(".voice-pill-label")!.getBoundingClientRect();
     return bars.right <= label.left && bars.top < label.bottom && label.top < bars.bottom;
   }), "live recording bars appear to the left of the recording label");
+  await assertExpandedComposerWaveform(surface);
 }
 async function finish(page: Page, surface: Locator, keyboard = false): Promise<void> {
   const before = posts().length;
@@ -291,6 +314,13 @@ try {
       await message.fill("prefix suffix");
       await caret(message, 7);
       await start(page, composer, true);
+      if (mobile) {
+        await page.setViewportSize({ width: 320, height: 720 });
+        await frames(page);
+        await assertExpandedComposerWaveform(composer);
+        await page.setViewportSize({ width: 390, height: 720 });
+        await frames(page);
+      }
       if (process.env.UI_EVIDENCE_DIR) {
         mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
         await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dictation-inline-recording-${mobile ? "phone" : "desktop"}.png`) });

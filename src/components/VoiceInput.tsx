@@ -350,7 +350,7 @@ export function MicButton({ dictation, className = "" }: { dictation: Dictation;
 }
 
 /** In-flow status works in narrow comment popovers and sheets as well as the composer. */
-export function VoiceRecordingPill({ dictation, align }: { dictation: Dictation; align: "start" | "end" }) {
+export function VoiceRecordingPill({ dictation, align, barCount = 7 }: { dictation: Dictation; align: "start" | "end"; barCount?: number }) {
   const t = useT();
   const { voice, recovery, unavailableNote, statusId } = dictation;
   const open = voice.state !== "idle" || recovery !== null || unavailableNote !== null;
@@ -360,7 +360,7 @@ export function VoiceRecordingPill({ dictation, align }: { dictation: Dictation;
     : voice.state === "starting" ? t("Starting microphone…") : unavailableNote ?? (voice.silent ? t("No microphone input") : t("Recording"));
   return <div className={`voice-pill${open ? " is-open" : ""}`} data-state={voice.state} data-align={align} hidden={!open}>
     {voice.state === "recording" && recovery === null && unavailableNote === null && <>
-      <span className="voice-bars" ref={voice.bindBars} aria-hidden="true">{Array.from({ length: 7 }, (_, i) => <span key={i} data-voice-bar="" />)}</span>
+      <span className="voice-bars" ref={voice.bindBars} aria-hidden="true">{Array.from({ length: barCount }, (_, i) => <span key={i} data-voice-bar="" />)}</span>
       <span className="voice-meter" aria-hidden="true"><span ref={voice.bindMeter} /></span>
     </>}
     <span id={statusId} className="voice-pill-label" role="status" aria-live="polite">{open ? label : ""}</span>
