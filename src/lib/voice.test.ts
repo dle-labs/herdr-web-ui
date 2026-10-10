@@ -141,7 +141,28 @@ describe("caret, format and meter helpers", () => {
     expect(pickRecorderMime(() => false)).toBeNull();
   });
   it("keeps silent bars stationary instead of simulating microphone activity", () => {
-    for (const time of [0, 110, 600, 3000]) expect(barScales(0, time)).toEqual(Array(7).fill(0.12));
+    for (const time of [0, 110, 600, 3000]) {
+      for (const count of [7, 48]) expect(barScales(0, time, count)).toEqual(Array(count).fill(0.12));
+    }
+  });
+  it("stretches one continuous envelope across the entire bar count instead of repeating seven bars", () => {
+    for (const count of [7, 48]) {
+      for (const time of [0, 110, 600, 3000]) {
+        const scales = barScales(0.8, time, count);
+        expect(scales).toHaveLength(count);
+        for (let index = 1; index < Math.ceil(count / 2); index++) {
+          expect(scales[index]!).toBeGreaterThan(scales[index - 1]!);
+        }
+        for (let index = Math.ceil(count / 2) + 1; index < count; index++) {
+          expect(scales[index]!).toBeLessThan(scales[index - 1]!);
+        }
+        scales.forEach((scale, index) => expect(scale).toBeCloseTo(scales[count - index - 1]!, 12));
+      }
+    }
+    const scales = barScales(0.8, 0, 48);
+    expect(scales[7]).not.toBe(scales[0]);
+    expect(barScales(0.8, 0, 0)).toEqual([]);
+    expect(barScales(0.8, 0, 1)).toHaveLength(1);
   });
   it("bounds bars and uses faster attack than decay", () => {
     expect(levelFromRms(0)).toBe(0); expect(levelFromRms(1)).toBe(1);

@@ -1359,7 +1359,7 @@ One set for both themes: the card is island black wherever it shows.
 - The in-flow, wrapping status row shows Cancel and status, with live level bars to the left of
   the recording label and a mono timer only during actual capture. In the composer, a denser
   waveform fills the remaining width before the compact label, seconds and close button, on one
-  row. Equal top and bottom padding gives the recording input a little more height. In the chat composer it replaces
+  row. One continuous envelope spans all bars rather than tiling a shorter pattern. Equal top and bottom padding gives the recording input a little more height. In the chat composer it replaces
   the visible message field during startup, recording and transcription, without a separate border
   or card. The retained draft returns afterwards; no text is discarded, and Send is disabled
   while that draft is hidden. Silent bars remain stationary rather than simulating activity. It does not

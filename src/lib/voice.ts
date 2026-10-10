@@ -23,12 +23,16 @@ export function smoothLevel(previous: number, target: number, dtMs: number): num
   return previous + (target - previous) * (1 - Math.exp(-Math.max(0, dtMs) / (target > previous ? 60 : 250)));
 }
 export function levelFromRms(rms: number): number { return rms > 0 ? Math.min(1, Math.max(0, (20 * Math.log10(rms) + 60) / 50)) : 0; }
-export function barScales(level: number, timeMs: number): number[] {
+export function barScales(level: number, timeMs: number, count = 7): number[] {
   const amount = Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : 0;
-  return [0.45, 0.65, 0.85, 1, 0.85, 0.65, 0.45].map((weight, index) => {
+  const pulse = 0.85 + 0.15 * Math.sin(timeMs / 110);
+  return Array.from({ length: count }, (_, index) => {
+    // One envelope spans the entire surface, regardless of its bar count.
+    const position = count > 1 ? index / (count - 1) : 0.5;
+    const weight = 0.45 + 0.55 * Math.sin(position * Math.PI);
     // Silence is stationary: motion must come from captured audio, not an idle pulse.
     const base = 0.12;
-    return Math.min(1, base + (1 - base) * amount * weight * (0.7 + 0.3 * (0.5 + 0.5 * Math.sin(timeMs / 110 + index * 1.9))));
+    return Math.min(1, base + (1 - base) * amount * weight * pulse);
   });
 }
 export function insertAtCaret(value: string, selectionStart: number, selectionEnd: number, text: string): { value: string; start: number; end: number } {
@@ -146,7 +150,11 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
         level = smoothLevel(level, levelFromRms(rms), now - last); last = now;
         if (rms >= 0.003) loud = now;
         io.setSilent(now - loud >= 3000);
-        bars?.querySelectorAll<HTMLElement>("[data-voice-bar]").forEach((bar, index) => { bar.style.transform = `scaleY(${barScales(level, now)[index % 7]})`; });
+        const barElements = bars?.querySelectorAll<HTMLElement>("[data-voice-bar]");
+        if (barElements) {
+          const scales = barScales(level, now, barElements.length);
+          barElements.forEach((bar, index) => { bar.style.transform = `scaleY(${scales[index]})`; });
+        }
         if (ring) ring.style.transform = `scale(${1 + level * 0.35})`;
         if (meter) meter.style.transform = `scaleX(${level})`;
         schedule(current, frame, 50);

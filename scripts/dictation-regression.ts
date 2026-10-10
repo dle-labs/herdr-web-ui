@@ -314,6 +314,14 @@ try {
       await message.fill("prefix suffix");
       await caret(message, 7);
       await start(page, composer, true);
+      await until("one live waveform spans all 48 bars without tiling", async () => composer.locator(".voice-bars").evaluate((node) => {
+        const scales = [...node.querySelectorAll<HTMLElement>("[data-voice-bar]")].map((bar) => Number(bar.style.transform.match(/scaleY\(([^)]+)\)/)?.[1]));
+        return scales.length === 48 && scales.every(Number.isFinite)
+          && scales[23]! > scales[0]! + 0.01
+          && scales.slice(1, 24).every((scale, index) => scale > scales[index]!)
+          && scales.slice(25).every((scale, index) => scale < scales[index + 24]!)
+          && scales.every((scale, index) => Math.abs(scale - scales[47 - index]!) < 1e-10);
+      }));
       if (mobile) {
         await page.setViewportSize({ width: 320, height: 720 });
         await frames(page);
