@@ -822,9 +822,14 @@ export function Composer({
     }
   }, []);
 
+  const sendRef = useRef<() => void>(() => {});
   const send = useCallback(() => {
-    if (composingRef.current) return;
-    if (!connected || uploading || sending || !outgoing.sendable) return;
+    if (composingRef.current || !connected || uploading || sending) return;
+    if (dictation.voice.state === "recording") {
+      dictation.finishAndSubmit(() => sendRef.current());
+      return;
+    }
+    if (!outgoing.sendable || dictation.voice.state !== "idle") return;
     // a comment still being written in this pane's chat would not go with the message: its form is
     // shown and takes the focus instead (inside the press, so a phone raises its keyboard there). This pane's: the
     // chat view in its stack; a dialog anywhere is modal, so it is the one being written in
@@ -864,7 +869,8 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [attachments, commentOwner, connected, dictation.cancel, draftKey, onSend, outgoing, sending, text, uploading]);
+  }, [attachments, commentOwner, connected, dictation.cancel, dictation.finishAndSubmit, dictation.voice.state, draftKey, onSend, outgoing, sending, text, uploading]);
+  sendRef.current = send;
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
@@ -962,7 +968,7 @@ export function Composer({
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
   // comments alone are a message too: Send takes them for the agent's next turn while it works
-  const sendShown = composerSendShown({ working: isWorking, text }) || (isWorking && goingComments > 0);
+  const sendShown = dictation.voice.state !== "idle" || composerSendShown({ working: isWorking, text }) || (isWorking && goingComments > 0);
   const hint = composerStatusHint({ uploading, connected, text });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
@@ -1141,15 +1147,18 @@ export function Composer({
           );
         })()}
 
+        <div className="composer-draft" data-voice-state={dictation.voice.state}>
+          {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" barCount={48} />}
         <textarea
           ref={textareaRef}
         onCompositionStart={() => { composingRef.current = true; }}
         onCompositionEnd={() => { composingRef.current = false; }}
           className={`composer-text${manualHeight !== null ? " is-sized" : ""}`}
           rows={1}
+          hidden={dictation.voice.state !== "idle"}
           maxLength={MAX_COMPOSER_CHARS}
           value={text}
-          placeholder={placeholder}
+          placeholder={dictation.voice.state !== "idle" ? "" : placeholder}
           aria-label={t("Message")}
           aria-controls={menuOpen ? menuId : undefined}
           aria-expanded={menuOpen}
@@ -1174,6 +1183,7 @@ export function Composer({
             setNote(null);
           }}
         />
+        </div>
 
         <div className="composer-controls composer-controls-left">
           <input
@@ -1266,7 +1276,7 @@ export function Composer({
               className="composer-action composer-send"
               aria-label={withComments(t("Send message"))}
               title={withComments(t("Send message"))}
-              disabled={!connected || uploading || sending || !outgoing.sendable}
+              disabled={!connected || uploading || sending || (dictation.voice.state !== "recording" && (!outgoing.sendable || dictation.voice.state !== "idle"))}
               onClick={() => send()}
             >
               <ArrowUp aria-hidden="true" />
@@ -1307,8 +1317,6 @@ export function Composer({
       {!shownNote && terminalOnly !== null && (
         <div className="composer-hint" role="status">{t("{command} opens a tree the chat cannot show. It runs in the terminal — tap the terminal button at the top of the screen to choose a branch.", { command: `/${terminalOnly}` })}</div>
       )}
-      {/* In flow, so status/recovery does not cover the draft or the mobile keyboard. */}
-      {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
     </div>
   );
 }

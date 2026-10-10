@@ -17,6 +17,7 @@ import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
 import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
+import { DICTATION_DEFAULT_MODEL, DICTATION_MAX_BYTES, DICTATION_MAX_SECONDS } from "../../shared/dictation.ts";
 import { rollupStatus } from "../../src/lib/status.ts";
 import { CHATS, PROMPT, SPECS } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
@@ -1041,8 +1042,9 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     structureChanged();
     return json({ workspace_id: id, pane_id: pane.pane_id, agent_started: agent !== null } satisfies WorkspaceCreated);
   }
-  // Never activate direct speech, even when this browser has persisted an applied endpoint.
-  if (path === "/api/dictation/config") return json({ enabled: false, allowed_origins: [] } satisfies DictationConfigResponse, 200, { "cache-control": "no-store" });
+  // Dictation stays disabled even with remembered consent; the demo never relays audio.
+  if (path === "/api/dictation/config") return json({ version: 2, enabled: false, generation: "demo", default_model: DICTATION_DEFAULT_MODEL, modes: [], max_seconds: DICTATION_MAX_SECONDS, max_bytes: DICTATION_MAX_BYTES } satisfies DictationConfigResponse, 200, { "cache-control": "no-store" });
+  if (path.startsWith("/api/dictation/")) return error("not_configured", "dictation is unavailable in the demo", 409);
   // Legacy compatibility only; no speech transport is available in the demo.
   if (path === "/api/voice") return json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus, 200, { "cache-control": "no-store" });
   if (path === "/api/voice/config") return error("demo", "the demo saves no OpenAI key", 409);

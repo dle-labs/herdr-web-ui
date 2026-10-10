@@ -773,10 +773,10 @@ One set for both themes: the card is island black wherever it shows.
   its own box.
   Thinking renders as a folded block only when **Show thinking** is enabled.
 - Block comments (`BlockComments.css`, `CommentPins.css`, `CommentPopover.css`): a comment is made
-  by a mouse dragging over text in a final reply (it opens as the mouse lets go, below), or by
+  by selecting text in a final reply and activating the floating **Comment** quick action, or by
   clicking or tapping one of its blocks (below), while **Settings → Chat → Comments** is on (the
-  default). There is no Comment button, as in Claude: no floating button for a selection and no
-  button on a part. A selection in one part (a paragraph, heading, list item, code block, table, display
+  default). Selection alone never opens or focuses the editor, so native copying stays available.
+  There is no button on each part. A selection in one part (a paragraph, heading, list item, code block, table, display
   formula, a whole blockquote) is the comment's text; several selections in one part are several
   comments. A selection that runs over several parts (paragraphs, list items, a heading and the
   paragraph after it) is still ONE comment: all of it is quoted (the parts' text, one line break
@@ -784,12 +784,10 @@ One set for both themes: the card is island black wherever it shows.
   rule, or at the very start of the next part (a triple click), ends at the part before. A user
   message, a live reply and a work block's narration take none, and a selection that starts
   outside a reply is not a comment.
-- Keyboard and touch selections open nothing, and neither does a double or triple click: the text is
-  selected to copy. On a touch screen a tap on a block is the way to comment. A keyboard-only user
-  has no way to create a comment: a block takes no focus, and caret browsing (F7) with Enter on a
-  block opens nothing (a click comments, a key does not). Existing comments are reached through
-  their pins, which are in the tab order, and the composer's walk. A decision made for this
-  feature; no keyboard path of its own is built.
+- Mouse, keyboard and touch selections, including double/triple clicks, offer the same **Comment**
+  quick action without taking focus or clearing the selection. It is a native button in the tab
+  order. Existing comments are reached through their pins and the composer's walk. A touch user
+  can also tap a block to comment on it whole.
 - Settings → Chat → **Comments** (a toggle in the first group, on by default, per device) turns the
   feature off for the chat and the file viewer: no pins, popover, drag, hover outline or
   block click, and the surfaces lose `data-comments`. Turning it off with comments stored asks
@@ -798,18 +796,13 @@ One set for both themes: the card is island black wherever it shows.
   (`BlockCommentStore.clearAll`; other tabs follow through the `storage` event). With none stored
   it turns off at once. An open popover closes. Messages already composed with comments (the
   pending list) are not touched.
-- A mouse's drag opens the comment at once (`useSelectionComment.ts`), as in Claude: a press of the
-  primary button (one click: the press's `mousedown` `detail` is 1) that moved at least 4px before
-  it was released (`isCommentDrag`, `lib/commentClick.ts`), and left a selection the surface can
-  comment on (in a reply part; in the file viewer, in the loaded lines), opens the new comment's
-  popover for that selection a frame after the release, once the browser has settled it (the same
-  target, pending highlight, focused field and `show()` refusal while another popover holds typed
-  text). Its pin's tip is where the mouse let go (below). A drag let go past the end of a line, in
-  the margin under a block, or across several parts opens it too (the selection ends where the
-  browser put it). A double or triple click that selects a word or a line by itself is no drag: it
-  opens nothing, so text can be selected to copy; nor does a press that follows a click closely
-  enough to count as its second (`detail` 2) and then drags (the browser selects by words). Nothing
-  opens with comments off, nor while a comment's field in the surface has the focus.
+- `useSelectionComment.ts` measures valid selection after the browser settles it, then positions
+  a non-modal **Comment** button near its end. Activation revalidates the selection and opens the
+  editor with its pending highlight and focused field; another editor's typed text still refuses
+  replacement. For a mouse selection the pin's tip stays where the mouse let go. A release past
+  the end of a line, in a margin, or across several parts works too. Escape, clearing selection,
+  an outside press, scrolling, resizing or leaving the surface dismisses the quick action.
+  Nothing opens with comments off, nor while a comment's field in the surface has the focus.
 - The text of every comment is highlighted for as long as the comment exists (CSS Custom Highlight,
   `lib/commentHighlight.ts`), faintly: `::highlight(block-comment)` is `--accent` at 8% over transparent, a plain tint
   with no underline, there to be found and read through; the pin is what catches the eye. It is
@@ -1013,11 +1006,10 @@ One set for both themes: the card is island black wherever it shows.
   made in the Markdown preview or in the code view and is sent with the next message like a reply
   comment; the chat's highlights, pins and popover are reused (the viewer's body is a comment
   surface with its own pin layer), so only what differs is written here.
-  - Preview and code view alike: a mouse's drag over text opens the comment as it lets go, as in the
-    chat; a keyboard or touch selection (a long press and its handles) opens nothing, and a triple
-    click selects one line to copy, with nothing shown. There is no Comment button and no button per
-    line; a click or tap on a line (its number included) comments on it (below). The line numbers
-    stay a CSS counter, so a copy of the code is the code alone.
+  - Preview and code view alike: text selection offers the same **Comment** quick action as chat;
+    only activation opens the editor. Mouse, keyboard and touch selections retain native copying.
+    There is no button per line; a click or tap on a line (its number included) comments on it
+    (below). The line numbers stay a CSS counter, so a copy of the code is the code alone.
   - A click or tap comments on a line, as a click on a block does in the chat (same `isCommentClick`
     rules and double-click rule, `FileComments.tsx`): in the code view the line element, in the
     preview the element under the click, a paragraph whole (its source lines together). Only a
@@ -1406,13 +1398,32 @@ One set for both themes: the card is island black wherever it shows.
 ### Voice input
 - One microphone control family serves chat, terminal lines and reply/file comment editors, including
   saved comments and mobile sheets. Tap Start/Finish or use Mod+Shift+Space. Text edits drafts only,
-  never sends, saves or executes a terminal command. Secret fields have no microphone.
-- `voiceInput`: `auto`, `on` or `off`; default `auto`. Auto shows controls after explicit configuration
-  activation when browser capture and server-origin policy allow it, including on phones. On also
-  shows unavailable controls disabled with a reason. Off hides them; Settings stays accessible.
-- Dictation settings explicitly applies a HTTPS speech URL and model. Recognition is English;
-  recording is uploaded directly on Finish, with no vendor fallback or polishing. Live streaming is gated.
-- The in-flow, wrapping status row shows Cancel, status, level bars and a mono timer. It does not
+  never sends, saves or executes a terminal command by itself. An explicit chat/terminal Send during
+  recording finishes capture, waits for safe final insertion and the committed draft, then submits once
+  through the surface's normal validation. Errors, cancellation, changed drafts/IME, settings, owner or
+  connection changes abandon that intent. Normal Finish remains draft-only. Secret fields have no microphone.
+- Pointer-down starts microphone acquisition; the status says Starting microphone until the
+  recorder emits its start event. Startup shows no level bars, elapsed timer or recording indicator.
+  Audio before browser permission/device readiness cannot be captured; no background mic is held.
+- Undo beside the microphone removes the last inserted take, including its added spacing, while
+  retaining earlier takes and unrelated edits. Takes edited internally are no longer undoable as a unit.
+  Undo is disabled during capture/inference/recovery, and its history clears with the draft owner.
+- `voiceInput`: `auto`, `on` or `off`; default `auto`. Auto and On keep controls visible on desktop
+  and mobile, including comment editors, disabled with a reason when configuration, browser capture
+  or the backend speech service is unconfigured. Off hides them; Settings stays accessible. The terminal
+  draft line is also available beside direct grid typing when dictation controls are enabled.
+- Dictation settings explicitly applies a model and mode; the HTTPS speech URL is managed by the
+  WebUI backend. Recognition is English. Completed recordings upload through WebUI on Finish;
+  optional Live preview streams audio to WebUI for buffering/segmentation and HTTP recognition.
+  Interim text is separate from the editable draft. No vendor fallback or polishing. Upstream
+  Speaches Realtime remains gated; the browser only connects to the app's own origin.
+- The in-flow, wrapping status row shows Cancel and status, with live level bars to the left of
+  the recording label and a mono timer only during actual capture. In the composer, a denser
+  waveform fills the remaining width before the compact label, seconds and close button, on one
+  row. One continuous envelope spans all bars rather than tiling a shorter pattern. Equal top and bottom padding gives the recording input a little more height. In the chat composer it replaces
+  the visible message field during startup, recording and transcription, without a separate border
+  or card. The retained draft returns afterwards; no text is discarded, and Send is disabled
+  while that draft is hidden. Silent bars remain stationary rather than simulating activity. It does not
   float over the draft or extend beyond narrow popovers. Changed drafts/selections get an owner-scoped
   transcript with Insert at cursor / Discard. Error text uses `role="alert"`; status uses `role="status"`.
   Accent only while recording; danger tokens stay for errors. Touch controls use `--touch-target`.

@@ -99,10 +99,17 @@ try {
             if (name === "Subscription usage") await page.locator(".usage-accounts-row").first().waitFor();
             if (name === "Dictation") {
               const policy = await page.evaluate(async () => (await fetch("/api/dictation/config")).json());
-              assert.deepEqual(policy, { enabled: false, allowed_origins: [] }, "demo policy ignores persisted private activation");
+              assert.equal(policy.version, 2);
+              assert.equal(policy.enabled, false, "demo policy ignores persisted private activation");
+              assert.deepEqual(policy.modes, []);
+              assert.equal(typeof policy.generation, "string");
+              assert.equal(typeof policy.default_model, "string");
+              assert.equal(policy.max_seconds, 120);
+              assert.equal(policy.max_bytes, 10 * 1024 * 1024);
+              assert.equal(await page.locator("#dictation-base-url").count(), 0, "no browser-owned endpoint editor");
+              assert.equal(await page.getByRole("button", { name: label("Apply"), exact: true }).isDisabled(), true, "disabled backend cannot be activated");
               assert.equal(await page.getByRole("button", { name: label("Refresh models"), exact: true }).isDisabled(), true);
               assert.equal(await page.getByRole("button", { name: label("Check"), exact: true }).isDisabled(), true);
-              assert.equal(await page.getByRole("button", { name: label("Apply"), exact: true }).isDisabled(), true);
             }
             if (name === "Agent integrations") {
               // the demo's fixture, in herdr's order with the agents found on the PC first: a failed request

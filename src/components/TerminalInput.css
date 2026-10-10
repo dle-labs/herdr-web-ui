@@ -1,4 +1,4 @@
-/* the terminal's input line on touch screens (TerminalInput.tsx): above the key bar, one row
+/* the terminal's draft line on desktop and touch screens (TerminalInput.tsx): above the key bar, one row
    that grows to four, with a send button that reads Enter while the line is empty */
 .terminal-input {
   position: relative; /* dictation status occupies a full grid row */

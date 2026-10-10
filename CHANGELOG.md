@@ -7,7 +7,17 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ## [Unreleased]
 
+### Added
+- Undo the last inserted dictation segment without clearing earlier takes or unrelated draft text.
+
 ### Changed
+- Send directly while dictating in chat or the terminal input line: finish capture, wait for the final transcript and submit once, without a separate Stop tap. Cancellation, errors or changed drafts prevent the send.
+- Route dictation and model discovery through the WebUI backend to the existing Speaches service. Add opt-in live previews with backend audio segmentation, bounded per-take buffering and no direct browser-to-speech connection. Configure `HERDR_WEB_DICTATION_BASE_URL`, reload and explicitly re-apply Dictation settings after migrating; the old browser-origin allowlist is retired.
+- The recording input is taller, with a single continuous full-width waveform followed by the recording label, seconds and close button.
+- Recording and transcription replace the visible message field without discarding its draft; live bars sit to the left of the recording label, with no bars or recording indicator until capture actually starts.
+- Selecting text offers a Comment quick action instead of immediately opening and focusing the editor, preserving native copying on desktop and mobile.
+- Dictation stays discoverable in desktop and mobile composers, terminal drafts and comment editors; unavailable microphones explain why instead of disappearing.
+- Dictation starts on pointer-down rather than release and explicitly shows when the microphone is still starting.
 - Replace cloud/browser voice input with direct, self-hosted English dictation in desktop and mobile chat, terminal lines, reply comments and file comments. Settings now applies a speech URL/model explicitly; interrupted takes are cancelled and changed drafts require review before insertion. Direct speech origins require an administrator CSP allowlist. Live streaming is not enabled yet. ([#1](https://github.com/dle-labs/herdr-web-ui/pull/1) by @polaroidkidd)
 
 ### Fixed

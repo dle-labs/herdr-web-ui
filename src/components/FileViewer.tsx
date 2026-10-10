@@ -212,7 +212,9 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
   const view = previewable && mode === "preview" ? "markdown" : "code";
   const codeShown = textFile && loaded !== null && view === "code";
   // a file's code has no length limit (the load limit bounds it): only a worker that gave up leaves it plain
-  const code = useHighlightedLines(codeShown ? loaded.text : "", codeShown ? language : null);
+  // A file's terminating newline ends its last numbered row. Chat code, unlike this
+  // numbered source view, keeps every trailing newline; copying uses loaded.text unchanged.
+  const code = useHighlightedLines(codeShown ? loaded.text.replace(/(?:\r\n?|\n)$/, "") : "", codeShown ? language : null);
   const shownPath = info?.path ?? path;
   const { stem, extension } = pathParts(info?.name ?? shownPath);
   const { folder } = pathParts(shownPath);

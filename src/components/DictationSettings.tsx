@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../lib/i18n.ts";
-import { DICTATION_BASE_MAX_CHARS, DICTATION_MODEL_MAX_CHARS, useSettings } from "../lib/settings.ts";
-import { configAllowed, discoverDictationModels, normalizeDictationBase, useDictationPolicy, type DictationConfig } from "../lib/voiceTransport.ts";
+import { DICTATION_MODEL_MAX_CHARS, useSettings } from "../lib/settings.ts";
+import { configAllowed, discoverDictationModels, useDictationPolicy, validDictationModel, type DictationConfig } from "../lib/voiceTransport.ts";
 import { Segmented, SettingsGroup, SettingsRow } from "./SettingsControls.tsx";
 import "./DictationSettings.css";
 
@@ -11,7 +11,7 @@ export function DictationSettings() {
   const applied = settings.dictation;
   const policy = useDictationPolicy();
   const t = useT();
-  const [baseUrl, setBaseUrl] = useState(applied.baseUrl);
+  const [mode, setMode] = useState(applied.mode);
   const [model, setModel] = useState(applied.model);
   const [models, setModels] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -24,36 +24,33 @@ export function DictationSettings() {
   };
   // Cleanup runs before another committed configuration can present old results, and on unmount.
   useLayoutEffect(() => {
-    setBaseUrl(applied.baseUrl);
+    setMode(applied.mode);
     setModel(applied.model);
     setModels(null);
     setBusy(false);
     setError(null);
     return invalidateRequests;
-  }, [applied.baseUrl, applied.model, applied.activated]);
+  }, [applied.version, applied.mode, applied.model, applied.activated]);
   const policyKey = JSON.stringify(policy);
   useLayoutEffect(() => {
     setModels(null);
     setBusy(false);
+    setError(null);
     return invalidateRequests;
   }, [policyKey]);
 
-  const normalizedBase = baseUrl.length <= DICTATION_BASE_MAX_CHARS ? normalizeDictationBase(baseUrl) : null;
-  const normalized = normalizedBase !== null && normalizedBase.length <= DICTATION_BASE_MAX_CHARS ? normalizedBase : null;
-  const validModel = model.trim().length > 0 && model.length <= DICTATION_MODEL_MAX_CHARS && !/[\u0000-\u001f\u007f]/.test(model);
-  const candidate: DictationConfig = { baseUrl: normalized ?? baseUrl, model: model.trim(), activated: true };
+  const validModel = model.length <= DICTATION_MODEL_MAX_CHARS && validDictationModel(model.trim());
+  const candidate: DictationConfig = { version: 2, mode, model: model.trim(), activated: true };
   const allowed = policy !== null && configAllowed(candidate, policy);
-  // Compare the draft itself: even a formatting-only URL edit must be applied or discarded first.
-  const urlEdited = baseUrl !== applied.baseUrl;
-  const dirty = urlEdited || model !== applied.model;
-  const canRead = applied.activated && !urlEdited && policy !== null && configAllowed(applied, policy);
+  const dirty = mode !== applied.mode || model !== applied.model;
+  const canRead = applied.activated && policy !== null && configAllowed(applied, policy);
   const apply = () => {
-    if (normalized === null || !validModel || !allowed) return;
+    if (!validModel || !allowed) return;
     invalidateRequests();
     setModels(null);
     setBusy(false);
     setError(null);
-    setBaseUrl(candidate.baseUrl);
+    setMode(candidate.mode);
     setModel(candidate.model);
     update({ dictation: candidate });
   };
@@ -61,7 +58,7 @@ export function DictationSettings() {
     invalidateRequests();
     setBusy(false);
     setError(null);
-    setBaseUrl(applied.baseUrl);
+    setMode(applied.mode);
     setModel(applied.model);
   };
   const check = async () => {
@@ -79,7 +76,7 @@ export function DictationSettings() {
       setModels(listed);
     } catch {
       if (generation !== request.current.generation || controller.signal.aborted) return;
-      setError(t("Could not list models. Check the speech service, VPN, CORS and administrator origin policy."));
+      setError(t("Could not list models. Check the WebUI backend and its speech service connection."));
     } finally {
       if (generation === request.current.generation && !controller.signal.aborted) {
         request.current.controller = null;
@@ -89,33 +86,35 @@ export function DictationSettings() {
   };
 
   return <>
-    <SettingsGroup note={t("Audio goes directly from this browser to your configured speech server, not OpenAI or a browser speech vendor. Nothing records until you press the microphone.")}>
-      <SettingsRow label={t("Microphone button")} description={t("Auto: available chat, terminal and comment drafts, including phones. On also shows unavailable controls with a reason. Off hides them.")} wide>
+    <SettingsGroup note={t("Audio passes through the WebUI backend to self-hosted Speaches, not OpenAI or a browser speech vendor. Apply consents to this route. Nothing records until you press the microphone.")}>
+      <SettingsRow label={t("Microphone button")} description={t("Auto and On show the microphone in chat, terminal and comment drafts on desktop and mobile, with a reason when unavailable. Off hides it.")} wide>
         <Segmented label={t("Microphone button")} value={settings.voiceInput} onChange={(voiceInput) => update({ voiceInput })} options={[{ value: "auto", label: t("Auto") }, { value: "on", label: t("On") }, { value: "off", label: t("Off") }]} />
       </SettingsRow>
       <SettingsRow label={t("Recognition language")}><span className="settings-description">{t("English (en)")}</span></SettingsRow>
-      <SettingsRow label={t("Transcription mode")} description={t("The first transcription may load the selected model. Listing a model does not verify inference.")}><span className="settings-description">{t("Record, then transcribe")}</span></SettingsRow>
     </SettingsGroup>
     <SettingsGroup title={t("Speech server")} note={t("Apply activates this configuration without contacting the speech server. Edits do not change an active recording; Apply cancels it.")}>
-      <SettingsRow label={t("HTTPS API base URL")} description={t("Include /v1. The administrator must allow this exact HTTPS origin.")} htmlFor="dictation-base-url" wide>
-        <input id="dictation-base-url" className="input dictation-settings-input" type="url" value={baseUrl} maxLength={DICTATION_BASE_MAX_CHARS} spellCheck={false} autoCapitalize="off" autoCorrect="off" autoComplete="off" onChange={(event) => setBaseUrl(event.target.value)} />
+      <SettingsRow label={t("Speech service")} description={policy?.enabled === false ? t("Configure HERDR_WEB_DICTATION_BASE_URL on the WebUI backend, restart it, then reload the app.") : undefined} wide>
+        <span className="settings-description">{t("Managed by the WebUI backend")}</span>
+      </SettingsRow>
+      <SettingsRow label={t("Transcription mode")} description={t("The first transcription may load the selected model. Listing a model does not verify inference.")} wide>
+        <Segmented label={t("Transcription mode")} value={mode} onChange={setMode} options={[{ value: "recording", label: t("Record then transcribe") }, { value: "live", label: t("Live preview") }]} />
       </SettingsRow>
       <SettingsRow label={t("Model ID")} description={t("Manual IDs are unverified. No models are downloaded or substituted here.")} htmlFor="dictation-model" wide>
         <input id="dictation-model" className="input dictation-settings-input" value={model} maxLength={DICTATION_MODEL_MAX_CHARS} spellCheck={false} autoCapitalize="off" autoCorrect="off" autoComplete="off" onChange={(event) => setModel(event.target.value)} />
       </SettingsRow>
-      {models !== null && <SettingsRow label={t("Installed models")} description={t("Listed by the applied speech server. Selection stays a draft until Apply.")} htmlFor="dictation-model-list" wide>
-        <select id="dictation-model-list" className="select dictation-settings-input" disabled={urlEdited} value={models.includes(model) ? model : ""} onChange={(event) => { if (event.target.value) setModel(event.target.value); }}>
+      {models !== null && <SettingsRow label={t("Installed models")} description={t("Listed by the backend-managed speech service. Selection stays a draft until Apply.")} htmlFor="dictation-model-list" wide>
+        <select id="dictation-model-list" className="select dictation-settings-input" value={models.includes(model) ? model : ""} onChange={(event) => { if (event.target.value) setModel(event.target.value); }}>
           <option value="">{t("Choose a listed model")}</option>
           {models.map((id) => <option key={id} value={id}>{id}</option>)}
         </select>
       </SettingsRow>}
-      <SettingsRow label={t("Configuration")} description={normalized === null ? t("Enter an HTTPS API base without credentials, query or fragment.") : !validModel ? t("Enter a non-empty model ID without control characters.") : !allowed ? t("Ask the administrator to allow this speech origin, then reload the app.") : undefined} wide>
+      <SettingsRow label={t("Configuration")} description={!validModel ? t("Enter a non-empty model ID without control characters.") : !allowed ? t("Dictation is unavailable. Check the WebUI backend configuration and reload the app.") : undefined} wide>
         <div className="dictation-settings-actions">
-          <button type="button" className="btn btn-primary" disabled={normalized === null || !validModel || !allowed || (!dirty && applied.activated)} onClick={apply}>{t("Apply")}</button>
+          <button type="button" className="btn btn-primary" disabled={!validModel || !allowed || (!dirty && applied.activated)} onClick={apply}>{t("Apply")}</button>
           <button type="button" className="btn btn-ghost" disabled={!dirty} onClick={discard}>{t("Discard edits")}</button>
         </div>
       </SettingsRow>
-      <SettingsRow label={t("Connection and model check")} description={urlEdited ? t("Apply or discard the URL edit before checking the applied server.") : !applied.activated ? t("Apply a configuration before contacting the speech server.") : t("Read-only requests use the applied URL and model, never an unsaved draft. No microphone or sample audio is used.")} wide>
+      <SettingsRow label={t("Connection and model check")} description={!applied.activated ? t("Apply a configuration before contacting the speech server.") : t("Read-only requests go through WebUI using the applied model, never an unsaved draft. No microphone or sample audio is used.")} wide>
         <div className="dictation-settings-actions">
           <button type="button" className="btn" disabled={!canRead || busy} onClick={() => void check()}>{t("Refresh models")}</button>
           <button type="button" className="btn" disabled={!canRead || busy} onClick={() => void check()}>{t("Check")}</button>
@@ -123,7 +122,7 @@ export function DictationSettings() {
       </SettingsRow>
       <div className="settings-item dictation-settings-status" role="status">
         {busy ? t("Checking applied speech server…") : models !== null ? models.includes(applied.model) ? t("Service reachable. Applied model listed as installed; inference not verified.") : t("Service reachable. Applied model is not listed; it remains unverified.") : applied.activated ? t("Configuration saved. Transcription is verified only by an actual recording.") : t("Not activated")}
-        {models !== null && <span className="dictation-settings-endpoint">{applied.baseUrl} · {applied.model}</span>}
+        {models !== null && <span className="dictation-settings-endpoint">{applied.model}</span>}
       </div>
       {error !== null && <p className="settings-item dictation-settings-error" role="alert">{error}</p>}
     </SettingsGroup>

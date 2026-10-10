@@ -1,6 +1,7 @@
 import { expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
+import { DICTATION_DEFAULT_MODEL, DICTATION_MAX_BYTES, DICTATION_MAX_SECONDS } from "../shared/dictation.ts";
 
 /** Execute the demo's actual boundary wrappers without its fixture timers or a browser. */
 it("demo blocks direct speech fetches and sockets regardless of stale applied settings", async () => {
@@ -14,7 +15,8 @@ it("demo blocks direct speech fetches and sockets regardless of stale applied se
     WebSocket: class { constructor() { sockets++; } },
   };
   const location = { href: "https://demo.example/demo/", origin: "https://demo.example" };
-  const context = { window, location, URL, Request, Response, DOMException, DemoSocket: class {}, route: async () => Response.json({ enabled: false, allowed_origins: [] }) };
+  const config = { version: 2, enabled: false, generation: "demo", default_model: DICTATION_DEFAULT_MODEL, modes: [], max_seconds: DICTATION_MAX_SECONDS, max_bytes: DICTATION_MAX_BYTES };
+  const context = { window, location, URL, Request, Response, DOMException, DemoSocket: class {}, route: async (url: URL) => url.pathname.endsWith("/config") ? Response.json(config) : Response.json({ error: { code: "not_configured", message: "disabled" } }, { status: 409 }) };
   const transpiler = new Bun.Transpiler({ loader: "ts" });
   runInNewContext(transpiler.transformSync(fetchCode + socketCode), context);
   const wrappedFetch = window.fetch as unknown as typeof fetch;
@@ -23,15 +25,17 @@ it("demo blocks direct speech fetches and sockets regardless of stale applied se
   }
   await expect(wrappedFetch(new Request("https://private.example/v1/models"))).rejects.toThrow();
   await expect(wrappedFetch("/v1/audio/transcriptions", { method: "POST", body: "audio" })).rejects.toThrow();
-  for (const target of ["wss://private.example/v1/realtime", "wss://private.example/ws", "wss://demo.example/v1/realtime"]) {
+  for (const target of ["wss://private.example/v1/realtime", "wss://private.example/ws", "wss://demo.example/v1/realtime", "wss://demo.example/api/dictation/ws"]) {
     expect(() => new (window.WebSocket as unknown as typeof WebSocket)(target)).toThrow();
   }
   expect(requests).toBe(0);
   expect(sockets).toBe(0);
-  expect(await (await wrappedFetch("/api/dictation/config")).json()).toEqual({ enabled: false, allowed_origins: [] });
+  expect(await (await wrappedFetch("/api/dictation/config")).json()).toEqual(config);
+  for (const path of ["models", "transcribe", "ws"]) expect((await wrappedFetch(`/api/dictation/${path}`)).status).toBe(409);
   await wrappedFetch("/assets/example.js");
   expect(requests).toBe(1);
   expect(() => new (window.WebSocket as unknown as typeof WebSocket)("wss://demo.example/ws")).not.toThrow();
   expect(sockets).toBe(0);
-  expect(source).toContain('if (path === "/api/dictation/config") return json({ enabled: false, allowed_origins: [] } satisfies DictationConfigResponse');
+  expect(source).toContain('if (path === "/api/dictation/config") return json({ version: 2, enabled: false, generation: "demo"');
+  expect(source).toContain('if (path.startsWith("/api/dictation/")) return error("not_configured"');
 });

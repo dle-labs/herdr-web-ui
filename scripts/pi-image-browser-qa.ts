@@ -34,7 +34,8 @@ const entries = [
 let conversation: ConversationResponse;
 const bytes = new Map<string, { data: Buffer; type: string }>();
 try {
-  const build = await Bun.build({ entrypoints: ["scripts/chat-history-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"development"' } });
+  // Vite emits the worklet in production; this non-capture fixture never loads it.
+  const build = await Bun.build({ external: ["*?worker&url"], entrypoints: ["scripts/chat-history-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"development"' } });
   assert.ok(build.success, String(build.logs));
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
     const url = new URL(request.url);

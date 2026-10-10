@@ -8,7 +8,7 @@
 import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { blockComments } from "./blockComments.ts";
 import { invalidateDictation } from "./voice.ts";
-import { DEFAULT_DICTATION_CONFIG, normalizeDictationBase, type DictationConfig } from "./voiceTransport.ts";
+import { DEFAULT_DICTATION_CONFIG, validDictationModel, type DictationConfig } from "./voiceTransport.ts";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
@@ -33,7 +33,7 @@ export type Palette = "amber" | "report" | "charcoal" | "catppuccin" | "lilac";
  *  narrow: 820px; default: follows the pane, up to 60rem (chatLaneWidth); wide: 72rem; full: the pane, less the gutters */
 export type ChatWidth = "narrow" | "default" | "wide" | "full";
 export const CHAT_WIDTHS: readonly ChatWidth[] = ["narrow", "default", "wide", "full"];
-/** Auto: available draft surfaces; On: also show unavailable controls with a reason; Off: nowhere. */
+/** Auto and On show draft controls with an unavailable reason; Off hides them. */
 export type VoiceButton = "auto" | "on" | "off";
 export const VOICE_BUTTONS: readonly VoiceButton[] = ["auto", "on", "off"];
 /** the lens a pane opens in until it is switched there: auto is chat for an agent on a touch screen, else terminal */
@@ -117,7 +117,7 @@ export interface Settings {
   usageHidden: string[];
   /** the microphone button in the composer and the terminal input line; nothing is recorded until it is pressed */
   voiceInput: VoiceButton;
-  /** Non-secret direct speech configuration; presets require explicit Apply before use. */
+  /** Non-secret backend dictation configuration; presets require explicit Apply before use. */
   dictation: DictationConfig;
   /** the file viewer wraps long lines instead of scrolling sideways */
   wrapCode: boolean;
@@ -200,21 +200,20 @@ export function wantsVoiceInput(setting: VoiceButton, _mode: "chat" | "terminal"
   return setting !== "off";
 }
 
-export const DICTATION_BASE_MAX_CHARS = 2048;
 export const DICTATION_MODEL_MAX_CHARS = 512;
 
 /** Pure migration: stale polish/key fields are ignored and malformed records cannot activate a preset. */
 export function sanitizeDictation(value: unknown): DictationConfig {
   const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
-  const rawBase = record["baseUrl"];
   const rawModel = record["model"];
-  const normalized = typeof rawBase === "string" && rawBase.length <= DICTATION_BASE_MAX_CHARS ? normalizeDictationBase(rawBase) : null;
-  const base = normalized !== null && normalized.length <= DICTATION_BASE_MAX_CHARS ? normalized : null;
   const model = typeof rawModel === "string" && rawModel.length <= DICTATION_MODEL_MAX_CHARS && !/[\u0000-\u001f\u007f]/.test(rawModel) ? rawModel.trim() : "";
+  const current = record["version"] === 2;
+  const validMode = record["mode"] === "recording" || record["mode"] === "live";
   return {
-    baseUrl: base ?? DEFAULT_DICTATION_CONFIG.baseUrl,
-    model: model || DEFAULT_DICTATION_CONFIG.model,
-    activated: record["activated"] === true && base !== null && model.length > 0,
+    version: 2,
+    model: validDictationModel(model) ? model : DEFAULT_DICTATION_CONFIG.model,
+    mode: current && validMode ? record["mode"] as DictationConfig["mode"] : "recording",
+    activated: current && validMode && record["activated"] === true && validDictationModel(model),
   };
 }
 
@@ -453,6 +452,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     return loaded;
   });
   useLayoutEffect(() => blockComments.setEnabled(settings.comments), [settings.comments]);
+  // Invalidate committed snapshots too, including mode changes and future non-setter updates.
+  useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated]);
   const [systemDark, setSystemDark] = useState(() => resolveTheme("system") === "dark");
 
   useEffect(() => {

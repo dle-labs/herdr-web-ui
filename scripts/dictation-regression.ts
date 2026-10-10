@@ -1,4 +1,4 @@
-/** Production CSP + real cross-origin HTTPS/CORS + Chromium MediaRecorder, never a vendor service.
+/** Production same-origin CSP + backend HTTPS relay + Chromium MediaRecorder/AudioWorklet, never a vendor service.
  * Build first, then: bun run check run bun scripts/dictation-regression.ts
  * Only the owned test pane is attached. Speech requests are NOT Playwright-fulfilled.
  */
@@ -19,8 +19,8 @@ const model = "test/installed-english";
 const transcript = "spoken words";
 const requests: Array<{ path: string; method: string; origin: string | null; authorization: string | null; cookie: string | null; referer: string | null; fields?: Record<string, string>; fileSize?: number; fileType?: string; fileName?: string }> = [];
 let appOrigin = "";
-let cors = true;
 let hold = false;
+let speechResult: "ok" | "empty" | "error" = "ok";
 const pending: Array<() => void> = [];
 let completed = 0;
 let server: ReturnType<typeof createServer> | undefined;
@@ -54,13 +54,61 @@ async function caret(field: Locator, at: number): Promise<void> {
     node.dispatchEvent(new Event("select", { bubbles: true }));
   }, at);
 }
+async function assertInlineComposerStatus(surface: Locator): Promise<void> {
+  if (!await surface.evaluate((node) => node.classList.contains("composer"))) return;
+  assert.equal(await surface.locator(":scope > .voice-pill").count(), 0, "no separate dictation box outside the input card");
+  assert.ok(await surface.locator(".composer-draft > .voice-pill").evaluate((node) => {
+    const field = node.closest(".composer-draft")!;
+    const card = node.closest(".composer-surface")!;
+    const status = node.getBoundingClientRect();
+    const bounds = card.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return field.contains(card.querySelector("textarea"))
+      && status.left >= bounds.left && status.right <= bounds.right
+      && status.top >= bounds.top && status.bottom <= bounds.bottom
+      && style.borderTopWidth === "0px" && style.borderRadius === "0px";
+  }), "dictation status shares the editable message area without a separate border");
+  assert.equal(await surface.locator("textarea").getAttribute("placeholder"), "", "recording/transcribing takes the placeholder's place");
+  assert.equal(await surface.locator("textarea").isVisible(), false, "active dictation replaces the field and its visible draft");
+}
+async function assertExpandedComposerWaveform(surface: Locator): Promise<void> {
+  if (!await surface.evaluate((node) => node.classList.contains("composer"))) return;
+  const layout = await surface.locator(".voice-pill").evaluate((node) => {
+    const bars = node.querySelector<HTMLElement>(".voice-bars")!;
+    const label = node.querySelector<HTMLElement>(".voice-pill-label")!;
+    const timer = node.querySelector<HTMLElement>(".voice-timer")!;
+    const close = node.querySelector<HTMLElement>(".voice-pill-button")!;
+    const [wave, text, seconds, button] = [bars, label, timer, close].map((element) => element.getBoundingClientRect());
+    const style = getComputedStyle(node);
+    const gap = parseFloat(style.columnGap);
+    return {
+      order: wave.right <= text.left && text.right <= seconds.left && seconds.right <= button.left,
+      sameRow: [text, seconds, button].every((rect) => Math.abs(rect.top + rect.height / 2 - wave.top - wave.height / 2) < 1),
+      fillsSpace: Math.abs(text.left - wave.right - gap) < 1 && getComputedStyle(bars).flexGrow === "1",
+      compactLabel: getComputedStyle(label).flexGrow === "0",
+      dense: bars.childElementCount === 48,
+      taller: parseFloat(style.paddingBottom) === parseFloat(style.paddingTop) && parseFloat(style.paddingBottom) >= 16,
+      fits: wave.left >= node.getBoundingClientRect().left && button.right <= node.getBoundingClientRect().right,
+    };
+  });
+  assert.deepEqual(layout, { order: true, sameRow: true, fillsSpace: true, compactLabel: true, dense: true, taller: true, fits: true }, "the taller input gives remaining width to the waveform before label, seconds and close");
+}
 async function start(page: Page, surface: Locator, keyboard = false): Promise<void> {
   await surface.locator(".voice-mic").waitFor();
   assert.equal(await surface.locator(".voice-mic").count(), 1, "one replacement microphone per surface");
   await page.evaluate(() => { (window as any).__dictationBytes = 0; });
   const button = surface.getByRole("button", { name: "Start dictation", exact: true });
   if (keyboard) { await button.focus(); await page.keyboard.press("Enter"); }
-  else await button.click();
+  else {
+    await button.scrollIntoViewIfNeeded();
+    const bounds = (await button.boundingBox())!;
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    try {
+      await surface.locator('.voice-mic-wrap[data-state="recording"]').waitFor();
+      assert.equal(await surface.locator('.voice-mic-wrap[data-state="recording"]').count(), 1, "capture starts before pointer release");
+    } finally { await page.mouse.up(); }
+  }
   try { await surface.locator('.voice-mic-wrap[data-state="recording"]').waitFor(); }
   catch (error) {
     console.error("Dictation start failure:", { posts: posts().length, surface: await surface.innerText(), state: await surface.locator(".voice-mic-wrap").getAttribute("data-state"), locks: await page.evaluate(() => navigator.locks.query()) });
@@ -70,6 +118,13 @@ async function start(page: Page, surface: Locator, keyboard = false): Promise<vo
   await page.waitForFunction(() => (window as any).__dictationBytes > 0);
   assert.equal(await surface.locator('.voice-pill [role="status"]').getAttribute("aria-live"), "polite");
   assert.ok(await surface.locator(".voice-pill").evaluate((node) => !["absolute", "fixed"].includes(getComputedStyle(node).position)), "status is in flow");
+  await assertInlineComposerStatus(surface);
+  assert.ok(await surface.locator(".voice-pill").evaluate((node) => {
+    const bars = node.querySelector(".voice-bars")!.getBoundingClientRect();
+    const label = node.querySelector(".voice-pill-label")!.getBoundingClientRect();
+    return bars.right <= label.left && bars.top < label.bottom && label.top < bars.bottom;
+  }), "live recording bars appear to the left of the recording label");
+  await assertExpandedComposerWaveform(surface);
 }
 async function finish(page: Page, surface: Locator, keyboard = false): Promise<void> {
   const before = posts().length;
@@ -95,12 +150,23 @@ async function stores(page: Page): Promise<Array<{ comment: string }>> {
 }
 
 try {
+  // Synthetic mono PCM sine, generated at runtime; no private/user recording is stored in Git.
+  // Chrome's default fake tone can fall below backend VAD's speech threshold.
+  const sampleRate = 48_000;
+  const samples = sampleRate * 20;
+  const wav = Buffer.alloc(44 + samples * 2);
+  wav.write("RIFF", 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24); wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write("data", 36); wav.writeUInt32LE(samples * 2, 40);
+  for (let index = 0; index < samples; index++) wav.writeInt16LE(Math.round(Math.sin(index * 2 * Math.PI * 440 / sampleRate) * 0.25 * 32767), 44 + index * 2);
+  writeFileSync(join(root, "microphone.wav"), wav);
   // A disposable key, not a checked-in certificate or a dependency on the private speech host.
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(root, "key.pem"), "-out", join(root, "cert.pem"), "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"], { stdio: "ignore", timeout: 15_000 });
   speech = Bun.serve({ hostname: "127.0.0.1", port: 0, tls: { key: readFileSync(join(root, "key.pem")), cert: readFileSync(join(root, "cert.pem")) }, async fetch(request) {
     const path = new URL(request.url).pathname;
     const item: (typeof requests)[number] = { path, method: request.method, origin: request.headers.get("origin"), authorization: request.headers.get("authorization"), cookie: request.headers.get("cookie"), referer: request.headers.get("referer") };
-    const headers = cors && item.origin === appOrigin ? { "Access-Control-Allow-Origin": appOrigin, "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "content-type", Vary: "Origin" } : {};
+    const headers = {}; // Deliberately no CORS: only the backend can reach this service.
     if (request.method === "POST") {
       // Bun's File.type may infer video/webm from the filename; assert the browser's actual part header.
       const wire = new TextDecoder().decode((await request.clone().arrayBuffer()).slice(0, 4096));
@@ -117,7 +183,8 @@ try {
     if (path === "/v1/audio/transcriptions" && request.method === "POST") {
       if (hold) await new Promise<void>((resolve) => pending.push(resolve));
       completed++;
-      return Response.json({ text: transcript }, { headers });
+      if (speechResult === "error") return new Response("fixture failure", { status: 500 });
+      return Response.json({ text: speechResult === "empty" ? "" : transcript }, { headers });
     }
     return new Response("unexpected speech request", { status: 404, headers });
   } });
@@ -127,22 +194,34 @@ try {
   workspace = owned.workspace.workspace_id;
   const pane = owned.root_pane.pane_id;
   writeFileSync(join(root, "dictation.txt"), "A fictional file line for a draft comment.\nSecond line.\n");
-  server = createServer({ hostname: "127.0.0.1", port: 0, token: "", stateDir: join(root, "state"), dictationOrigins: [speechOrigin], usage: new UsageService(undefined, []) });
+  const dictationFetch: typeof fetch = (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    assert.equal(url.origin, speechOrigin, "the injected CA applies only to the disposable fixture");
+    return Bun.fetch(input, { ...init, tls: { ca: readFileSync(join(root, "cert.pem")) } });
+  };
+  server = createServer({ hostname: "127.0.0.1", port: 0, token: "dictation-browser-test-token", stateDir: join(root, "state"), dictationBaseUrl: baseUrl, dictationFetch, usage: new UsageService(undefined, []) });
   appOrigin = `http://127.0.0.1:${server.port}`;
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", "--ignore-certificate-errors"] });
+  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", `--use-file-for-fake-audio-capture=${join(root, "microphone.wav")}`] });
 
   for (const mobile of [false, true]) {
-    const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 720 } : { width: 1280, height: 900 }, isMobile: mobile, hasTouch: mobile, ignoreHTTPSErrors: true, permissions: ["microphone"], locale: "en-US" });
+    const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 720 } : { width: 1280, height: 900 }, isMobile: mobile, hasTouch: mobile, permissions: ["microphone"], locale: "en-US" });
     try {
       const initialRequests = requests.length;
       const sent: unknown[] = [];
       const legacy: string[] = [];
+      const crossOriginSpeech: string[] = [];
+      const auth = await context.request.post(`${appOrigin}/api/auth`, { data: { token: "dictation-browser-test-token" } });
+      assert.equal(auth.ok(), true, "browser is authenticated to WebUI");
       const errors: string[] = [];
       await context.addInitScript(({ pane, baseUrl, model }) => {
-        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false, voiceInput: "auto", terminalInputMode: "line", dictation: { baseUrl, model, activated: false } }));
+        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false, voiceInput: "auto", terminalInputMode: "line", dictation: { baseUrl, model, activated: true } }));
         localStorage.setItem(`herdr-web-ui:view:${pane}`, "chat");
         const Recorder = window.MediaRecorder;
         window.MediaRecorder = class extends Recorder {
+          start(timeslice?: number) {
+            if ((window as any).__delayDictationStart) (window as any).__startDictation = () => super.start(timeslice);
+            else super.start(timeslice);
+          }
           constructor(stream: MediaStream, options?: MediaRecorderOptions) {
             super(stream, options);
             // A cancelled recorder may still emit its final chunk while the next permission is pending.
@@ -157,12 +236,48 @@ try {
       }, { pane, baseUrl, model });
       const page = await context.newPage();
       page.setDefaultTimeout(15_000);
+      const liveTakes: Array<{ frames: number; samples: number; ready: boolean; preview: boolean; finished: boolean; cancelled: boolean }> = [];
+      page.on("websocket", (socket) => {
+        if (new URL(socket.url()).pathname !== "/api/dictation/ws") return;
+        const take = { frames: 0, samples: 0, ready: false, preview: false, finished: false, cancelled: false };
+        liveTakes.push(take);
+        socket.on("framereceived", ({ payload }) => {
+          if (typeof payload !== "string") return;
+          const frame = JSON.parse(payload);
+          if (frame.type === "ready") { assert.equal(frame.sample_rate, 16_000); take.ready = true; }
+          if (frame.type === "preview") take.preview = true;
+        });
+        socket.on("framesent", ({ payload }) => {
+          if (typeof payload === "string") {
+            const frame = JSON.parse(payload);
+            if (frame.type === "start") { assert.equal(frame.version, 2); assert.equal("baseUrl" in frame, false); }
+            if (frame.type === "finish") {
+              assert.equal(frame.frames, take.frames, "Finish follows the worklet frame drain");
+              assert.equal(frame.samples, take.samples, "Finish accounts for every produced sample");
+              take.finished = true;
+            }
+            if (frame.type === "cancel") take.cancelled = true;
+          } else {
+            assert.equal(take.ready, true, "no PCM before backend ready");
+            assert.ok(payload.length > 8 && payload.length <= 8 + 3200 * 2 && payload.length % 2 === 0);
+            assert.equal(payload.readUInt32LE(0), take.frames++, "contiguous PCM sequence");
+            assert.equal(payload.readUInt32LE(4), take.samples, "contiguous PCM sample offset");
+            take.samples += (payload.length - 8) / 2;
+          }
+        });
+      });
       page.on("pageerror", (error) => errors.push(error.message));
-      page.on("request", (request) => { if (new URL(request.url()).pathname.startsWith("/api/voice")) legacy.push(request.url()); });
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.pathname.startsWith("/api/voice")) legacy.push(request.url());
+        if (/^https?:$/.test(url.protocol) && url.origin !== appOrigin) crossOriginSpeech.push(request.url());
+      });
+      let disconnect: (() => void) | undefined;
       // Only transcript and outgoing PTY input are fixtures. CSP, policy, media capture and speech HTTP are real.
       await page.route("**/api/pane/conversation?*", (route) => route.fulfill({ json: { source: "claude-transcript", history_id: "dictation-fixture", turns: [{ role: "assistant", ts: "2026-01-01T00:00:00Z", end_ts: "2026-01-01T00:00:01Z", parts: [{ kind: "text", text: `A fictional reply for dictation comments.\n\n[dictation.txt](${join(root, "dictation.txt")})` }] }] } }));
-      await page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
+      await page.routeWebSocket(/^wss?:\/\/[^/]+\/ws(?:\?|$)/, (socket) => {
         const upstream = socket.connectToServer();
+        disconnect = () => { socket.close({ code: 1012, reason: "fixture reconnect" }); upstream.close(); };
         upstream.onMessage((raw) => socket.send(raw));
         socket.onMessage((raw) => {
           const frame = JSON.parse(String(raw));
@@ -174,16 +289,20 @@ try {
       });
       const response = await page.goto(`${appOrigin}/?pane=${encodeURIComponent(pane)}`);
       const csp = response!.headers()["content-security-policy"]!;
-      assert.ok(csp.includes(speechOrigin), "the production document allows the exact speech origin");
+      assert.equal(csp.match(/(?:^|;)\s*connect-src\s+([^;]+)/)?.[1]?.trim(), "'self'", "speech access never expands production connect-src");
+      assert.ok(!csp.includes(speechOrigin), "internal speech topology is absent from browser CSP");
       assert.ok(!/connect-src[^;]*(?:\shttps:|\swss:)(?:\s|;)/.test(csp), "no wildcard scheme permission");
       await page.locator(".conn-live").waitFor();
       const composer = page.locator(".composer");
-      const message = page.getByRole("textbox", { name: "Message", exact: true });
+      // The retained textarea leaves the accessibility tree while recording replaces it.
+      const message = page.locator(".composer-text");
       await message.waitFor();
+      await composer.locator(".voice-mic").waitFor();
+      assert.equal(await composer.locator(".voice-mic").isDisabled(), true, "unconfigured dictation stays visible with a setup reason on both layouts");
       await settings(page);
       assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true);
       assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "no legacy API key editor");
-      await page.locator("#dictation-base-url").fill(baseUrl);
+      assert.equal(await page.locator("#dictation-base-url").count(), 0, "backend service is not a browser-editable URL");
       await page.locator("#dictation-model").fill(model);
       await frames(page);
       assert.equal(requests.length, initialRequests, "loading or editing presets never contacts the speech host");
@@ -194,22 +313,12 @@ try {
       await page.locator("#dictation-model-list").waitFor();
       assert.equal(requests.length, initialRequests + 1);
       assert.equal(requests.at(-1)!.method, "GET");
-      await page.locator("#dictation-base-url").fill("https://unapproved.invalid/v1");
-      assert.equal(await page.getByRole("button", { name: "Apply", exact: true }).isDisabled(), true, "policy rejects an unapproved settings destination");
-      await page.locator("#dictation-base-url").fill(`${baseUrl}/other`);
-      assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true, "unsaved URL cannot be probed");
+      const applied = await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).dictation);
+      assert.deepEqual(applied, { version: 2, model, activated: true, mode: "recording" }, "legacy URL/activation migrate only through explicit Apply");
+      await page.locator("#dictation-model").fill("test/second-model");
+      assert.equal((await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).dictation)).model, model, "editing a model does not change applied configuration");
       await page.getByRole("button", { name: "Discard edits", exact: true }).click();
       await closeSettings(page);
-
-      // CORS is enforced by the browser even though CSP approves this origin.
-      cors = false;
-      assert.equal(await page.evaluate(async (url) => { try { await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer" }); return false; } catch { return true; } }, `${baseUrl}/models`), true);
-      cors = true;
-      // Same server, different hostname: the exact-origin CSP must block BEFORE network access.
-      const beforeBlocked = requests.length;
-      const blocked = speechOrigin.replace("127.0.0.1", "localhost");
-      assert.equal(await page.evaluate(async (url) => { try { await fetch(url); return false; } catch { return true; } }, `${blocked}/v1/models`), true);
-      assert.equal(requests.length, beforeBlocked, "unapproved origin is blocked, not route-fulfilled");
 
       // An actual same-origin second tab excludes capture; repeating Busy must retain its explanation.
       const lockPage = await context.newPage();
@@ -228,9 +337,49 @@ try {
       await lockPage.evaluate(() => (window as any).__releaseDictationLock());
       await lockPage.close();
 
+      // Delay actual recorder startup after permission, without mocking the capture stream.
+      await message.fill("waiting draft");
+      await page.evaluate(() => { (window as any).__delayDictationStart = true; });
+      await composer.locator(".voice-mic").click();
+      await composer.getByText("Starting microphone…", { exact: true }).waitFor();
+      await assertInlineComposerStatus(composer);
+      assert.equal(await message.inputValue(), "waiting draft", "the replaced draft is retained");
+      assert.equal(await composer.locator(".voice-bars, .voice-meter, .voice-timer").count(), 0, "no recording indicators before the recorder starts");
+      assert.equal(await composer.locator(".voice-mic").getAttribute("aria-pressed"), "false", "startup is not announced as recording");
+      if (process.env.UI_EVIDENCE_DIR) {
+        mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dictation-starting-${mobile ? "phone" : "desktop"}.png`) });
+      }
+      await page.waitForFunction(() => typeof (window as any).__startDictation === "function");
+      await page.evaluate(() => { (window as any).__delayDictationStart = false; (window as any).__startDictation(); });
+      await composer.locator('.voice-mic-wrap[data-state="recording"]').waitFor();
+      await page.waitForFunction(() => (window as any).__dictationBytes > 0);
+      await finish(page, composer);
+      await until("startup take inserted", async () => await message.inputValue() === "waiting draft spoken words");
+      assert.equal(await message.isVisible(), true, "the retained field returns after transcription");
+
       await message.fill("prefix suffix");
       await caret(message, 7);
       await start(page, composer, true);
+      await until("one live waveform spans all 48 bars without tiling", async () => composer.locator(".voice-bars").evaluate((node) => {
+        const scales = [...node.querySelectorAll<HTMLElement>("[data-voice-bar]")].map((bar) => Number(bar.style.transform.match(/scaleY\(([^)]+)\)/)?.[1]));
+        return scales.length === 48 && scales.every(Number.isFinite)
+          && scales[23]! > scales[0]! + 0.01
+          && scales.slice(1, 24).every((scale, index) => scale > scales[index]!)
+          && scales.slice(25).every((scale, index) => scale < scales[index + 24]!)
+          && scales.every((scale, index) => Math.abs(scale - scales[47 - index]!) < 1e-10);
+      }));
+      if (mobile) {
+        await page.setViewportSize({ width: 320, height: 720 });
+        await frames(page);
+        await assertExpandedComposerWaveform(composer);
+        await page.setViewportSize({ width: 390, height: 720 });
+        await frames(page);
+      }
+      if (process.env.UI_EVIDENCE_DIR) {
+        mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dictation-inline-recording-${mobile ? "phone" : "desktop"}.png`) });
+      }
       await finish(page, composer, true);
       await until("captured-caret insertion", async () => await message.inputValue() === "prefix spoken words suffix");
       assert.equal(sent.length, 0, "dictation never sends");
@@ -240,12 +389,32 @@ try {
       assert.match(upload.fileType!, /^audio\/(webm|mp4|ogg)/);
       assert.match(upload.fileName!, /\.(webm|mp4|m4a|ogg)$/);
 
+      // Undo takes, not the whole draft, including repeated text and insertion at the caret.
+      await caret(message, (await message.inputValue()).length);
+      await start(page, composer);
+      await finish(page, composer);
+      await until("second take inserted", async () => await message.inputValue() === "prefix spoken words suffix spoken words");
+      if (process.env.UI_EVIDENCE_DIR) {
+        mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dictation-undo-${mobile ? "phone" : "desktop"}.png`) });
+      }
+      await composer.getByRole("button", { name: "Undo last dictation", exact: true }).click();
+      assert.equal(await message.inputValue(), "prefix spoken words suffix");
+      await composer.getByRole("button", { name: "Undo last dictation", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      assert.equal(await message.inputValue(), "prefix suffix");
+      assert.equal(await composer.getByRole("button", { name: "Undo last dictation", exact: true }).count(), 0);
+
       // Both recording-time edits and caret-only movement must recover, not overwrite.
       for (const change of ["text", "caret"]) {
         await message.fill("keep this draft");
         await caret(message, 4);
         await start(page, composer);
-        if (change === "text") await message.fill("new visible draft");
+        // An external edit to the retained (currently hidden) draft still forces recovery.
+        if (change === "text") await message.evaluate((node: HTMLTextAreaElement) => {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(node, "new visible draft");
+          node.dispatchEvent(new Event("input", { bubbles: true }));
+        });
         await caret(message, 0);
         await finish(page, composer);
         const insert = composer.getByRole("button", { name: "Insert at cursor", exact: true });
@@ -259,11 +428,19 @@ try {
       await message.fill("visible only");
       await start(page, composer);
       await finish(page, composer);
+      await composer.locator('.voice-pill[data-state="transcribing"]').waitFor();
+      await assertInlineComposerStatus(composer);
+      assert.equal(await message.inputValue(), "visible only", "transcription retains the replaced draft");
+      assert.equal(await composer.locator(".voice-bars, .voice-meter, .voice-timer").count(), 0, "transcribing does not indicate live recording");
+      if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dictation-inline-transcribing-${mobile ? "phone" : "desktop"}.png`) });
       await composer.getByRole("button", { name: "Cancel dictation", exact: true }).click();
       await release(page);
       assert.equal(await message.inputValue(), "visible only", "late cancelled result cannot insert");
       await start(page, composer);
       await finish(page, composer);
+      assert.equal(await page.getByRole("button", { name: "Send message", exact: true }).isDisabled(), true, "Send cannot submit the replaced, invisible draft");
+      await composer.getByRole("button", { name: "Cancel dictation", exact: true }).click();
+      await message.waitFor({ state: "visible" });
       await page.getByRole("button", { name: "Send message", exact: true }).click();
       await until("explicit Send clears draft", async () => await message.inputValue() === "");
       await release(page);
@@ -293,6 +470,79 @@ try {
       await release(page);
       assert.equal(await message.inputValue(), "composition draft", "Apply invalidates an old model's pending response");
       hold = false;
+
+      // Explicit Send owns exactly one continuation, with the latest committed text (including an empty initial draft).
+      async function directSend(surface: Locator, field: Locator, live = false): Promise<void> {
+        for (const initial of ["", "prefix"]) {
+          await field.fill(initial);
+          await caret(field, initial.length);
+          if (live) {
+            await surface.getByRole("button", { name: "Start dictation", exact: true }).click();
+            await surface.getByRole("region", { name: "Dictation preview", exact: true }).waitFor();
+          } else await start(page, surface);
+          const before = sent.length;
+          const send = surface.locator(".composer-send, .terminal-input-send");
+          assert.equal(await send.isDisabled(), false, "recording Send is enabled even for an empty draft");
+          // Synchronous repeated clicks exercise the intent claim before a React rerender.
+          await send.evaluate((button: HTMLButtonElement) => { button.click(); button.click(); });
+          await until("direct dictation Send acknowledged", async () => sent.length === before + 1 && await field.inputValue() === "");
+          assert.equal((sent.at(-1) as { text: string }).text, initial ? `${initial} ${transcript}` : transcript, "Send sees the committed final draft, not its stale closure");
+          await frames(page);
+          assert.equal(sent.length, before + 1, "a take sends exactly once");
+        }
+      }
+      async function rejectedSend(surface: Locator, field: Locator): Promise<void> {
+        for (const reason of ["cancel", "escape", "edit", "caret", "ime", "empty", "error", "offline", "disconnect", "pagehide", "settings"]) {
+          const initial = reason === "empty" || reason === "error" ? "" : "retained draft";
+          await field.fill(initial);
+          await caret(field, initial.length);
+          hold = true;
+          speechResult = reason === "empty" || reason === "error" ? reason : "ok";
+          await start(page, surface);
+          const before = sent.length;
+          await surface.locator(".composer-send, .terminal-input-send").click();
+          await until("held direct Send inference", () => pending.length === 1);
+          assert.equal(await surface.locator(".composer-send, .terminal-input-send").isDisabled(), true, "transcribing cannot create another Send intent");
+          if (reason === "cancel") await surface.getByRole("button", { name: "Cancel dictation", exact: true }).click();
+          if (reason === "escape") {
+            await surface.getByRole("button", { name: "Cancel dictation", exact: true }).focus();
+            await page.keyboard.press("Escape");
+          }
+          if (reason === "disconnect") {
+            disconnect!();
+            await page.locator(".conn-live").waitFor({ state: "detached" });
+            await page.locator(".conn-live").waitFor();
+          }
+          if (reason === "edit") await field.evaluate((node: HTMLTextAreaElement) => {
+            Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(node, "edited draft");
+            node.dispatchEvent(new Event("input", { bubbles: true }));
+          });
+          if (reason === "caret") await caret(field, 0);
+          if (reason === "ime") await field.dispatchEvent("compositionstart", { data: "" });
+          if (reason === "offline" || reason === "pagehide") await page.evaluate((name) => window.dispatchEvent(new Event(name)), reason);
+          if (reason === "settings") {
+            await settings(page);
+            const modelField = page.locator("#dictation-model");
+            await modelField.fill(await modelField.inputValue() === model ? "test/second-model" : model);
+            await page.getByRole("button", { name: "Apply", exact: true }).click();
+            await closeSettings(page);
+          }
+          await release(page);
+          hold = false;
+          speechResult = "ok";
+          await surface.locator('.voice-mic-wrap[data-state="idle"]').waitFor();
+          if (reason === "ime") await field.dispatchEvent("compositionend", { data: "" });
+          const recovery = surface.getByRole("button", { name: "Insert at cursor", exact: true });
+          if (await recovery.count()) {
+            await caret(field, 0);
+            await recovery.click();
+            await frames(page);
+          }
+          assert.equal(sent.length, before, `${reason} and subsequent draft recovery never send (not even bare Enter)`);
+        }
+      }
+      await directSend(composer, message);
+      await rejectedSend(composer, message);
 
       // Reply comments: new, saved, Escape from footer, keyboard Save while inference is pending.
       const reply = page.locator(".chat-view p.is-commentable", { hasText: "A fictional reply" });
@@ -426,6 +676,20 @@ try {
       assert.ok((await stores(page)).some((entry) => entry.comment === "visible saved-dialog edit"), "Composer saved-comment Save keeps only the visible edit");
       hold = false;
 
+      const beforeOverflow = sent.length;
+      await message.fill("x".repeat(Number(await message.getAttribute("maxlength")) - 5));
+      await start(page, composer);
+      await composer.locator(".composer-send").click();
+      await composer.getByRole("button", { name: "Insert at cursor", exact: true }).waitFor();
+      assert.equal(sent.length, beforeOverflow, "the final dictation cannot bypass the outgoing size limit");
+      await composer.getByRole("button", { name: "Discard", exact: true }).click();
+      await message.fill("");
+
+      // Direct grid typing must not hide the separate dictation draft, even on desktop.
+      await page.keyboard.press("ControlOrMeta+Shift+Comma");
+      await openSettingsPage(page, "Terminal");
+      await page.locator("#terminal-input-mode").selectOption("direct");
+      await closeSettings(page);
       // Terminal line is also a draft: speech must never emit terminal input or Enter.
       await page.locator('.view-switch button[title^="Live terminal"]').click();
       const line = page.getByRole("textbox", { name: "Terminal input line", exact: true });
@@ -446,17 +710,90 @@ try {
         assert.equal(posts().length, beforeInterrupted, `${event} cancels without an automatic upload`);
         assert.equal(await line.inputValue(), "echo spoken words");
       }
+      await directSend(terminal, line);
+      await rejectedSend(terminal, line);
+      // Real AudioWorklet + authenticated backend WS + backend-segmented HTTPS inference.
+      // No Playwright route fulfils either dictation route or the speech service.
+      await page.locator('.view-switch button[title^="Chat"]').click();
+      await message.waitFor();
+      await settings(page);
+      await page.getByRole("button", { name: "Live preview", exact: true }).click();
+      await page.getByRole("button", { name: "Apply", exact: true }).click();
+      await closeSettings(page);
+      await message.fill("live draft");
+      const beforeLiveSend = sent.length;
+      await composer.getByRole("button", { name: "Start dictation", exact: true }).click();
+      await composer.locator('.voice-mic-wrap[data-state="recording"]').waitFor();
+      await composer.getByRole("region", { name: "Dictation preview", exact: true }).getByText(transcript, { exact: true }).waitFor();
+      assert.equal(await message.inputValue(), "live draft", "live hypotheses never mutate the draft before Finish");
+      assert.equal(liveTakes.at(-1)!.preview, true, "actual coordinator produces a preview before Finish");
+      assert.ok(liveTakes.at(-1)!.frames > 0, "real worklet emits binary PCM");
+      await composer.getByRole("button", { name: "Finish dictation", exact: true }).click();
+      await until("live final inserted once", async () => await message.inputValue() === "live draft spoken words");
+      assert.equal(liveTakes.at(-1)!.finished, true);
+      assert.equal(sent.length, beforeLiveSend, "live Finish never sends terminal input");
+      await composer.getByRole("button", { name: "Undo last dictation", exact: true }).click();
+      assert.equal(await message.inputValue(), "live draft", "live Undo removes only the final take");
+      assert.match(posts().at(-1)!.fileType!, /^audio\/wav/, "backend previews/finals are complete WAV uploads");
+
+      hold = true;
+      const beforeLiveCancel = posts().length;
+      await composer.getByRole("button", { name: "Start dictation", exact: true }).click();
+      await until("live preview inference held", () => posts().length > beforeLiveCancel && pending.length === 1);
+      await composer.getByRole("button", { name: "Cancel dictation", exact: true }).click();
+      await composer.locator('.voice-mic-wrap[data-state="idle"]').waitFor();
+      await release(page);
+      hold = false;
+      assert.equal(await message.inputValue(), "live draft", "late live preview cannot insert after Cancel");
+      assert.equal(await composer.locator(".voice-preview").count(), 0);
+      assert.equal(sent.length, beforeLiveSend);
+      const afterLiveCancel = posts().length;
+      await frames(page);
+      assert.equal(posts().length, afterLiveCancel, "Cancel never replays buffered audio");
+
+      await directSend(composer, message, true);
+      await page.locator('.view-switch button[title^="Live terminal"]').click();
+      await directSend(terminal, line, true);
+      await page.locator('.view-switch button[title^="Chat"]').click();
+
+      await settings(page);
+      await page.getByRole("button", { name: "Off", exact: true }).click();
+      await closeSettings(page);
+      assert.equal(await composer.locator(".voice-mic").count(), 0, "Off remains explicit and hides capture");
+      await page.reload();
+      await page.locator(".conn-live").waitFor();
+      assert.equal(await composer.locator(".voice-mic").count(), 0, "Off survives reload");
       assert.deepEqual(legacy, [], "replacement client never requests /api/voice");
       assert.deepEqual(errors, []);
-      console.log(`PASS ${mobile ? "phone" : "desktop"}: direct HTTPS dictation, CORS/CSP, explicit settings, draft recovery, cancellation, IME, comments and terminal`);
-    } finally { while (pending.length) pending.shift()!(); hold = false; cors = true; await context.close(); }
+      assert.deepEqual(crossOriginSpeech, [], "browser makes zero direct speech-service requests");
+      console.log(`PASS ${mobile ? "phone" : "desktop"}: backend HTTPS dictation, same-origin CSP, explicit settings, draft recovery, cancellation, IME, comments and terminal`);
+    } finally { while (pending.length) pending.shift()!(); hold = false; await context.close(); }
   }
+  // Missing administrator configuration stays disabled even with current activated browser settings.
+  const disabled = createServer({ hostname: "127.0.0.1", port: 0, token: "dictation-disabled-test-token", stateDir: join(root, "disabled-state"), dictationBaseUrl: "", usage: new UsageService(undefined, []) });
+  const disabledContext = await browser.newContext({ locale: "en-US" });
+  try {
+    const origin = `http://127.0.0.1:${disabled.port}`;
+    assert.equal((await disabledContext.request.post(`${origin}/api/auth`, { data: { token: "dictation-disabled-test-token" } })).ok(), true);
+    await disabledContext.addInitScript(({ model }) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: "on", dictation: { version: 2, model, activated: true, mode: "recording" } })), { model });
+    const page = await disabledContext.newPage();
+    await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
+    await page.locator(".conn-live").waitFor();
+    const beforeDisabled = requests.length;
+    await settings(page);
+    await page.getByText("Managed by the WebUI backend", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Apply", exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "Check", exact: true }).isDisabled(), true);
+    assert.equal(await page.locator("#dictation-base-url").count(), 0);
+    assert.equal(requests.length, beforeDisabled, "missing backend URL never contacts a speech service");
+  } finally { await disabledContext.close(); disabled.stop(); }
   for (const request of requests.filter((item) => item.path.endsWith("audio/transcriptions") || item.path.endsWith("models"))) {
     assert.equal(request.authorization, null);
     assert.equal(request.cookie, null);
     assert.equal(request.referer, null, "discovery and audio both suppress Referer");
-    assert.equal(request.origin, appOrigin);
-    assert.ok(request.method === "GET" || request.method === "POST" || request.method === "OPTIONS");
+    assert.equal(request.origin, null, "backend does not forward browser Origin");
+    assert.ok(request.method === "GET" || request.method === "POST");
   }
   assert.ok(requests.every((request) => request.method !== "POST" || request.path === "/v1/audio/transcriptions"), "no model downloads or hidden inference checks");
 } finally {

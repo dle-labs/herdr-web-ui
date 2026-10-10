@@ -274,6 +274,7 @@ export function App() {
   // the dialog makes a tab in this workspace instead of a workspace, while set
   const [newTab, setNewTab] = useState<NewTabTarget | null>(null);
   const [connected, setConnected] = useState(false);
+  const [paneRole, setPaneRole] = useState<{ machineId: string; paneId: string; mode: "observe" | "interact" } | null>(null);
   const [outputStopped, setOutputStopped] = useState(false);
   const [notifications, setNotifications] = useState<NotificationState>(() => notificationState());
   // this device has a server-side push subscription: alerts come from the server, not the tab
@@ -1020,6 +1021,7 @@ export function App() {
                 theme={resolvedTheme}
                 palette={settings.palette}
                 onConnectionChange={active ? (next) => { setConnected(next); if (next) setOutputStopped(false); } : undefined}
+                onRoleAck={active && item ? (mode) => setPaneRole({ machineId: selectedMachineId, paneId: item.pane_id, mode }) : undefined}
                 onServerMessage={active ? handleServerMessage : undefined}
               />
             </OpenFileContext.Provider>} />
@@ -1060,7 +1062,7 @@ export function App() {
       )}
       {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
         <FileViewer key={`${viewing.machineId}:${viewing.paneId}:${viewing.path}`} path={viewing.path} paneId={viewing.paneId} machineId={viewing.machineId} commentId={viewing.comment ?? null}
-          connected={connected && role === "interact" && viewing.machineId === selectedMachineId && viewing.paneId === selectedPaneId}
+          connected={connected && paneRole?.mode === "interact" && paneRole.machineId === viewing.machineId && paneRole.paneId === viewing.paneId && viewing.machineId === selectedMachineId && viewing.paneId === selectedPaneId}
           paneFolder={(() => {
             // the pane's folder is known only for the PC whose panes are listed
             if (viewing.machineId !== selectedMachineId) return null;

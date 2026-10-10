@@ -93,8 +93,7 @@
   visibility: hidden;
 }
 
-/* dictation's pill (VoiceInput.css) opens over the composer, where the greeting stands: the
-   greeting keeps its box and yields until the pill is gone */
+/* Dictation is inside the message area; the greeting yields while recording. */
 .composer[data-dictating] .composer-greeting {
   visibility: hidden;
 }
@@ -147,11 +146,6 @@
 .composer-note {
   width: min(100%, var(--chat-w));
   margin-inline: auto;
-}
-
-/* the dictation pill floats above the composer, on the same column edge */
-.composer > .voice-pill[data-align="start"] {
-  left: calc(var(--space-4) + max(0px, (100% - 2 * var(--space-4) - var(--chat-w)) / 2));
 }
 
 /* the middle of the card's last row, between add and the round button, pushed to the button's
@@ -512,8 +506,60 @@
   border-radius: var(--radius-sm);
 }
 
-.composer-text {
+/* Dictation replaces the visible message field, not a separate card. The textarea
+   stays mounted while hidden, preserving its draft and captured insertion caret. */
+.composer-draft {
   grid-area: text;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.composer-draft > .voice-pill {
+  padding: var(--space-4) var(--space-5);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* Waveform first, then the compact label, timer and close button. The waveform
+   owns the remaining width; dense bars shrink to fit even a narrow phone. */
+.composer-draft > .voice-pill[data-state="recording"] {
+  flex-wrap: nowrap;
+}
+
+.composer-draft .voice-bars {
+  flex: 1 1 0;
+  min-width: calc(var(--space-8) * 2);
+  height: var(--space-6);
+  justify-content: space-between;
+  gap: var(--hairline);
+}
+
+.composer-draft .voice-bars [data-voice-bar] {
+  flex: 0 1 var(--space-1);
+  min-width: 0;
+}
+
+.composer-draft .voice-pill[data-state="recording"] .voice-pill-label {
+  flex: 0 1 auto;
+}
+
+.composer-draft .voice-timer {
+  flex: none;
+}
+
+/* Reduced motion uses the same available width for a stationary audio meter. */
+.composer-draft .voice-meter {
+  flex: 1 1 0;
+  min-width: var(--space-8);
+}
+
+.composer-draft > .voice-pill.is-open + .composer-text {
+  padding-top: var(--space-1);
+}
+
+.composer-text {
   width: 100%;
   min-width: 0;
   min-height: calc(1lh + var(--space-5));

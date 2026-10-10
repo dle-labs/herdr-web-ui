@@ -240,25 +240,27 @@ Only providers with a sign-in are shown; a GitHub account without Copilot is lef
 
 ## Voice input
 
-**Settings → Dictation** configures direct, self-hosted **English** transcription. The browser sends a completed recording directly to your speech server; herdr never relays the audio. There is no OpenAI-key setup, browser-vendor fallback or text-polishing request. Live microphone streaming is not enabled yet.
+**Settings → Dictation** configures self-hosted **English** transcription through the WebUI backend. The browser connects only to WebUI, which forwards recognition requests to your existing Speaches service. The herdr terminal daemon does not handle audio. There is no OpenAI-key setup, browser-vendor fallback or text-polishing request.
 
-1. The administrator must allow the speech origin before starting the herdr web server:
+1. Configure the speech API on the WebUI host before starting the server:
    ```bash
-   export HERDR_WEB_DICTATION_ORIGINS='["https://stt.intra.dle.dev"]'
+   export HERDR_WEB_DICTATION_BASE_URL='https://stt.intra.dle.dev/v1'
    ```
-   This is a JSON array of exact HTTPS origins, without paths, credentials, query strings or fragments. Empty means unavailable. Restart the server and reload the page after policy changes. A reverse proxy's stricter CSP still applies; policies intersect.
-2. Serve the app over HTTPS (localhost is also a secure context). Connect the browser device to NetBird, configure Speaches CORS for the **exact app origin**, and have the proxy forward requests. Allowing an origin in herdr's CSP does not configure speech-server CORS or grant VPN access.
-3. In Dictation, apply the HTTPS API base `https://stt.intra.dle.dev/v1` and model `distil-whisper/distil-large-v3.5-ct2`, or another installed model ID. These presets are not activated until **Apply**. Settings edits do not retarget an existing take.
-4. **Refresh models** and **Check connection** are explicit read-only requests to the applied endpoint. They are disabled while a different URL is unsaved. Choosing a listed model edits the settings draft; Apply commits it. A reachable service or listed model is not verified inference: the first actual take may load the model. Checks do not download/load models or send sample audio.
+   Unset or empty means disabled. The URL must be HTTPS with no credentials, query or fragment. The old `HERDR_WEB_DICTATION_ORIGINS` browser allowlist no longer enables dictation. Restart WebUI after configuration changes.
+2. Serve the app over HTTPS (localhost is also a secure context). The **WebUI host** must reach Speaches through NetBird; the phone only needs access to WebUI. The app proxy must support same-origin WebSocket upgrades at `/api/dictation/ws`. No browser-to-Speaches connection or speech-service CORS configuration is needed. Keep TLS verification enabled.
+3. Reload all old tabs and installed-PWA instances, then open Dictation and **Apply** the model and mode. Migration from direct dictation requires explicit activation again because WebUI now handles your audio. The default remains the installed `distil-whisper/distil-large-v3.5-ct2` model and **Record, then transcribe** mode. Existing microphone Off remains Off. Settings drafts never retarget an active take; Apply cancels it.
+4. **Refresh models** and **Check** are explicit read-only requests through WebUI after activation. Choosing a listed model edits the settings draft; Apply commits it. A reachable service or listed model does not verify inference. Checks do not download/load models or submit sample audio.
+5. **Live preview** streams small audio chunks to WebUI while recording. WebUI detects pauses, buffers utterances and requests rolling previews/final segments over Speaches HTTP. Provisional words can change; the draft is updated only after Finish. This does not use the deployed Speaches Realtime WebSocket API, whose transcription-only behavior remains unverified. Live preview requires AudioWorklet support and uses more recognition work than one completed upload.
 
-Tap the mic once to start and again to finish. `Mod+Shift+Space` toggles the active draft's mic; Escape or Cancel cancels. The same controls serve desktop/mobile chat, the terminal input line, new and saved reply comments, and file comments. Nothing opens the keyboard just to record. **Auto** shows controls when the applied configuration, server policy and browser support allow recording; **On** also shows unavailable controls with a reason. **Off** hides them without hiding Settings. Secret/password fields never have a dictation control.
+Tap the mic once to start and again to finish. In chat and the terminal input line, you can instead press **Send** while recording: capture stops, the final transcript is inserted, and that explicit send proceeds once. Cancellation, recognition failure or a changed draft prevents the send; review/recovery still requires another explicit action. Finishing with the mic alone only updates the draft. `Mod+Shift+Space` toggles the active draft's mic; Escape or Cancel cancels. The same controls serve desktop/mobile chat, the terminal input line, new and saved reply comments, and file comments. Nothing opens the keyboard just to record. **Auto** and **On** show controls with a reason when configuration or browser support prevents recording. **Off** hides them without hiding Settings. Secret/password fields never have a dictation control.
 
-- Text is inserted only if the original draft and selection are unchanged. Otherwise, review the owner-scoped result and choose **Insert at cursor** or **Discard**. It is not stored or transferred to another pane. Send, comment Save/Delete, close, settings changes and disabling cancel pending results; dictated text never sends, saves, or presses terminal Enter by itself.
-- Switching apps, locking the phone, hiding the page or losing the connection cancels the take without uploading. The mic is released after capture, not kept warm. Audio is never automatically retried or replayed. Cancelling an upload cannot guarantee cancellation of inference already running on the server.
-- Recordings are limited to 120 seconds and 10 MiB. WebM/Opus or MP4/AAC is selected according to browser support. One take owns the tab's mic through transcription; where Web Locks is supported, same-origin tabs also exclude each other. Without Web Locks only per-tab exclusion is available.
-- The public demo disables direct speech access even if this browser remembers an activated endpoint. The legacy `/api/voice*` backend and its server credentials remain compatibility-only; this UI neither uses nor deletes them.
+- Text is inserted only if the original draft and selection are unchanged. Otherwise, review the owner-scoped result and choose **Insert at cursor** or **Discard**. It is not stored or transferred to another pane. Comment Save/Delete, close, settings changes and disabling cancel pending results. Dictated text never sends, saves, or presses terminal Enter by itself; only an explicit Send during recording requests finish-and-send.
+- Switching apps, locking the phone, hiding the page or losing the connection cancels the take and stops further transmission; live audio already transmitted cannot be recalled. The mic is released after capture, not kept warm. Audio is never automatically retried or replayed. Cancellation cannot guarantee that Speaches stops inference already running.
+- Recording is limited to 120 seconds and 10 MiB. Completed recordings use the browser's supported WebM/Opus or MP4/AAC container. Live mode sends 16 kHz mono PCM16 in bounded chunks, with one recognition request at a time for the take; slow or stalled connections fail visibly rather than queueing unlimited audio. One take owns the tab's mic through transcription; Web Locks adds same-origin cross-tab exclusion where supported.
+- The coordinator keeps audio and transient transcripts only in memory and does not log their contents. Inserted text follows ordinary draft/comment storage. Check reverse-proxy buffering/logging separately. The first transcription may load model weights; repeated preview requests cost additional GPU work.
+- The public demo disables dictation regardless of remembered settings. Legacy `/api/voice*` routes and credentials remain compatibility-only; this UI neither uses nor deletes them.
 
-Real Android Chrome and iOS Safari recording, permission/background behavior and your deployed NetBird/CORS setup require device validation; desktop emulation is not a substitute.
+Actual mobile microphone capture and battery behavior are user-validated after setup; automated replay and desktop mobile-layout tests are not evidence of real-device capture or battery performance.
 
 ## On your phone
 
@@ -440,7 +442,7 @@ Observe connections cannot take a pane, and a displaced bridge never takes it ba
 | `HERDR_WEB_TAILSCALE_OWNER` | this PC's Tailscale login | The Tailscale login that gets in through `tailscale serve` without pairing. Set it on a PC whose Tailscale node is tagged, which has no login of its own |
 | `HERDR_WEB_TAILSCALE_SERVE_ONLY` | unset (off) | `1` declares `tailscale serve` the only way anything reaches this port. Then the owner's own device gets in through serve without a code, on a tailnet one login owns with no tagged node. Enable it only when no public reverse proxy, tunnel or other forwarding server exposes this port: a visitor through one would otherwise get the owner's access |
 | `HERDR_WEB_STATE_DIR` | `~/.config/herdr-web-ui` | Push keys, device subscriptions, PC registrations and update builds |
-| `HERDR_WEB_DICTATION_ORIGINS` | `[]` | Exact HTTPS speech-origin allowlist (JSON array) for direct [dictation](#voice-input); restart and reload after changes |
+| `HERDR_WEB_DICTATION_BASE_URL` | unset | Backend Speaches HTTPS API base for [dictation](#voice-input), e.g. `https://stt.intra.dle.dev/v1`; unset/empty disables it. Restart WebUI and reload after changes |
 | `HERDR_WEB_OPENAI_API_KEY` | unset | Compatibility-only legacy `/api/voice*` key; not used by Dictation |
 | `HERDR_WEB_OPENAI_BASE_URL` | `https://api.openai.com/v1` | Compatibility-only legacy voice API root; not used by Dictation |
 | `HERDR_WEB_AUTO_UPDATE` | `0` | `1` installs new releases without asking |
@@ -566,7 +568,7 @@ No, but a phone needs two things Tailscale gives at once: a way to reach the PC 
 Session files stay on the PC running each agent, and their contents are sent to browsers connected to the app. herdr web ui has no hosted relay or account service of its own. The agents' own connections to model providers depend on their configuration.
 
 Optional features can send data off the PC:
-- [Dictation](#voice-input) sends completed recordings directly from your browser to the explicitly configured speech server. There is no herdr audio relay, browser-vendor fallback or polishing service.
+- [Dictation](#voice-input) sends audio to the WebUI backend, which buffers it in memory and requests recognition from the administrator-configured Speaches server. Live mode streams audio to WebUI while you speak; completed-recording mode uploads after Finish. There is no browser-to-Speaches connection, terminal-daemon audio processing, vendor fallback or polishing service.
 - [Subscription usage](#subscription-usage), when enabled, sends each provider's credentials to that provider's usage endpoint.
 - Updates and remote-PC setup fetch releases or configured runtime bundles over the network; remote panes are reached over SSH.
 - Enabled push alerts go through the browser vendor's push service as encrypted notifications.
