@@ -1,66 +1,98 @@
 import { describe, expect, it } from "bun:test";
-import { dictationConfig, dictationPolicy } from "./dictation.ts";
+import { boundedBody, dictationConfig, dictationPolicy, validateDictationSelection } from "./dictation.ts";
 import { cspHeader, serveStatic } from "./static.ts";
 import { fileInfo, fileResponse } from "./file-view.ts";
+import { createDictationTransport, readRecording } from "./dictation/speaches-http.ts";
 
-const policyText = (policy = dictationPolicy([])) => Object.values(cspHeader(policy))[0]!;
+const policy = dictationPolicy("https://speech.example/v1");
+const signal = () => new AbortController().signal;
+const transport = (fn: (url: string, init: RequestInit) => Promise<Response>) => fn as unknown as typeof fetch;
+const recording = (modify?: (form: FormData) => void) => {
+  const form = new FormData();
+  form.set("file", new Blob(["audio"], { type: "audio/webm" }), "recording.webm");
+  form.set("model", "installed/model"); form.set("generation", policy.generation); modify?.(form);
+  return new Request("https://app.example/api/dictation/transcribe", { method: "POST", body: form });
+};
 
-describe("direct dictation policy", () => {
-  it("defaults off and permits an explicit empty override of the environment", () => {
-    expect(dictationConfig(dictationPolicy(undefined, "[]"))).toEqual({ enabled: false, allowed_origins: [] });
-    expect(dictationPolicy([], 'invalid')).toEqual({ enabled: false, allowed_origins: [] });
+describe("backend dictation policy", () => {
+  it("matches client model syntax through 512 characters without inventory checks", () => {
+    for (const model of ["a".repeat(512), "owner/model..name", "owner/model"])
+      expect(() => validateDictationSelection(policy, model, policy.generation)).not.toThrow();
+    for (const model of ["a".repeat(513), "owner/../model", "owner/..", "", "/model", "owner/model name"])
+      expect(() => validateDictationSelection(policy, model, policy.generation)).toThrow("Choose a valid speech model");
   });
-
-  it("normalizes, deduplicates and snapshots exact origins", () => {
-    const input = ["HTTPS://STT.EXAMPLE:443/", "https://stt.example", "https://speech.example:8443", "https://[::1]:9443"];
-    const policy = dictationPolicy(input);
-    input.push("https://later.example");
-    expect(policy.allowed_origins).toEqual(["https://stt.example", "https://speech.example:8443", "https://[::1]:9443"]);
+  it("normalizes HTTPS /v1 and snapshots immutable generation without exposing topology", () => {
+    expect(dictationPolicy("HTTPS://SPEECH.EXAMPLE:443/")).toEqual(policy);
+    expect(dictationPolicy("https://speech.example/v1/")).toEqual(policy);
     expect(Object.isFrozen(policy)).toBe(true);
-    expect(Object.isFrozen(policy.allowed_origins)).toBe(true);
-    dictationConfig(policy).allowed_origins.push("https://later.example");
-    expect(policy.allowed_origins.length).toBe(3);
-    expect(dictationPolicy(undefined, JSON.stringify(input)).allowed_origins.length).toBe(4);
+    expect(dictationConfig(policy)).toMatchObject({ version: 2, enabled: true, modes: ["recording", "live"], max_seconds: 120, max_bytes: 10485760 });
+    expect(JSON.stringify(dictationConfig(policy))).not.toContain("speech.example");
+    expect(dictationPolicy("").enabled).toBe(false);
+    expect(dictationPolicy("").generation).not.toBe(policy.generation);
   });
-
-  for (const entry of ["http://speech.example", "wss://speech.example", "https:", "https://", "https://*.example", "https://%2a.example", "https://speech.example;script-src", "https://speech.example'", "https://speech_example", "https://speech.example/v1", "https://speech.example/.", "https://speech.example//", "https://user:pass@speech.example", "https://@speech.example", "https://speech.example?", "https://speech.example#", "https://speech.example?x=1", "https://speech.example#x", " https://speech.example", "https://speech.example\n", "https://speech.example\\", "https://speech.example; connect-src *", "https://speech.example:bad", "https://speech.example:65536", "https://speech.example/../", "'self'", 42, null]) {
-    it(`rejects an invalid origin ${JSON.stringify(entry)}`, () => {
-      expect(() => dictationPolicy(undefined, JSON.stringify(["https://valid.example", entry]))).toThrow("Invalid dictation origins");
-    });
+  for (const value of ["http://speech.example", "wss://speech.example", "https://speech.example/other", "https://speech.example/v1/../v1", "https://speech.example//v1", "https://speech.example?", "https://speech.example#", "https://u:p@speech.example", " https://speech.example", "https://speech.example\\", "https://*.example", "https://%2a.example", "https://speech.example:65536"]) {
+    it(`refuses ${value}`, () => expect(() => dictationPolicy(value)).toThrow("Invalid dictation base URL"));
   }
-  for (const env of ["", "not JSON", "null", "{}", '"https://speech.example"', "[null]"]) {
-    it(`rejects invalid environment ${JSON.stringify(env)}`, () => expect(() => dictationPolicy(undefined, env)).toThrow("Invalid dictation origins"));
-  }
-
-  it("adds only exact HTTPS/WSS connections, preserving every other directive", async () => {
-    const policy = dictationPolicy(["https://SPEECH.example:443/", "https://speech.example:8443"]);
-    const original = policyText().split("; ");
-    const extended = policyText(policy).split("; ");
-    expect(extended.filter((entry) => !entry.startsWith("connect-src"))).toEqual(original.filter((entry) => !entry.startsWith("connect-src")));
-    expect(extended.find((entry) => entry.startsWith("connect-src"))).toBe("connect-src 'self' https://speech.example wss://speech.example https://speech.example:8443 wss://speech.example:8443");
-    const response = await serveStatic("/", policy);
-    expect(response.headers.get("content-security-policy") ?? response.headers.get("content-security-policy-report-only")).toBe(policyText(policy));
-  });
-
-  it("does not grant file viewer documents direct speech or scripts", () => {
-    const response = fileResponse(fileInfo(import.meta.filename)!, false);
-    const csp = response.headers.get("content-security-policy")!;
-    expect(csp).toContain("sandbox; default-src 'none'");
-    expect(csp).not.toContain("speech.example");
-    expect(csp).not.toContain("connect-src");
-    expect(csp).not.toContain("script-src");
-  });
-
-  it("keeps report-only behavior explicit", () => {
-    const previous = process.env.HERDR_WEB_CSP;
+  it("ignores retired origins and supports explicit disabled env override", () => {
+    const old = process.env.HERDR_WEB_DICTATION_ORIGINS;
+    const base = process.env.HERDR_WEB_DICTATION_BASE_URL;
     try {
-      process.env.HERDR_WEB_CSP = "report-only";
-      const headers = cspHeader(dictationPolicy(["https://speech.example"]));
-      expect(headers["content-security-policy"]).toBeUndefined();
-      expect(headers["content-security-policy-report-only"]).toContain("https://speech.example wss://speech.example");
+      process.env.HERDR_WEB_DICTATION_ORIGINS = "invalid";
+      process.env.HERDR_WEB_DICTATION_BASE_URL = "https://speech.example";
+      expect(dictationPolicy()).toEqual(policy);
+      expect(dictationPolicy("").enabled).toBe(false);
     } finally {
-      if (previous === undefined) delete process.env.HERDR_WEB_CSP;
-      else process.env.HERDR_WEB_CSP = previous;
+      if (old === undefined) delete process.env.HERDR_WEB_DICTATION_ORIGINS; else process.env.HERDR_WEB_DICTATION_ORIGINS = old;
+      if (base === undefined) delete process.env.HERDR_WEB_DICTATION_BASE_URL; else process.env.HERDR_WEB_DICTATION_BASE_URL = base;
+    }
+  });
+  it("keeps CSP same-origin and file-viewer policy unchanged", async () => {
+    const csp = Object.values(cspHeader())[0]!;
+    expect(csp).toContain("connect-src 'self';"); expect(csp).not.toContain("speech.example");
+    const response = await serveStatic("/");
+    expect(response.headers.get("content-security-policy") ?? response.headers.get("content-security-policy-report-only")).toBe(csp);
+    const file = fileResponse(fileInfo(import.meta.filename)!, false);
+    expect(file.headers.get("content-security-policy")).toContain("sandbox; default-src 'none'");
+    expect(file.headers.get("content-security-policy")).not.toContain("connect-src");
+  });
+});
+
+describe("bounded HTTP speech adapter", () => {
+  it("uses only fixed discovery/inference paths, English, JSON, no client headers or inventory gate", async () => {
+    const calls: string[] = [];
+    const service = createDictationTransport(policy, transport(async (url, init) => {
+      calls.push(url); expect(init.redirect).toBe("error"); expect(init.headers).toBeUndefined();
+      if (url.endsWith("/models?task=automatic-speech-recognition")) return Response.json({ data: [{ id: "installed/model" }] });
+      expect(init.body).toBeInstanceOf(FormData);
+      const wire = await new Response(init.body).text();
+      expect(wire).toContain("Content-Type: audio/webm");
+      expect(wire).not.toContain("Content-Type: video/webm");
+      const form = init.body as FormData;
+      expect(form.get("language")).toBe("en"); expect(form.get("response_format")).toBe("json"); expect(form.get("model")).toBe("installed/model");
+      return Response.json({ text: " hello " });
+    }));
+    expect(await service.models(signal())).toEqual(["installed/model"]);
+    const parsed = await readRecording(recording(), policy, signal());
+    expect(await service.transcribe(parsed.file, parsed.model, signal())).toBe("hello");
+    expect(calls).toEqual(["https://speech.example/v1/models?task=automatic-speech-recognition", "https://speech.example/v1/audio/transcriptions"]);
+  });
+  it("rejects stale selection, duplicate fields, arbitrary destinations and unsupported MIME", async () => {
+    for (const modify of [(f: FormData) => f.set("generation", "stale"), (f: FormData) => f.append("model", "duplicate"), (f: FormData) => f.set("url", "https://attacker.example"), (f: FormData) => f.set("file", new Blob(["audio"], { type: "text/plain" }), "text.txt")]) {
+      await expect(readRecording(recording(modify), policy, signal())).rejects.toMatchObject({ code: "format" });
+    }
+  });
+  it("bounds streaming bodies without trusting Content-Length", async () => {
+    await expect(boundedBody(new Blob([new Uint8Array(100)]).stream(), 10)).rejects.toMatchObject({ code: "too_large" });
+    const abort = new AbortController();
+    const body = new ReadableStream<Uint8Array>({ start() {} });
+    const result = boundedBody(body, 10, abort.signal); abort.abort();
+    await expect(result).rejects.toBeDefined();
+  });
+  it("refuses redirect, missing model, malformed and excessive responses without echoing provider details", async () => {
+    for (const response of [new Response("private credential", { status: 302, headers: { location: "https://attacker.example" } }), new Response("private credential", { status: 404 }), new Response("not json"), Response.json({ text: 1 }), new Response("x".repeat(300000))]) {
+      const service = createDictationTransport(policy, transport(async () => response));
+      try { await service.transcribe(new Blob(["audio"]), "model", signal()); throw new Error("unexpected success"); }
+      catch (error) { expect(String(error)).not.toContain("private credential"); expect(String(error)).not.toContain("unexpected success"); }
     }
   });
 });

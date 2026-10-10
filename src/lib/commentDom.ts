@@ -32,7 +32,7 @@ const PIN_WITH_ANCHOR = `.${PIN_CLASS}[${PIN_ANCHOR_ATTR}]`;
 /** The pin layer, for a selector of what is not a comment's text (lib/commentSelection.ts). */
 export const PINS_SELECTOR = `.${PINS_CLASS}`;
 /** The comment UI on a surface: the pin layer (which holds a popover beside its pin) and a popover anywhere. */
-export const COMMENT_UI_SELECTOR = `${PINS_SELECTOR}, ${POPOVER}`;
+export const COMMENT_UI_SELECTOR = `${PINS_SELECTOR}, ${POPOVER}, .comment-selection`;
 
 /** The attributes of a popover's box that say whether its text is changed. */
 export function changedAttrs(changed: boolean): Record<typeof CHANGED_ATTR, "" | undefined> {

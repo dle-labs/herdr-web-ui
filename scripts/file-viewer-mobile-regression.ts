@@ -36,7 +36,8 @@ async function checkLayout(): Promise<void> {
   let server: ReturnType<typeof Bun.serve> | undefined;
   try {
     const bundle = await Bun.build({
-      entrypoints: [entry], target: "browser", define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      // Vite emits the worklet in production; this non-capture fixture never loads it.
+      external: ["*?worker&url"], entrypoints: [entry], target: "browser", define: { "process.env.NODE_ENV": JSON.stringify("development") },
       plugins: [{ name: "fixture-styles", setup(build) {
         // Serve the two real stylesheets explicitly, including optional pre-fix CSS.
         build.onLoad({ filter: /\.css$/ }, () => ({ contents: "", loader: "css" }));

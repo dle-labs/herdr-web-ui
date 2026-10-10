@@ -1,8 +1,8 @@
 /**
  * Comments on files in the file viewer, with a real Codex transcript (its reply links `./src/sync.ts`
- * and `./docs/spec.md`) and an owned herdr pane: a comment made by a mouse's drag over text (it opens as the mouse lets
- * go) or by clicking or tapping a line, never by a Comment button (there is none: a keyboard or touch selection, a double
- * or triple click open nothing), in the code view (on a desktop and a phone) and in the Markdown preview, named by the
+ * and `./docs/spec.md`) and an owned herdr pane: a text selection (drag, keyboard, touch, double or triple click) offers
+ * Comment without opening an editor or interfering with focus and copying. Activating Comment, or clicking or tapping
+ * a line, opens the editor in the code view (on a desktop and a phone) and the Markdown preview, named by the
  * source lines it came from; its pin's tip where it was clicked or the drag let go, else (a stored comment without a
  * point) after the end of its text (the text highlighted), and the popover beside the pin, to its
  * right (a bottom sheet on a phone), a saved comment opened straight into its field (its text highlighted meanwhile)
@@ -166,7 +166,7 @@ const highlightText = (page: Page, name = "block-comment-pending"): Promise<stri
  * Selects text the way the keyboard (Shift+arrows) or a finger's long press leaves it: from the start of `from` in
  * `first` to the end of `to` in `last` (the element's own text; `last` may be `first`), made the page's selection,
  * then the event that ends the gesture: a finger's `pointerup` at the selection's end on a touch screen, else the
- * `keyup` of the Shift key. Neither is a mouse's drag, so the selection opens nothing.
+ * `keyup` of the Shift key. Both offer Comment without opening an editor.
  */
 async function selectText(first: Locator, from: string, last: Locator, to: string): Promise<void> {
   await first.evaluate((start, { stop, text }) => {
@@ -214,7 +214,7 @@ const bodyScroll = (scope: Locator): Promise<number> => scope.evaluate((node) =>
 
 /**
  * A mouse's drag from the start of `from` in `first` to the end of `to` in `last` (a press, moves and a release, one
- * click): the selection opens its comment at once (there is no Comment button). Returns where it let go, with the
+ * click): checks that Comment preserves selection, copying and focus, then clicks it. Returns where it let go, with the
  * scroll of `viewer`'s body then (0 for the chat: `viewer` null).
  */
 async function dragText(page: Page, viewer: Locator | null, first: Locator, from: string, last: Locator, to: string): Promise<Pointed> {
@@ -240,13 +240,48 @@ async function dragText(page: Page, viewer: Locator | null, first: Locator, from
   await page.mouse.move((start.x + end.x) / 2, (start.y + end.y) / 2, { steps: 4 });
   await page.mouse.move(end.x, end.y, { steps: 4 });
   await page.mouse.up();
-  return { ...end, scroll: viewer === null ? 0 : await bodyScroll(viewer) };
+  const release = { ...end, scroll: viewer === null ? 0 : await bodyScroll(viewer) };
+  await assertSelectionButton(page, "a dragged selection");
+  await selectionButtonOf(page).click();
+  return release;
 }
 
-/** No Comment button anywhere: there is none, whatever selected text. */
+/** No selection action after activation, dismissal, or on a disabled surface. */
 const assertNoButton = async (page: Page, what: string): Promise<void> => {
   assert.equal(await page.locator(".comment-selection").count(), 0, `${what}: no Comment button`);
 };
+
+const selectionButtonOf = (page: Page): Locator => page.getByRole("button", { name: "Comment", exact: true }).and(page.locator(".comment-selection"));
+
+/** Selection alone offers Comment while leaving focus, selected text and native copying intact. */
+async function assertSelectionButton(page: Page, what: string): Promise<void> {
+  const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  const focus = await page.evaluateHandle(() => document.activeElement);
+  assert.ok(selected.trim(), `${what}: text stays selected`);
+  await selectionButtonOf(page).waitFor({ state: "visible" });
+  await frames(page);
+  assert.equal(await popoverOf(page).count(), 0, `${what}: no editor before Comment`);
+  assert.equal(await page.locator(".comment-pin.is-pending").count(), 0, `${what}: no provisional pin before Comment`);
+  assert.equal(await page.evaluate(() => window.getSelection()?.toString()), selected, `${what}: selection preserved`);
+  assert.ok(await page.evaluate((before) => document.activeElement === before && !document.activeElement?.matches(".comment-selection, .comment-popover textarea"), focus), `${what}: button does not steal focus`);
+  const copied = await page.evaluate(() => {
+    const selection = window.getSelection()!;
+    const event = new ClipboardEvent("copy", { clipboardData: new DataTransfer(), bubbles: true, cancelable: true });
+    selection.anchorNode!.parentElement!.dispatchEvent(event);
+    return { text: selection.toString(), prevented: event.defaultPrevented };
+  });
+  assert.deepEqual(copied, { text: selected, prevented: false }, `${what}: copying remains native`);
+  await focus.dispose();
+}
+
+/** Clearing selection or Escape dismisses Comment without opening an editor or closing the viewer. */
+async function dismissSelection(page: Page, escape = false): Promise<void> {
+  if (escape) await page.keyboard.press("Escape");
+  else await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await page.locator(".comment-selection").waitFor({ state: "detached" });
+  assert.equal(await popoverOf(page).count(), 0, "dismissing Comment opens no editor");
+  if (escape) await page.evaluate(() => window.getSelection()?.removeAllRanges());
+}
 
 /** A plain click at `at` (client pixels): returns it with the body's scroll then. */
 async function clickAt(page: Page, viewer: Locator, at: { x: number; y: number }): Promise<Pointed> {
@@ -486,12 +521,12 @@ const cases: Record<string, Case> = {
     const { page, errors, close } = await open(DESKTOP);
     const chat = page.locator(".chat-view");
     const paragraph = page.locator(".chat-view p.is-commentable", { hasText: REPLY });
-    // a keyboard selection opens nothing; a mouse's drag over the same text opens it
+    // a keyboard selection offers Comment; a mouse's drag over the same text is explicitly activated
     await selectText(paragraph, "every revision", paragraph, "in order");
     await frames(page, 10);
     assert.equal(await popoverOf(page).count(), 0, "a keyboard selection opens nothing");
-    await assertNoButton(page, "a keyboard selection in the chat");
-    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await assertSelectionButton(page, "a keyboard selection in the chat");
+    await dismissSelection(page);
     await dragText(page, null, paragraph, "every revision", paragraph, "in order");
     await besidePinIn(chat).waitFor();
     await pendingPinIn(chat).waitFor();
@@ -499,7 +534,7 @@ const cases: Record<string, Case> = {
     await saveTyped(page, "Say which order.");
     await eventually("its pin", async () => (await pinsIn(chat).count()) === 1);
     await eventually("the comment's text to be highlighted", async () => (await highlighted(page)) > 0);
-    console.log("PASS chat: a keyboard selection opens nothing; a mouse's drag opens the popover beside a provisional pin; Ctrl+Enter saves it as a pin, highlighted");
+    console.log("PASS chat: a keyboard selection offers Comment without an editor; Comment on a mouse's drag opens the popover beside a provisional pin; Ctrl+Enter saves it as a pin, highlighted");
 
     // its pin opens it straight into its field, its text up; Escape on the untouched field closes it
     await pinsIn(chat).click();
@@ -528,7 +563,7 @@ const cases: Record<string, Case> = {
     await close();
   },
 
-  /** The code view on a desktop: a triple click and a keyboard selection (nothing), a drag, its pin, the copy, Escape. */
+  /** Desktop code: triple click, keyboard and drag selections offer Comment; activation, pins, copying and Escape. */
   async code(open) {
     const { page, errors, close } = await open(DESKTOP);
     const viewer = await openSync(page);
@@ -537,21 +572,23 @@ const cases: Record<string, Case> = {
     assert.ok(filePath?.endsWith("/src/sync.ts"), `the viewer names the file's path: ${filePath}`);
     assert.equal(await viewer.locator(".file-viewer-body[data-comment-surface][data-comments]").count(), 1, "the body is a comment surface, comments on");
 
-    // 1. a triple click selects one line (to the next line's start), to copy: nothing opens, there is no Comment
-    // button; nor for a keyboard selection. No "+" in the gutter
+    // 1. triple click and keyboard selections offer Comment without an editor, preserving native copy.
+    // No "+" in the gutter
     await lineOf(viewer, 8).hover();
     assert.equal(await viewer.locator(".file-comment-add").count(), 0, "no + beside the hovered line");
     await lineOf(viewer, 8).click({ clickCount: 3 });
     await frames(page, 10);
     assert.ok((await page.evaluate(() => window.getSelection()?.toString() ?? "")).includes(SYNC_LINES[7]!.trim()), "the triple click selects line 8");
     assert.equal(await popoverOf(page).count(), 0, "a triple click opens nothing");
-    await assertNoButton(page, "a triple click on a code line");
+    await assertSelectionButton(page, "a triple click on a code line");
+    await dismissSelection(page);
     await selectText(lineOf(viewer, 8), "if", lineOf(viewer, 8), "{");
     await frames(page, 10);
     assert.equal(await popoverOf(page).count(), 0, "a keyboard selection opens nothing");
-    await assertNoButton(page, "a keyboard selection in the code");
-    await page.evaluate(() => window.getSelection()?.removeAllRanges());
-    // a mouse's drag over line 8 opens it at once
+    await assertSelectionButton(page, "a keyboard selection in the code");
+    await dismissSelection(page, true);
+    assert.ok(await viewer.isVisible(), "Escape dismisses Comment without closing the viewer");
+    // a mouse's drag over line 8 offers Comment; the helper activates it
     const release8 = await dragText(page, viewer, lineOf(viewer, 8), "if", lineOf(viewer, 8), "{");
     await besidePinIn(body).waitFor();
     await pendingPinIn(body).waitFor();
@@ -560,7 +597,8 @@ const cases: Record<string, Case> = {
     assert.equal(await popoverOf(page).locator(".comment-file-reference").getAttribute("title"), filePath);
     assert.equal(await popoverOf(page).locator(".comment-popover-quote").count(), 0, "beside its pin the popover quotes nothing");
     assert.equal((await highlightText(page)).replace(/\s+/g, " ").trim(), (SYNC_LINES[7]).replace(/\s+/g, " ").trim(), "the quote is line 8");
-    console.log("PASS code: no + beside a line; a triple-clicked line and a keyboard selection open nothing, no Comment button; a drag over line 8 opens the popover beside a provisional pin, naming sync.ts · Line 8");
+    assert.ok(await popoverOf(page).getByRole("button", { name: "Start dictation", exact: true }).isVisible(), "the desktop comment microphone is shown by default, even when unavailable");
+    console.log("PASS code: no + beside a line; triple-click and keyboard selections offer Comment without an editor; activating a drag's Comment opens the popover beside a provisional pin, naming sync.ts · Line 8");
 
     // 2. saved: a pin where the drag let go, its text highlighted; no card
     await saveTyped(page, "Compare with <=.");
@@ -571,8 +609,7 @@ const cases: Record<string, Case> = {
     const before = await highlighted(page);
     console.log("PASS code: Ctrl+Enter saves it: a pin whose tip is where the drag let go on line 8, its text highlighted, no card");
 
-    // 3. a mouse's drag over several lines, into line 9: the popover opens as it lets go, with no Comment
-    // button, beside a provisional pin whose tip is where it let go
+    // 3. Comment on a drag over several lines opens the editor beside a provisional pin at the release point
     const release = await dragText(page, viewer, lineOf(viewer, 7), "await", lineOf(viewer, 9), "return");
     await besidePinIn(body).waitFor();
     await pendingPinIn(body).waitFor();
@@ -599,7 +636,7 @@ const cases: Record<string, Case> = {
     await page.mouse.move(2, 2);
     await assertUp(body, "return", "the comment on lines 7–9 opened by its pin");
     await escapePopover(page);
-    console.log("PASS code: a mouse's drag over lines 7–9 opens the popover at once, right of a provisional pin whose tip is where it let go; saved, the pin stays there, highlighted; the pin opens it in its field, its text up");
+    console.log("PASS code: Comment on a mouse's drag over lines 7–9 opens the popover, right of a provisional pin whose tip is where it let go; saved, the pin stays there, highlighted; the pin opens it in its field, its text up");
 
     // 4. a copy over the commented lines is the browser's own: the code alone, nothing of the pins
     const copied = await lineOf(viewer, 6).evaluate((first) => {
@@ -759,14 +796,14 @@ const cases: Record<string, Case> = {
     await closedOnly("a click on another line with a saved comment open");
     await clickAt(page, viewer, await pointOn(lineOf(viewer, 5)));
     await fieldFocused(page);
-    // a drag that starts while a popover is open closes it and opens its own selection's comment at once
+    // a drag that starts while a popover is open closes it and offers Comment for the selection
     await dragText(page, viewer, lineOf(viewer, 11), "await", lineOf(viewer, 11), "incoming");
     await besidePinIn(body).waitFor();
     await fieldFocused(page);
     assert.equal(await popoverOf(page).count(), 1, "one popover: the drag's");
     assert.equal(await popoverReference(page), "sync.ts · Line 11", "the drag opens a comment on its selection");
     await escapePopover(page);
-    console.log("PASS code-click: with a popover open (new or saved), a click on another line only closes it, nothing opens, and the next click opens a comment; a drag closes it and opens its selection's comment at once; a press on a pin switches to its comment");
+    console.log("PASS code-click: with a popover open (new or saved), a click on another line only closes it, nothing opens, and the next click opens a comment; a drag closes it and Comment opens its selection's editor; a press on a pin switches to its comment");
 
     // a double click on a word selects it, and leaves no popover
     const store = await wordPoint(lineOf(viewer, 11), "store");
@@ -775,12 +812,13 @@ const cases: Record<string, Case> = {
     assert.equal(await popoverOf(page).count(), 0, "no popover after a double click");
     assert.equal(await pendingPinIn(body).count(), 0);
     assert.equal(await page.evaluate(() => window.getSelection()?.toString()), "store", "the word is selected");
-    // the word it selected is no mouse's drag, it is there to copy: it opens no comment, and no Comment button shows
+    // the selected word remains available to copy; Comment is offered without opening an editor
     await frames(page, 10);
     assert.equal(await popoverOf(page).count(), 0, "a double click's word selection opens no comment");
-    await assertNoButton(page, "a double click's word selection");
-    await page.evaluate(() => window.getSelection()?.removeAllRanges());
-    console.log("PASS code-click: a double click on a word selects it and leaves no popover; the word selection opens none, and no Comment button shows");
+    await assertSelectionButton(page, "a double click's word selection");
+    await dismissSelection(page, true);
+    assert.ok(await viewer.isVisible(), "Escape dismisses the word's Comment action, not the viewer");
+    console.log("PASS code-click: a double click selects a word and offers Comment without an editor; Escape dismisses the action and keeps the viewer");
 
     // Delete, in view beside ↑, takes the pin, the highlight and the line's mark
     await pinsIn(body).click();
@@ -888,7 +926,7 @@ const cases: Record<string, Case> = {
     await close();
   },
 
-  /** The code view on a phone: a tap on a line opens the sheet, a touch selection opens nothing, Copy file. */
+  /** Phone code: line taps and explicit Comment activation open the sheet; touch selection and Copy file stay native. */
   async "code-phone"(open) {
     const { page, errors, close } = await open(PHONE);
     assert.ok(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), "the phone's pointer is coarse");
@@ -900,6 +938,7 @@ const cases: Record<string, Case> = {
     assert.equal(await besidePinIn(viewer).count(), 0, "on a phone the popover is the sheet");
     assert.equal(await popoverReference(page), "sync.ts · Line 3");
     await fieldFocused(page);
+    assert.ok(await dialogOf(page).getByRole("button", { name: "Start dictation", exact: true }).isVisible(), "the mobile comment microphone is shown by default, even when unavailable");
     await fieldOf(page).fill("Phone note");
     await dialogOf(page).getByRole("button", { name: "Save comment", exact: true }).tap();
     await dialogOf(page).waitFor({ state: "detached" });
@@ -929,21 +968,18 @@ const cases: Record<string, Case> = {
     console.log("PASS code-phone: a pin tapped opens the sheet with its comment in the field, unfocused (no keyboard), quoting Line 3, with ✕ and Delete, its text up; Tab stays in it");
     const code = viewer.locator(".file-viewer-text");
     assert.notEqual(await code.evaluate((pre) => getComputedStyle(pre).userSelect), "none", "the code takes a selection on a touch screen");
-    // text selected (as a long press and its handles leave it) opens nothing, and there is no Comment button: a tap on
-    // the line is the way to comment on it
+    // text selected (as a long press and its handles leave it) offers Comment without opening the sheet
     await selectText(lineOf(viewer, 8), "if", lineOf(viewer, 8), "revision");
     await frames(page, 10);
     assert.equal(await popoverOf(page).count(), 0, "a touch selection opens nothing");
-    await assertNoButton(page, "a touch selection in the code");
-    await page.evaluate(() => window.getSelection()?.removeAllRanges());
-    const at8 = await pointOn(lineOf(viewer, 8));
-    await page.touchscreen.tap(at8.x, at8.y);
+    await assertSelectionButton(page, "a touch selection in the code");
+    await selectionButtonOf(page).tap();
     await dialogOf(page).waitFor();
     assert.equal(await popoverReference(page), "sync.ts · Line 8");
     await fieldFocused(page);
     await dialogOf(page).getByRole("button", { name: "Close", exact: true }).tap();
     await dialogOf(page).waitFor({ state: "detached" });
-    console.log("PASS code-phone: a touch selection in the code opens nothing, no Comment button; a tap on line 8 opens its sheet");
+    console.log("PASS code-phone: a touch selection in the code preserves copy and focus; tapping Comment opens the sheet for Line 8");
 
     const copyButton = viewer.getByRole("button", { name: /^(Copy file|File copied)$/ });
     await page.evaluate(() => {
@@ -989,14 +1025,14 @@ const cases: Record<string, Case> = {
     await close();
   },
 
-  /** The Markdown preview: a mouse's drag names the source lines it came from, its pin where it let go; and on a phone, a long press (nothing) and a tap. */
+  /** Markdown preview: selections offer Comment, naming their source lines on activation; drag pins keep the release point, taps still comment on blocks. */
   async preview(open) {
     const { page, errors, close } = await open(DESKTOP);
     const viewer = await openSpec(page);
     const body = viewer.locator(".file-viewer-body");
     assert.equal(await viewer.locator(".file-viewer-body[data-comment-surface]").count(), 1, "the preview is a comment surface");
 
-    // 1. a drag across the table's rows 42–43: the popover at once, then the pin where it let go
+    // 1. activate Comment on a drag across table rows 42–43; its pin keeps the release point
     const release = await dragText(page, viewer, previewLine(viewer, 42), "Older revision", previewLine(viewer, 43), "merged note");
     await besidePinIn(body).waitFor();
     await assertNoButton(page, "a drag over the preview's table rows");
@@ -1049,7 +1085,7 @@ const cases: Record<string, Case> = {
     assert.deepEqual(errors, []);
     await close();
 
-    // a phone: a long press selects a word of the paragraph, and opens nothing: there is no Comment button.
+    // a phone: a long press selects a word and offers Comment without opening a sheet.
     // Headless Chromium selects nothing on a long press (neither a synthesized tap gesture held for a
     // second nor raw touch events do), so the word is selected as a long press leaves it, and its
     // gesture ends with a touch's pointerup (`selectText` on a coarse pointer)
@@ -1060,14 +1096,14 @@ const cases: Record<string, Case> = {
     assert.equal(await phone.page.evaluate(() => window.getSelection()?.toString()), "revision");
     await frames(phone.page, 10);
     assert.equal(await popoverOf(phone.page).count(), 0, "a touch selection opens nothing");
-    await assertNoButton(phone.page, "a touch selection in the preview");
-    await phone.page.evaluate(() => window.getSelection()?.removeAllRanges());
-    // a tap on the paragraph is the way: its sheet, on all of its lines
+    await assertSelectionButton(phone.page, "a touch selection in the preview");
+    await dismissSelection(phone.page);
+    // a tap on the paragraph still opens its sheet on all of its lines
     const at3 = await pointOn(previewLine(phoneViewer, 3));
     await phone.page.touchscreen.tap(at3.x, at3.y);
     await dialogOf(phone.page).waitFor();
     assert.equal(await popoverReference(phone.page), "spec.md · Lines 3–4");
-    console.log("PASS preview: on a phone a word selected by touch opens nothing and shows no Comment button; a tap on its paragraph opens the sheet for Lines 3–4");
+    console.log("PASS preview: on a phone a touch selection offers Comment without a sheet; clearing selection dismisses it; a paragraph tap opens the sheet for Lines 3–4");
     assert.deepEqual(phone.errors, []);
     await phone.close();
   },
@@ -1493,18 +1529,22 @@ const cases: Record<string, Case> = {
       return document.activeElement?.matches(wanted.field) ?? false;
     }, { field: sheetField, block });
 
-    // the chat: a touch selection opens nothing, and there is no Comment button; a tap on the paragraph is the way
+    // the chat: a touch selection offers Comment, whose activation focuses the sheet inside the tap
     const paragraph = page.locator(".chat-view p.is-commentable", { hasText: REPLY });
     await selectText(paragraph, "every revision", paragraph, "in order");
     await frames(page, 10);
     assert.equal(await popoverOf(page).count(), 0, "a touch selection opens nothing");
-    await assertNoButton(page, "a touch selection in the chat");
-    await page.evaluate(() => window.getSelection()?.removeAllRanges());
-    assert.ok(await tapFocuses(paragraph), "the chat's sheet takes the focus inside the tap on its paragraph");
+    await assertSelectionButton(page, "a touch selection in the chat");
+    const focusedOnComment = await selectionButtonOf(page).evaluate(async (button, field) => {
+      (button as HTMLButtonElement).click();
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+      return document.activeElement?.matches(field) ?? false;
+    }, sheetField);
+    assert.ok(focusedOnComment, "the chat's sheet takes the focus inside the tap on Comment");
     const sheet = dialogOf(page);
     await sheet.waitFor();
     await keyboardUp(page.locator(".chat-view"));
-    console.log("PASS form-phone: a touch selection in the chat opens nothing, no Comment button; a tap on the paragraph opens the sheet with its field focused inside the tap; the sheet stays in view as the keyboard rises");
+    console.log("PASS form-phone: a touch selection offers Comment without an editor; activation focuses the sheet's field inside the tap; the sheet stays in view as the keyboard rises");
 
     // Send with a comment half written: nothing goes, the comment's field takes the focus (in the tap)
     await fieldOf(page).fill("Half a thought");

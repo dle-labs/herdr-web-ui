@@ -1,7 +1,7 @@
 /**
  * Comments on an agent's reply in the chat, with a real Codex transcript and an owned herdr pane: a comment made by a
- * mouse's drag over text (it opens as the mouse lets go) or by clicking or tapping a block, never by a Comment button
- * (there is none: a keyboard or touch selection, a double or triple click open nothing), its pin's tip where it was
+ * text selection (drag, keyboard, touch, double or triple click) activated with Comment, or by clicking or tapping a
+ * block. Selection alone preserves focus and copying without opening an editor; its pin's tip is where it was
  * clicked or the drag let go, else (a comment stored without a point) after the end of its text (the text highlighted),
  * the popover beside the pin, to its right (a bottom sheet on a phone), a saved comment opened straight into its field
  * (its text highlighted meanwhile) with Delete beside ↑, the keys and the focus, the composer's walk and send, the text
@@ -189,9 +189,10 @@ async function clickWord(page: Page, part: Locator, word: string): Promise<Point
 
 /**
  * A mouse's drag over `part`'s text from the start of `from` to the end of the first `to` after it, a real press, moves
- * and release (one click): the selection opens its comment at once, without the Comment button. Returns where it let go.
+ * and release (one click): checks the selection's Comment button, then activates it. Returns where it let go.
+ * `activate: false` exercises a surface with comments turned off.
  */
-async function dragSelect(page: Page, part: Locator, from: string, to: string): Promise<Pointed> {
+async function dragSelect(page: Page, part: Locator, from: string, to: string, activate = true): Promise<Pointed> {
   const [start, end] = await part.evaluate((node, text) => {
     const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
     const glyph = (wanted: string, after: number, last: boolean): { rect: DOMRect; at: number } => {
@@ -225,7 +226,12 @@ async function dragSelect(page: Page, part: Locator, from: string, to: string): 
   await page.mouse.move((start.x + end.x) / 2, (start.y + end.y) / 2, { steps: 4 });
   await page.mouse.move(end.x, end.y, { steps: 4 });
   await page.mouse.up();
-  return { ...end, scroll: await scrollOf(page) };
+  const release = { ...end, scroll: await scrollOf(page) };
+  if (activate) {
+    await assertSelectionButton(page, "a dragged selection");
+    await selectionButtonOf(page).click();
+  }
+  return release;
 }
 /** A finger's tap on `word` in `part`. */
 async function tapWord(page: Page, part: Locator, word: string): Promise<void> {
@@ -237,11 +243,11 @@ async function tapWord(page: Page, part: Locator, word: string): Promise<void> {
  * Selects text in `part` the way the keyboard (Shift+arrows) or a finger's long press leaves it: from `from` to the end
  * of the first `to` after it (or of `from` alone), or, with `firstLine`, from `from` to the last character of the line
  * it starts on. The selection is the page's, the selected text in the chat view's middle, then the event that ends the
- * gesture: a finger's `pointerup` on a touch screen, else the `keyup` of the Shift key. Neither is a mouse's drag, so
- * the selection opens nothing.
+ * gesture: a finger's `pointerup` on a touch screen, else the `keyup` of the Shift key. Both offer Comment without
+ * opening a popover or taking focus.
  */
 async function select(part: Locator, from: string, { to, firstLine = false }: { to?: string; firstLine?: boolean } = {}): Promise<void> {
-  await part.evaluate((node, text) => {
+  await part.evaluate(async (node, text) => {
     const skipped = ".comment-pins, .markdown-code-header, button:not(.markdown-file), [aria-hidden='true']";
     const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
       acceptNode: (found) => {
@@ -275,6 +281,8 @@ async function select(part: Locator, from: string, { to, firstLine = false }: { 
     };
     const head = glyph(start);
     view.scrollBy({ top: head.top + head.height / 2 - (box.top + box.height / 2), behavior: "instant" });
+    // Settle the helper's scroll before selecting; real scrolling dismisses quick actions.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     let end = start + text.from.length;
     if (text.firstLine) {
       const top = glyph(start).top;
@@ -339,10 +347,42 @@ async function pointlessSelectionComment(page: Page, part: Locator, from: string
   assert.equal(await storedPoint(page, text), undefined, "stored without a point");
 }
 
-/** No Comment button anywhere: there is none, whatever selected text. */
+/** No selection action after activation, dismissal, or with comments disabled. */
 const assertNoButton = async (page: Page, what: string): Promise<void> => {
   assert.equal(await page.locator(".comment-selection").count(), 0, `${what}: no Comment button`);
 };
+
+const selectionButtonOf = (page: Page): Locator => page.getByRole("button", { name: "Comment", exact: true }).and(page.locator(".comment-selection"));
+
+/** Selection alone offers Comment while leaving focus, selected text and native copying intact. */
+async function assertSelectionButton(page: Page, what: string): Promise<void> {
+  const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  const focus = await page.evaluateHandle(() => document.activeElement);
+  assert.ok(selected.trim(), `${what}: text stays selected`);
+  await selectionButtonOf(page).waitFor({ state: "visible" });
+  await frames(page);
+  assert.equal(await popoverOf(page).count(), 0, `${what}: no editor before Comment`);
+  assert.equal(await pendingPinOf(page).count(), 0, `${what}: no provisional pin before Comment`);
+  assert.equal(await page.evaluate(() => window.getSelection()?.toString()), selected, `${what}: selection preserved`);
+  assert.ok(await page.evaluate((before) => document.activeElement === before && !document.activeElement?.matches(".comment-selection, .comment-popover textarea"), focus), `${what}: button does not steal focus`);
+  const copied = await page.evaluate(() => {
+    const selection = window.getSelection()!;
+    const event = new ClipboardEvent("copy", { clipboardData: new DataTransfer(), bubbles: true, cancelable: true });
+    selection.anchorNode!.parentElement!.dispatchEvent(event);
+    return { text: selection.toString(), prevented: event.defaultPrevented };
+  });
+  assert.deepEqual(copied, { text: selected, prevented: false }, `${what}: copying remains native`);
+  await focus.dispose();
+}
+
+/** Clearing the selection or Escape dismisses its action without opening a comment. */
+async function dismissSelection(page: Page, escape = false): Promise<void> {
+  if (escape) await page.keyboard.press("Escape");
+  else await page.evaluate(() => window.getSelection()?.removeAllRanges());
+  await page.locator(".comment-selection").waitFor({ state: "detached" });
+  assert.equal(await popoverOf(page).count(), 0, "dismissing Comment opens no editor");
+  if (escape) await page.evaluate(() => window.getSelection()?.removeAllRanges());
+}
 
 /**
  * For each pin (or the provisional one, `pending`; only those whose name holds `named`), where its tip (its square top
@@ -489,12 +529,13 @@ const cases: Record<string, Case> = {
   async selection(open) {
     const { page, errors, close } = await open(DESKTOP);
     const intro = partOf(page, INTRO);
-    // a mouse's drag: the comment opens as it lets go, no Comment button, the provisional pin's tip where it let go
+    // a mouse's drag offers Comment; activating it puts the provisional pin's tip where the drag let go
     const release = await dragSelect(page, intro, "paragraph", "state");
     await pendingPinOf(page).waitFor();
     await besidePinOf(page).waitFor();
     await fieldFocused(page);
-    assert.equal(await page.locator(".chat-view .comment-selection").count(), 0, "a mouse's drag needs no Comment button");
+    await assertNoButton(page, "the activated dragged selection");
+    assert.ok(await popoverOf(page).getByRole("button", { name: "Start dictation", exact: true }).isVisible(), "the desktop comment microphone is shown by default, even when unavailable");
     await assertTipAt(page, pendingPinOf(page), release, "the provisional pin of a dragged selection");
     await assertBubble(pendingPinOf(page));
     await assertBesideRight(page, pendingPinOf(page), "a dragged selection's new comment");
@@ -519,24 +560,61 @@ const cases: Record<string, Case> = {
     await assertUp(page, "paragraph about the state", "a selection's comment opened by its pin");
     await page.keyboard.press("Escape");
     await popoverOf(page).waitFor({ state: "detached" });
-    console.log("PASS selection: a mouse's drag opens the popover at once, right of a provisional bubble whose tip is where it let go, the field focused; Ctrl+Enter leaves one pin there, no card");
+    console.log("PASS selection: Comment on a mouse's drag opens the popover, right of a provisional bubble whose tip is where it let go, the field focused; Ctrl+Enter leaves one pin there, no card");
 
-    // a keyboard's selection (no drag) opens nothing, and there is no Comment button for it
+    // a keyboard's selection offers Comment without opening an editor
     const long = partOf(page, "A longer paragraph");
     await select(long, "longer", { to: "several" });
     await frames(page, 10);
     assert.equal(await popoverOf(page).count(), 0, "a keyboard selection opens nothing");
-    await assertNoButton(page, "a keyboard selection");
-    await page.evaluate(() => window.getSelection()?.removeAllRanges());
-    console.log("PASS selection: a keyboard selection opens nothing, and no Comment button shows");
+    await assertSelectionButton(page, "a keyboard selection");
+    if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "comment-quick-action-desktop.png") });
+    await dismissSelection(page);
+    console.log("PASS selection: a keyboard selection offers Comment without opening an editor; clearing selection dismisses it");
 
-    /** A drag of the mouse from `start` to `end` (client pixels): opens a new comment beside its provisional pin, never a button; closed again. */
+    // Outside presses, scrolling, resize and an inactive surface dismiss the action, not activate it.
+    await select(long, "longer", { to: "several" });
+    await assertSelectionButton(page, "a selection before an outside press");
+    await page.mouse.click(2, 2);
+    await page.locator(".comment-selection").waitFor({ state: "detached" });
+    assert.equal(await popoverOf(page).count(), 0, "an outside press dismisses Comment without opening an editor");
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+
+    await select(long, "longer", { to: "several" });
+    await assertSelectionButton(page, "a selection before scrolling");
+    await page.locator(".chat-view").evaluate((node) => { node.scrollTop += 20; });
+    await page.locator(".comment-selection").waitFor({ state: "detached" });
+    assert.equal(await popoverOf(page).count(), 0, "scrolling dismisses Comment without opening an editor");
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+
+    await select(long, "longer", { to: "several" });
+    await assertSelectionButton(page, "a selection before resize");
+    await page.setViewportSize({ width: 1279, height: 800 });
+    await page.locator(".comment-selection").waitFor({ state: "detached" });
+    assert.equal(await popoverOf(page).count(), 0, "resize dismisses Comment without opening an editor");
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await page.setViewportSize(DESKTOP.viewport!);
+
+    await select(long, "longer", { to: "several" });
+    await assertSelectionButton(page, "a selection before Settings makes the surface inactive");
+    await page.keyboard.press("ControlOrMeta+Shift+Comma");
+    await page.locator(".settings-dialog").waitFor();
+    await page.locator(".comment-selection").waitFor({ state: "detached" });
+    await page.keyboard.press("Escape");
+    await page.locator(".settings-dialog").waitFor({ state: "detached" });
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    assert.equal(await popoverOf(page).count(), 0, "an inactive surface opens no selection editor");
+    console.log("PASS selection: outside press, scrolling, resize and an inactive surface dismiss Comment without activation");
+
+    /** A drag from `start` to `end` (client pixels): activates Comment beside its provisional pin, then closes it. */
     const dragOpens = async (start: { x: number; y: number }, end: { x: number; y: number }, what: string): Promise<string> => {
       await page.mouse.move(start.x, start.y);
       await page.mouse.down();
       await page.mouse.move((start.x + end.x) / 2, (start.y + end.y) / 2, { steps: 4 });
       await page.mouse.move(end.x, end.y, { steps: 4 });
       await page.mouse.up();
+      await assertSelectionButton(page, what);
+      await selectionButtonOf(page).click();
       await besidePinOf(page).waitFor().catch(() => { throw new Error(`${what}: no popover opened`); });
       await pendingPinOf(page).waitFor();
       await fieldFocused(page);
@@ -588,7 +666,7 @@ const cases: Record<string, Case> = {
     await long.evaluate((node) => node.scrollIntoView({ block: "center" }));
     const across = await dragOpens(await edge(long, "longer"), await edge(partOf(page, "Checksum"), "Checksum", true), "a drag across two paragraphs");
     assert.ok(across.includes("several lines") && across.includes("Checksum"), `the quote holds both paragraphs (${across})`);
-    console.log("PASS selection: a drag let go past the end of its line, in the margin under its paragraph, or across two paragraphs opens the popover at once, never a Comment button");
+    console.log("PASS selection: a drag let go past the end of its line, in the margin under its paragraph, or across two paragraphs offers Comment, which opens the popover when activated");
     assert.deepEqual(errors, []);
     await close();
   },
@@ -660,7 +738,7 @@ const cases: Record<string, Case> = {
     assert.equal(await fieldOf(page).inputValue(), "Too long for a phone?", "a press on a pin switches straight to its comment");
     await clickWord(page, step, "rollout");
     await closedOnly("a click on another block with a saved comment open");
-    // a drag that starts while a popover is open closes it and opens its own selection's comment at once
+    // a drag that starts while a popover is open closes it and offers Comment for the selection
     await clickWord(page, partOf(page, INTRO), "Intro");
     await fieldFocused(page);
     await dragSelect(page, step, "Step", "rollout");
@@ -671,7 +749,7 @@ const cases: Record<string, Case> = {
     assert.ok((await highlightText(page)).includes("Step 3 of the rollout"), "the drag's new comment is on its selection");
     await page.keyboard.press("Escape");
     await popoverOf(page).waitFor({ state: "detached" });
-    console.log("PASS block-click: with a popover open (new or saved), a click on another block only closes it, nothing opens, and the next click opens a comment; a drag closes it and opens its selection's comment at once; a press on a pin switches to its comment");
+    console.log("PASS block-click: with a popover open (new or saved), a click on another block only closes it, nothing opens, and the next click opens a comment; a drag closes it and Comment opens its selection's editor; a press on a pin switches to its comment");
     assert.deepEqual(errors, []);
     await close();
   },
@@ -756,7 +834,8 @@ const cases: Record<string, Case> = {
     assert.equal(await fieldOf(page).inputValue(), "Not lost");
     assert.ok(await focusedMatches(page, ".comment-popover textarea"), "and puts the focus back in its field");
     // another block clicked: the open one keeps its place, and the focus goes back to its field
-    await clickWord(page, partOf(page, "A longer paragraph"), "several");
+    // The visible dictation setup note makes the editor taller; choose a block it does not cover.
+    await clickWord(page, partOf(page, "Checksum"), "Checksum");
     await fieldFocused(page);
     assert.equal(await fieldOf(page).inputValue(), "Not lost");
     assert.equal(await pinsOf(page).count(), 0);
@@ -822,15 +901,16 @@ const cases: Record<string, Case> = {
     await page.mouse.up({ clickCount: 2 });
     await eventually("the popover the first click opened to close", async () => (await popoverOf(page).count()) === 0 && (await pendingPinOf(page).count()) === 0);
     assert.equal(await selected(), "several", "the word is selected");
-    // the word it selected is no mouse's drag: it is there to copy, and nothing opens for it, no Comment button either
+    // the selected word remains available to copy; Comment is offered without opening an editor
     await frames(page, 10);
     assert.equal(await popoverOf(page).count(), 0, "a double click's word selection opens no comment");
     assert.equal(await pendingPinOf(page).count(), 0);
-    await assertNoButton(page, "a double click's word selection");
+    await assertSelectionButton(page, "a double click's word selection");
     assert.equal(await selected(), "several", "the word stays selected");
-    console.log("PASS double-click: a double click opens a new comment with its first click, then selects a word and leaves no popover; the word selection opens nothing, no Comment button");
+    await dismissSelection(page, true);
+    console.log("PASS double-click: the first click opens a comment, the second selects a word and offers Comment without an editor; Escape dismisses the action");
 
-    // a triple click selects the paragraph, to copy: nothing opens, nothing shows
+    // a triple click selects the paragraph for copying and offers Comment without an editor
     await page.evaluate(() => window.getSelection()?.removeAllRanges());
     const intro = await wordPoint(partOf(page, INTRO), "about");
     await page.mouse.move(intro.x, intro.y);
@@ -842,8 +922,9 @@ const cases: Record<string, Case> = {
     assert.equal(await selected(), INTRO, "the paragraph is selected");
     assert.equal(await popoverOf(page).count(), 0, "a triple click opens no comment");
     assert.equal(await pendingPinOf(page).count(), 0);
-    await assertNoButton(page, "a triple click's selection");
-    console.log("PASS double-click: a triple click selects the paragraph to copy; nothing opens and no Comment button shows");
+    await assertSelectionButton(page, "a triple click's selection");
+    await dismissSelection(page);
+    console.log("PASS double-click: a triple click selects the paragraph to copy and offers Comment; clearing selection dismisses it");
 
     // a double click inside an open untouched popover (a word typed in its field) selects that word, and the popover stays
     await page.evaluate(() => window.getSelection()?.removeAllRanges());
@@ -1140,6 +1221,7 @@ const cases: Record<string, Case> = {
     const sheet = await dialogOf(page).evaluate((node) => ({ bottom: node.getBoundingClientRect().bottom, height: window.innerHeight }));
     assert.ok(Math.abs(sheet.bottom - sheet.height) <= 2, `the sheet sits at the bottom of the viewport (${sheet.bottom} of ${sheet.height})`);
     await fieldFocused(page);
+    assert.ok(await dialogOf(page).getByRole("button", { name: "Start dictation", exact: true }).isVisible(), "the mobile comment microphone is shown by default, even when unavailable");
     await fieldOf(page).fill("Phone note");
     await dialogOf(page).getByRole("button", { name: "Save comment", exact: true }).tap();
     await dialogOf(page).waitFor({ state: "detached" });
@@ -1189,14 +1271,18 @@ const cases: Record<string, Case> = {
     assert.equal(await pendingPinOf(page).count(), 0);
     console.log("PASS phone: a tap on the scrim closes an untouched sheet and opens none on the block under it");
 
-    // a touch selection (a long press and its handles) opens nothing, and there is no Comment button for it: a tap on a
-    // block is the way to comment on a phone
+    // a touch selection (a long press and its handles) offers Comment without opening the sheet
     await select(partOf(page, "Checksum"), "Checksum", { firstLine: true });
     await frames(page, 10);
     assert.equal(await popoverOf(page).count(), 0, "a touch selection opens nothing");
-    await assertNoButton(page, "a touch selection");
-    await page.evaluate(() => window.getSelection()?.removeAllRanges());
-    console.log("PASS phone: a touch selection opens nothing, and no Comment button shows");
+    await assertSelectionButton(page, "a touch selection");
+    if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "comment-quick-action-phone.png") });
+    await selectionButtonOf(page).tap();
+    await dialogOf(page).waitFor();
+    await fieldFocused(page);
+    await closeOf(page).tap();
+    await dialogOf(page).waitFor({ state: "detached" });
+    console.log("PASS phone: a touch selection preserves copy and focus until Comment is tapped to open its sheet");
 
     // a tap at the end of a first line that reaches the column's right edge: its pin is kept inside the view, hit area and all
     const lineEnd = await partOf(page, "Checksum").evaluate((node) => {
@@ -1292,11 +1378,13 @@ const cases: Record<string, Case> = {
     assert.deepEqual(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("herdr-web-ui:block-comments:"))), [], "no comment is stored, the unsaved one not either");
     await select(partOf(page, INTRO), "paragraph", { to: "state" });
     await frames(page);
-    assert.equal(await page.locator(".comment-selection").count(), 0, "a selection has no Comment button");
+    await assertNoButton(page, "a selection with comments off");
     await page.evaluate(() => window.getSelection()?.removeAllRanges());
-    await dragSelect(page, partOf(page, INTRO), "paragraph", "state");
+    await dragSelect(page, partOf(page, INTRO), "paragraph", "state", false);
     await frames(page, 10);
-    assert.equal(await popoverOf(page).count(), 0, "a mouse's drag opens nothing");
+    await assertNoButton(page, "a drag with comments off");
+    assert.equal(await popoverOf(page).count(), 0, "a mouse's drag with comments off opens nothing");
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
     await clickWord(page, partOf(page, "A longer paragraph"), "several");
     await frames(page);
     assert.equal(await popoverOf(page).count(), 0, "a click on a block opens nothing");

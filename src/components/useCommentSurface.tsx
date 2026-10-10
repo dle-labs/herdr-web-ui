@@ -1,7 +1,7 @@
 /**
  * A comment surface's whole comment wiring, for the chat (ChatView.tsx) and the file viewer (FileComments.tsx): its one
  * popover (`useCommentPopover`), opened by a pin, by a click or tap on a block or line (`useCommentClick`) or by a
- * mouse's drag over text (`useSelectionComment`); the pin layer with that popover (CommentPins.tsx, CommentPopover.tsx);
+ * selection's explicit Comment quick action (`useSelectionComment`); the pin layer with that popover (CommentPins.tsx, CommentPopover.tsx);
  * the new comment's pending highlight; and where the focus goes as the popover closes. The host says only what differs
  * between surfaces, in its own terms (`T`, what a comment is on): what a click or a selection comments on, the comment
  * already there, the pins, what the popover quotes.
@@ -20,6 +20,9 @@
  *   host that re-renders often (the chat, on every conversation poll while an agent streams) does not redraw it.
  */
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+
+import { useT } from "../lib/i18n.ts";
+import "./SelectionComment.css";
 
 import { PENDING_COMMENT_ID } from "../lib/commentHighlight.ts";
 import { firstPin, focusOpenField, pinAnchors, pinByAnchor } from "../lib/commentDom.ts";
@@ -109,6 +112,7 @@ export function useCommentSurface<T extends { point?: CommentPoint }, S>(options
   open: OpenComment<T> | null;
   escape: () => boolean;
 } {
+  const t = useT();
   const { surface, enabled, active = true, persist, comments } = options;
   // the host's callbacks may be new functions on every render: read when they are used
   const latest = useRef(options);
@@ -128,7 +132,7 @@ export function useCommentSurface<T extends { point?: CommentPoint }, S>(options
   };
 
   const takes = enabled && active;
-  useSelectionComment({
+  const selectionComment = useSelectionComment({
     view: surface,
     enabled: takes,
     measure: (selection, view) => latest.current.selection.measure(selection, view),
@@ -205,6 +209,7 @@ export function useCommentSurface<T extends { point?: CommentPoint }, S>(options
   }, [open, surface, text, save, remove, close, options.connected, options.owner, active]);
 
   const escape = (): boolean => {
+    if (selectionComment.action !== null) { selectionComment.dismiss(); return true; }
     const outcome = popoverEscape(open, text.read());
     if (outcome === "close") close();
     else if (outcome === "keep") focusOpenField(surface.current);
@@ -215,7 +220,15 @@ export function useCommentSurface<T extends { point?: CommentPoint }, S>(options
   // taking them (the file viewer moved on to another file or view) shows as a dialog, with what was typed
   const openId = open === null ? null : open.commentId ?? PENDING_COMMENT_ID;
   const overlay = enabled && (active || open !== null)
-    ? <CommentPins surface={surface} comments={comments} openId={openId} pendingPoint={pending?.target.point} popover={popover} onPin={onPin} />
+    ? <>
+      <CommentPins surface={surface} comments={comments} openId={openId} pendingPoint={pending?.target.point} popover={popover} onPin={onPin} />
+      {selectionComment.action !== null && <button type="button" className="btn comment-selection"
+        style={{ left: selectionComment.action.left, top: selectionComment.action.top }}
+        onPointerDown={(event) => event.preventDefault()}
+        onClick={(event) => { event.stopPropagation(); selectionComment.activate(); }}>
+        {t("Comment")}
+      </button>}
+    </>
     : null;
   return {
     surfaceProps: {

@@ -22,7 +22,7 @@ export interface TerminalInputProps {
 const MAX_ROWS = 4;
 
 /**
- * The terminal's input line on a touch screen. A phone's keyboard rewrites what it typed
+ * The terminal's draft input line, including dictation on desktop. A phone's keyboard rewrites what it typed
  * (dictation revising a phrase, an IME finishing a syllable, autocorrect), and a terminal
  * cannot take back keys it already sent: every revision arrived as more text. Here the line
  * is written with the keyboard's own editing and goes to the pane whole, then Enter.
@@ -62,8 +62,14 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
     onNote: setNote,
   });
 
+  const sendRef = useRef<() => void>(() => {});
   const send = useCallback(() => {
     if (!connected || terminalDraftSending(owner) || composing.current) return;
+    if (dictation.voice.state === "recording") {
+      dictation.finishAndSubmit(() => { if (textRef.current.trim()) sendRef.current(); });
+      return;
+    }
+    if (dictation.voice.state !== "idle") return;
     dictation.cancel();
     setNote(null);
     if (text.length === 0) {
@@ -79,7 +85,9 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
         acknowledgeTerminalDraft(owner);
       } else setNote(result);
     }).catch(() => setNote(t("Not confirmed. Check the terminal before sending again."))).finally(() => { setTerminalDraftSending(owner, false); });
-  }, [connected, dictation.cancel, onEnter, onSend, owner, setText, t, text]);
+  }, [connected, dictation.cancel, dictation.finishAndSubmit, dictation.voice.state, onEnter, onSend, owner, setText, t, text]);
+  sendRef.current = send;
+  const enterOnly = text.length === 0 && dictation.voice.state !== "recording";
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     // Enter sends; Shift+Enter breaks the line; an IME keeps its Enter, including the committing
@@ -125,14 +133,14 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
       <button
         type="button"
         className="terminal-input-send"
-        aria-label={t(text.length === 0 ? "Press Enter in the terminal" : "Send to the terminal")}
-        title={t(text.length === 0 ? "Press Enter in the terminal" : "Send to the terminal")}
-        disabled={!connected || sending}
+        aria-label={t(enterOnly ? "Press Enter in the terminal" : "Send to the terminal")}
+        title={t(enterOnly ? "Press Enter in the terminal" : "Send to the terminal")}
+        disabled={!connected || sending || dictation.voice.state === "starting" || dictation.voice.state === "transcribing"}
         // the soft keyboard stays up for the next line
         onPointerDown={(event) => event.preventDefault()}
         onClick={send}
       >
-        {text.length === 0 ? <CornerDownLeft aria-hidden="true" /> : <SendHorizontal aria-hidden="true" />}
+        {enterOnly ? <CornerDownLeft aria-hidden="true" /> : <SendHorizontal aria-hidden="true" />}
       </button>
       {note !== null && <p className="terminal-input-note" role="alert">{note}</p>}
       {dictation.shown && <VoiceRecordingPill dictation={dictation} align="end" />}

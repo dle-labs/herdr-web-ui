@@ -1,45 +1,35 @@
 import { useEffect, useState } from "react";
-import type { DictationConfigResponse } from "../../shared/protocol.ts";
+import { DICTATION_DEFAULT_MODEL, type DictationConfigResponse, type DictationErrorCode } from "../../shared/dictation.ts";
 
-export type DictationConfig = { baseUrl: string; model: string; activated: boolean };
+export type DictationConfig = { version: 2; model: string; activated: boolean; mode: "recording" | "live" };
 export type DictationPolicy = DictationConfigResponse;
 export const DEFAULT_DICTATION_CONFIG: DictationConfig = {
-  baseUrl: "https://stt.intra.dle.dev/v1", model: "distil-whisper/distil-large-v3.5-ct2", activated: false,
+  version: 2, model: DICTATION_DEFAULT_MODEL, activated: false, mode: "recording",
 };
-export const DICTATION_MAX_BYTES = 10 * 1024 * 1024;
-export type DictationTransportCode = "not_configured" | "network" | "provider" | "missing_model" | "timeout" | "format" | "too_large" | "no_speech";
+export { DICTATION_MAX_BYTES } from "../../shared/dictation.ts";
+import { DICTATION_MAX_BYTES } from "../../shared/dictation.ts";
+export type DictationTransportCode = DictationErrorCode;
 export class DictationTransportError extends Error {
   constructor(readonly code: DictationTransportCode) { super(code); }
 }
-export function normalizeDictationBase(value: string): string | null {
-  try {
-    const raw = value.trim();
-    if (!/^https:\/\//i.test(raw) || /[\\\s]/.test(raw) || raw.includes("?") || raw.includes("#")) return null;
-    const url = new URL(raw);
-    if (raw.slice(raw.indexOf("://") + 3).split("/")[0]?.includes("@")) return null;
-    if (url.protocol !== "https:" || !url.hostname || url.username || url.password) return null;
-    let path = url.pathname.replace(/\/+$/, "");
-    if (!path.endsWith("/v1")) path += "/v1";
-    url.pathname = path;
-    return url.href;
-  } catch { return null; }
+export function validDictationModel(model: unknown): model is string {
+  return typeof model === "string" && model.length > 0 && model.length <= 512 && /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(model) && !model.split("/").includes("..");
 }
 export function configAllowed(config: DictationConfig, policy: DictationPolicy | null): boolean {
-  const base = normalizeDictationBase(config.baseUrl);
-  return !!(config.activated && base && config.model.trim() && config.model.length <= 512 && policy?.enabled && policy.allowed_origins.includes(new URL(base).origin));
+  return !!(config.version === 2 && config.activated && validDictationModel(config.model) && policy?.version === 2 && policy.enabled && policy.modes.includes(config.mode));
 }
 
 /** Bound the entire request, including streamed bodies. Never retain service error text. */
 async function jsonRequest(url: string, init: RequestInit, signal: AbortSignal, timeoutMs = 60_000): Promise<unknown> {
   const controller = new AbortController();
   let timedOut = false;
-  const abort = () => controller.abort();
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const abort = () => { controller.abort(); void reader?.cancel().catch(() => undefined); };
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
   const timer = setTimeout(() => { timedOut = true; abort(); }, timeoutMs);
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
-    const response = await fetch(url, { ...init, credentials: url === "/api/dictation/config" ? "same-origin" : "omit", redirect: "error", referrerPolicy: "no-referrer", signal: controller.signal });
+    const response = await fetch(url, { ...init, credentials: "same-origin", redirect: "error", referrerPolicy: "no-referrer", signal: controller.signal });
     controller.signal.throwIfAborted();
     if (!response.body) throw new DictationTransportError("format");
     reader = response.body.getReader();
@@ -54,7 +44,11 @@ async function jsonRequest(url: string, init: RequestInit, signal: AbortSignal, 
       text += decoder.decode(part.value, { stream: true });
     }
     text += decoder.decode();
-    if (!response.ok) throw new DictationTransportError(response.status === 404 ? "missing_model" : response.status === 413 ? "too_large" : "provider");
+    if (!response.ok) {
+      let code: unknown;
+      try { code = JSON.parse(text)?.error?.code; } catch { /* sanitized below */ }
+      throw new DictationTransportError(isDictationErrorCode(code) ? code : "provider");
+    }
     try { return JSON.parse(text); } catch { throw new DictationTransportError("format"); }
   } catch (error) {
     if (timedOut) throw new DictationTransportError("timeout");
@@ -69,7 +63,7 @@ async function jsonRequest(url: string, init: RequestInit, signal: AbortSignal, 
   }
 }
 
-// Page-lifetime immutable policy matches the page's CSP. Failed reads may be tried on a new mount.
+// Page-lifetime policy. Failure requires an explicit page reload, never an audio retry.
 let policyRequest: Promise<DictationPolicy | null> | null = null;
 export function loadDictationPolicy(): Promise<DictationPolicy | null> {
   if (!policyRequest) {
@@ -77,11 +71,10 @@ export function loadDictationPolicy(): Promise<DictationPolicy | null> {
       .then((body): DictationPolicy | null => {
         if (!body || typeof body !== "object") return null;
         const data = body as DictationPolicy;
-        if (typeof data.enabled !== "boolean" || !Array.isArray(data.allowed_origins) || !data.allowed_origins.every((origin) => typeof origin === "string" && normalizeDictationBase(origin) === `${origin}/v1` && new URL(origin).origin === origin)) return null;
-        return { enabled: data.enabled, allowed_origins: [...data.allowed_origins] };
+        if (data.version !== 2 || typeof data.enabled !== "boolean" || typeof data.generation !== "string" || !data.generation || data.generation.length > 512 || !validDictationModel(data.default_model) || !Array.isArray(data.modes) || !data.modes.every((mode) => mode === "recording" || mode === "live") || !Number.isFinite(data.max_seconds) || data.max_seconds <= 0 || data.max_seconds > 120 || !Number.isFinite(data.max_bytes) || data.max_bytes <= 0 || data.max_bytes > DICTATION_MAX_BYTES) return null;
+        return { ...data, modes: [...data.modes] };
       }).catch(() => null);
     policyRequest = request;
-    void request.then((policy) => { if (!policy && policyRequest === request) policyRequest = null; });
   }
   return policyRequest;
 }
@@ -94,27 +87,27 @@ export function useDictationPolicy(): DictationPolicy | null {
   }, []);
   return policy;
 }
-async function permittedBase(config: DictationConfig, signal: AbortSignal): Promise<string> {
+export async function permittedDictationPolicy(config: DictationConfig, signal: AbortSignal): Promise<DictationPolicy> {
   if (!config.activated) throw new DictationTransportError("not_configured");
   const policy = await loadDictationPolicy();
   signal.throwIfAborted();
   if (!configAllowed(config, policy)) throw new DictationTransportError("not_configured");
-  return normalizeDictationBase(config.baseUrl)!;
+  return policy!;
 }
 export async function discoverDictationModels(config: DictationConfig, signal: AbortSignal): Promise<string[]> {
-  const base = await permittedBase(config, signal);
-  const body = await jsonRequest(`${base}/models`, { method: "GET" }, signal, 15_000);
+  await permittedDictationPolicy(config, signal);
+  const body = await jsonRequest("/api/dictation/models", { method: "GET" }, signal, 15_000);
   signal.throwIfAborted();
-  const data = (body as { data?: unknown } | null)?.data;
-  if (!Array.isArray(data) || data.length > 2000 || !data.every((entry) => entry && typeof entry.id === "string" && entry.id.length <= 512)) throw new DictationTransportError("format");
-  return [...new Set(data.map((entry: { id: string }) => entry.id))];
+  const data = (body as { models?: unknown } | null)?.models;
+  if (!Array.isArray(data) || data.length > 2000 || !data.every(validDictationModel)) throw new DictationTransportError("format");
+  return [...new Set(data as string[])];
 }
 export function recorderExtension(mime: string): string | null {
   const type = mime.split(";")[0]?.trim().toLowerCase();
   return type === "audio/webm" ? "webm" : type === "audio/mp4" ? "m4a" : type === "audio/ogg" ? "ogg" : null;
 }
 export async function transcribeDictation(config: DictationConfig, blob: Blob, signal: AbortSignal): Promise<string> {
-  const base = await permittedBase(config, signal);
+  const policy = await permittedDictationPolicy(config, signal);
   if (blob.size > DICTATION_MAX_BYTES) throw new DictationTransportError("too_large");
   if (!blob.size) throw new DictationTransportError("no_speech");
   const extension = recorderExtension(blob.type);
@@ -122,12 +115,15 @@ export async function transcribeDictation(config: DictationConfig, blob: Blob, s
   const form = new FormData();
   form.append("file", blob, `dictation.${extension}`);
   form.append("model", config.model);
-  form.append("language", "en");
-  form.append("response_format", "json");
-  const body = await jsonRequest(`${base}/audio/transcriptions`, { method: "POST", body: form }, signal);
+  form.append("generation", policy.generation);
+  const body = await jsonRequest("/api/dictation/transcribe", { method: "POST", body: form }, signal);
   signal.throwIfAborted();
   if (!body || typeof (body as { text?: unknown }).text !== "string") throw new DictationTransportError("format");
   const text = (body as { text: string }).text.trim();
   if (!text) throw new DictationTransportError("no_speech");
   return text;
+}
+
+export function isDictationErrorCode(code: unknown): code is DictationTransportCode {
+  return typeof code === "string" && ["not_configured", "network", "provider", "missing_model", "timeout", "format", "too_large", "no_speech", "busy"].includes(code);
 }

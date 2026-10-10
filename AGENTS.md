@@ -7,7 +7,15 @@ Browser UI for the herdr terminal multiplexer: a React 18 + xterm.js client (`sr
 - This file, `server/AGENTS.md`, `src/AGENTS.md`, `scripts/AGENTS.md` and `shared/AGENTS.md` are committed and apply to every agent working on the project, forks included. A PR is checked against them together with `CONTRIBUTING.md`, `.github/REVIEW.md`, `docs/development.md` and `DESIGN.md`.
 - They hold only what the code and those documents do not show. Commands, layout, environment variables and release steps are in `docs/development.md` and `package.json`; do not copy them here.
 - Read `server/AGENTS.md` before editing `server/` and `src/AGENTS.md` before editing `src/`; likewise `scripts/AGENTS.md` for `scripts/` and `shared/AGENTS.md` for `shared/`.
-- "Maintainer workflow" applies only to the maintainer. Everyone else follows `CONTRIBUTING.md` for branches, PRs and the changelog.
+- "Maintainer workflow" applies only to the maintainer. Everyone else follows `CONTRIBUTING.md` for PRs and the changelog; the branch workflow below overrides its branch-creation guidance for this fork.
+
+## Branch workflow for this fork
+
+- Do all future work and push task-related commits on `next` (`origin/next`), not `main` or a new task branch, unless the user explicitly approves a different branch.
+- NEVER check out/switch branches or create a branch without asking the user first and receiving approval. This includes branches or worktrees created by delegated agents and tools.
+- Check the current branch before editing. If it is not `next`, stop and ask the user for permission to switch; do not switch automatically.
+- Pushes to `next` do not require a PR. The PR and merge requirements for `main` remain unchanged.
+- Preserve unrelated user changes; commit and push only files belonging to the requested task.
 
 ## Bridge invariants
 

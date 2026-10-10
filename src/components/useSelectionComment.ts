@@ -1,78 +1,123 @@
-/**
- * Text a mouse drags over on a comment surface (the chat's final replies, the file viewer) opens its comment as the
- * mouse lets go, as in Claude: there is no Comment button. The surface says what a selection makes (`measure`) and what
- * opening it does (`onComment`); this only follows the mouse.
- *
- * A drag is a press of the mouse's primary button that is one click (`mousedown`'s `detail` is 1: a double or triple
- * click selects a word or a line by itself, to copy it) and moves at least `DRAG_MIN_PX` before it lets go
- * (`isCommentDrag`). A selection
- * made otherwise (the keyboard, a touch screen's handles, a double or triple click) opens nothing: a click or a tap on a
- * block or line comments on all of it (`useCommentClick`), and that is the way on a touch screen. A selection inside a
- * comment's field is none: the popover is in the view, but its text is not the surface's. A drag that starts while a
- * popover is open closes it with its press and opens the new selection's comment as it lets go: selecting text is
- * asking for a comment on it. (A plain click outside an open popover only closes it, `useCommentClick`.) Where the
- * open one kept its typed text instead, its field holds the focus, and the drag opens nothing.
- */
-import { useEffect, useRef, type RefObject } from "react";
+/** Text selection offers a quick action; only explicit activation opens the comment editor. */
+import { useEffect, useRef, useState, type RefObject } from "react";
 
-import { isCommentDrag } from "../lib/commentClick.ts";
+import { isCommentUi } from "../lib/commentDom.ts";
 
-/**
- * Opens the comment on the text a mouse's drag selected in `view` (what `measure` finds in it, a frame after the
- * release, once the browser has settled the selection), at the client point it let go at: there the new comment's pin
- * goes. Only while `enabled` (comments are on and the surface takes them).
- */
 export function useSelectionComment<T>({ view, enabled, measure, onComment }: {
   view: RefObject<HTMLElement>;
   enabled: boolean;
   measure: (selection: Selection | null, view: Element) => T | null;
-  /** opens the comment on `found`, its pin at `at` (client pixels), where the drag let go */
   onComment: (found: T, at: { x: number; y: number }) => void;
-}): void {
-  // read when the mouse lets go: a surface's measure may be a new function every render
-  const measureRef = useRef(measure);
-  measureRef.current = measure;
-  const onCommentRef = useRef(onComment);
-  onCommentRef.current = onComment;
+}): {
+  action: { at: { x: number; y: number }; left: number; top: number } | null;
+  activate: () => void;
+  dismiss: () => void;
+} {
+  const latest = useRef({ measure, onComment });
+  latest.current = { measure, onComment };
+  const [action, setAction] = useState<{ at: { x: number; y: number }; left: number; top: number } | null>(null);
+  const actionRef = useRef(action);
+  actionRef.current = action;
+  const dismiss = (): void => { actionRef.current = null; setAction(null); };
 
   useEffect(() => {
+    setAction(null);
     if (!enabled) return;
     let frame = 0;
-    // where the mouse's primary button went down, and its click count (`mousedown`'s detail: a pointer event has none)
-    let down: { x: number; y: number; clicks: number } | null = null;
-    const onPointerDown = (event: PointerEvent): void => {
+    let pressing = false;
+    let startedHere = false;
+    let release: { x: number; y: number } | null = null;
+    const clear = (): void => {
       window.cancelAnimationFrame(frame);
       frame = 0;
-      down = event.pointerType === "mouse" && event.button === 0 ? { x: event.clientX, y: event.clientY, clicks: 0 } : null;
+      actionRef.current = null;
+      setAction(null);
     };
-    const onMouseDown = (event: MouseEvent): void => { if (down !== null && event.button === 0) down.clicks = event.detail; };
-    const onPointerUp = (event: PointerEvent): void => {
-      const from = down;
-      down = null;
-      const at = { x: event.clientX, y: event.clientY };
-      if (from === null || !isCommentDrag(event.pointerType, from.clicks, from, at)) return;
+    const update = (): void => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         frame = 0;
+        if (pressing) return;
         const node = view.current;
+        const selection = window.getSelection();
         const field = document.activeElement;
-        // a comment being written in the view: its field holds the focus, and a drag elsewhere makes no other one
-        if (node === null || (field instanceof HTMLTextAreaElement && node.contains(field))) return;
-        const found = measureRef.current(window.getSelection(), node);
-        if (found !== null) onCommentRef.current(found, at);
+        const dialog = field?.closest("[aria-modal='true'], dialog[open]");
+        if (!node || !selection || selection.isCollapsed || !selection.rangeCount
+          || (dialog && !dialog.contains(node))
+          || (field instanceof HTMLTextAreaElement && node.contains(field))) { clear(); return; }
+        const found = latest.current.measure(selection, node);
+        if (found === null) { clear(); return; }
+        const rects = selection.getRangeAt(0).getClientRects();
+        const rect = rects[rects.length - 1];
+        if (!rect) { clear(); return; }
+        const at = release ?? { x: rect.right, y: rect.bottom };
+        setAction({ at,
+          left: Math.max(8, Math.min(at.x, window.innerWidth - 112)),
+          top: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 48)),
+        });
       });
     };
-    const onPointerCancel = (): void => { down = null; };
+    const onPointerDown = (event: PointerEvent): void => {
+      if (isCommentUi(event.target)) return;
+      pressing = true;
+      startedHere = event.target instanceof Node && !!view.current?.contains(event.target);
+      release = null;
+      clear();
+    };
+    const onPointerUp = (event: PointerEvent): void => {
+      if (isCommentUi(event.target)) return;
+      pressing = false;
+      if (!startedHere) return;
+      startedHere = false;
+      release = event.pointerType === "mouse" ? { x: event.clientX, y: event.clientY } : null;
+      update();
+    };
+    const onPointerCancel = (): void => { pressing = false; clear(); };
+    const onSelectionChange = (): void => { release = null; update(); };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+      // Own this Escape before the file viewer's bubbling listener can close the viewer.
+      if (actionRef.current !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      clear();
+    };
+    const onFocus = (event: FocusEvent): void => {
+      if (event.target instanceof Node && !view.current?.contains(event.target)) clear();
+    };
     document.addEventListener("pointerdown", onPointerDown, true);
-    document.addEventListener("mousedown", onMouseDown, true);
     document.addEventListener("pointerup", onPointerUp, true);
     document.addEventListener("pointercancel", onPointerCancel, true);
+    document.addEventListener("selectionchange", onSelectionChange);
+    document.addEventListener("focusin", onFocus);
+    document.addEventListener("keydown", onKeyDown, true);
+    document.addEventListener("scroll", clear, true);
+    window.addEventListener("resize", clear);
+    window.addEventListener("blur", clear);
     return () => {
       window.cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("mousedown", onMouseDown, true);
       document.removeEventListener("pointerup", onPointerUp, true);
       document.removeEventListener("pointercancel", onPointerCancel, true);
+      document.removeEventListener("selectionchange", onSelectionChange);
+      document.removeEventListener("focusin", onFocus);
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("scroll", clear, true);
+      window.removeEventListener("resize", clear);
+      window.removeEventListener("blur", clear);
     };
   }, [view, enabled]);
+
+  return {
+    action: enabled ? action : null,
+    activate: () => {
+      const node = view.current;
+      // Revalidate before activation: a changed selection must never comment on stale text.
+      const found = node && latest.current.measure(window.getSelection(), node);
+      if (enabled && action && found != null) latest.current.onComment(found, action.at);
+      dismiss();
+    },
+    dismiss,
+  };
 }

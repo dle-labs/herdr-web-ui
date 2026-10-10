@@ -1,3 +1,4 @@
+import { prepareLiveDictation, type LiveDictation } from "./dictationStream.ts";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { configAllowed, DICTATION_MAX_BYTES, DictationTransportError, recorderExtension, transcribeDictation, useDictationPolicy, type DictationConfig, type DictationTransportCode } from "./voiceTransport.ts";
 
@@ -8,7 +9,7 @@ export interface VoiceText { text: string; take: number; phase: "raw" }
 export interface VoiceInputOptions { enabled: boolean; config: DictationConfig; onText(result: VoiceText): void; onPartial?(text: string): void }
 export interface VoiceInput {
   available: boolean; unavailableReason: VoiceUnavailable | null; state: VoiceState;
-  elapsedMs: number; silent: boolean; error: VoiceError | null;
+  elapsedMs: number; silent: boolean; error: VoiceError | null; preview: string;
   press(): void; release(): void; finish(): void; cancel(): void;
   bindBars(el: HTMLElement | null): void; bindRing(el: HTMLElement | null): void; bindMeter(el: HTMLElement | null): void;
 }
@@ -23,11 +24,16 @@ export function smoothLevel(previous: number, target: number, dtMs: number): num
   return previous + (target - previous) * (1 - Math.exp(-Math.max(0, dtMs) / (target > previous ? 60 : 250)));
 }
 export function levelFromRms(rms: number): number { return rms > 0 ? Math.min(1, Math.max(0, (20 * Math.log10(rms) + 60) / 50)) : 0; }
-export function barScales(level: number, timeMs: number): number[] {
+export function barScales(level: number, timeMs: number, count = 7): number[] {
   const amount = Number.isFinite(level) ? Math.min(1, Math.max(0, level)) : 0;
-  return [0.45, 0.65, 0.85, 1, 0.85, 0.65, 0.45].map((weight, index) => {
-    const base = 0.12 + 0.08 * weight * (0.5 + 0.5 * Math.sin(timeMs / 600));
-    return Math.min(1, base + (1 - base) * amount * weight * (0.7 + 0.3 * (0.5 + 0.5 * Math.sin(timeMs / 110 + index * 1.9))));
+  const pulse = 0.85 + 0.15 * Math.sin(timeMs / 110);
+  return Array.from({ length: count }, (_, index) => {
+    // One envelope spans the entire surface, regardless of its bar count.
+    const position = count > 1 ? index / (count - 1) : 0.5;
+    const weight = 0.45 + 0.55 * Math.sin(position * Math.PI);
+    // Silence is stationary: motion must come from captured audio, not an idle pulse.
+    const base = 0.12;
+    return Math.min(1, base + (1 - base) * amount * weight * pulse);
   });
 }
 export function insertAtCaret(value: string, selectionStart: number, selectionEnd: number, text: string): { value: string; start: number; end: number } {
@@ -60,8 +66,10 @@ export interface VoiceEngineIO {
   setError(error: VoiceError | null): void;
   setElapsed(ms: number): void;
   setSilent(silent: boolean): void;
+  setPreview?(text: string): void;
 }
 export interface VoiceEngineDependencies {
+  prepareLive?(): LiveDictation;
   permission(): Promise<MediaStream>;
   recorder(stream: MediaStream, mime: string): MediaRecorder;
   mime(): { mimeType: string; extension: string } | null;
@@ -74,6 +82,7 @@ export interface VoiceEngineDependencies {
 }
 function browserDependencies(): VoiceEngineDependencies {
   return {
+    prepareLive: prepareLiveDictation,
     permission: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }),
     recorder: (stream, mimeType) => new MediaRecorder(stream, { mimeType }),
     mime: () => typeof MediaRecorder === "undefined" ? null : pickRecorderMime((type) => MediaRecorder.isTypeSupported(type)),
@@ -87,7 +96,7 @@ interface Take {
   id: number; config: DictationConfig; onText: VoiceInputOptions["onText"];
   controller: AbortController; stream: MediaStream | null; recorder: MediaRecorder | null;
   chunks: Blob[]; bytes: number; timers: Set<ReturnType<typeof setTimeout>>;
-  unlock?: () => void; stopMeter?: () => void;
+  unlock?: () => void; stopMeter?: () => void; live?: LiveDictation; onPartial?: (text: string) => void;
 }
 /** One tab-wide owner, including unresolved permission and completed-file inference. */
 export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependencies = browserDependencies()) {
@@ -103,11 +112,13 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
   };
   function dispose(current: Take): void {
     current.controller.abort();
+    current.live?.cancel(); current.live = undefined;
+    io.setPreview?.("");
     for (const timer of current.timers) deps.clearTimer(timer);
     current.timers.clear();
     const recorder = current.recorder;
     if (recorder) {
-      recorder.ondataavailable = recorder.onstop = recorder.onerror = null;
+      recorder.ondataavailable = recorder.onstop = recorder.onerror = recorder.onstart = null;
       try { if (recorder.state !== "inactive") recorder.stop(); } catch { /* already stopped */ }
     }
     stopTracks(current);
@@ -118,7 +129,7 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
   }
   function cancel(): void {
     if (take) dispose(take);
-    setPhase("idle"); io.setSilent(false);
+    io.setPreview?.(""); setPhase("idle"); io.setSilent(false);
   }
   function fail(current: Take, code: VoiceError): void {
     if (!valid(current)) return;
@@ -145,7 +156,11 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
         level = smoothLevel(level, levelFromRms(rms), now - last); last = now;
         if (rms >= 0.003) loud = now;
         io.setSilent(now - loud >= 3000);
-        bars?.querySelectorAll<HTMLElement>("[data-voice-bar]").forEach((bar, index) => { bar.style.transform = `scaleY(${barScales(level, now)[index % 7]})`; });
+        const barElements = bars?.querySelectorAll<HTMLElement>("[data-voice-bar]");
+        if (barElements) {
+          const scales = barScales(level, now, barElements.length);
+          barElements.forEach((bar, index) => { bar.style.transform = `scaleY(${scales[index]})`; });
+        }
         if (ring) ring.style.transform = `scale(${1 + level * 0.35})`;
         if (meter) meter.style.transform = `scaleX(${level})`;
         schedule(current, frame, 50);
@@ -180,6 +195,16 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
     setPhase("transcribing");
     for (const timer of current.timers) deps.clearTimer(timer);
     current.timers.clear();
+    if (current.live) {
+      stopTracks(current);
+      schedule(current, () => fail(current, "timeout"), 65_000);
+      void current.live.finish().then((text) => {
+        if (!valid(current)) return;
+        const result: VoiceText = { text, take: current.id, phase: "raw" };
+        dispose(current); setPhase("idle"); current.onText(result);
+      }).catch((error) => { if (valid(current)) fail(current, error instanceof DictationTransportError ? error.code : "network"); });
+      return;
+    }
     current.recorder!.onstop = () => { if (valid(current)) void deliver(current); };
     // Tracks close synchronously, not after a delayed recorder stop event.
     stopTracks(current);
@@ -194,6 +219,20 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
       current.timers.clear();
       current.stream = stream;
       stream.getTracks().forEach((track) => { track.onended = () => { if (valid(current)) cancel(); }; });
+      if (current.live) {
+        schedule(current, () => fail(current, "timeout"), 30_000);
+        await current.live.start(current.config, stream, current.controller.signal, (text) => {
+          if (!valid(current)) return;
+          io.setPreview?.(text); current.onPartial?.(text);
+        }, (error) => {
+          if (!valid(current)) return;
+          if (error instanceof DOMException && error.name === "AbortError") cancel();
+          else fail(current, error instanceof DictationTransportError ? error.code : "network");
+        }, () => { if (valid(current)) finish(); });
+        if (!valid(current)) return;
+        captureReady(current);
+        return;
+      }
       let recorder: MediaRecorder;
       try { recorder = deps.recorder(stream, mime); } catch { fail(current, "format"); return; }
       current.recorder = recorder;
@@ -206,26 +245,38 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
       recorder.onerror = () => fail(current, "format");
       // An unexpected recorder termination is cancellation, never permission to upload.
       recorder.onstop = () => { if (valid(current)) cancel(); };
-      try { recorder.start(250); } catch { fail(current, "format"); return; }
-      if (!valid(current)) return;
-      setPhase("recording"); startMeter(current);
-      const started = deps.now();
-      const tick = () => { io.setElapsed(Math.min(120_000, deps.now() - started)); schedule(current, tick, 250); };
-      schedule(current, tick, 250);
-      schedule(current, finish, 120_000);
+      // Permission is not capture readiness: only the recorder's start event may
+      // enable recording indicators, the level meter and the elapsed timer.
+      recorder.onstart = () => {
+        if (!valid(current) || phase !== "starting") return;
+        captureReady(current);
+      };
+      schedule(current, () => fail(current, "timeout"), 30_000);
+      try { recorder.start(250); } catch { fail(current, "format"); }
     } catch (error) { if (valid(current)) fail(current, micErrorReason(error instanceof Error ? error.name : "")); }
+  }
+  function captureReady(current: Take): void {
+    for (const timer of current.timers) deps.clearTimer(timer);
+    current.timers.clear();
+    setPhase("recording"); startMeter(current);
+    const started = deps.now();
+    const tick = () => { io.setElapsed(Math.min(120_000, deps.now() - started)); schedule(current, tick, 250); };
+    schedule(current, tick, 250); schedule(current, finish, 120_000);
   }
   function press(): void {
     if (phase === "starting" || phase === "recording") { finish(); return; }
     if (phase === "transcribing") return;
     if (!io.available() || !io.options().enabled) return;
     if (owner) { io.setError("busy"); return; }
-    const mime = deps.mime();
-    if (!mime) { io.setError("format"); return; }
     const options = io.options();
-    const current: Take = { id: ++nextTake, config: { ...options.config }, onText: options.onText, controller: new AbortController(), stream: null, recorder: null, chunks: [], bytes: 0, timers: new Set() };
+    const mime = options.config.mode === "live" ? { mimeType: "", extension: "" } : deps.mime();
+    if (!mime || (options.config.mode === "live" && !deps.prepareLive)) { io.setError("format"); return; }
+    const current: Take = { id: ++nextTake, config: { ...options.config }, onText: options.onText, onPartial: options.onPartial, controller: new AbortController(), stream: null, recorder: null, chunks: [], bytes: 0, timers: new Set() };
     take = current; owner = engine;
-    io.setError(null); io.setElapsed(0); io.setSilent(false); setPhase("starting");
+    io.setPreview?.(""); io.setError(null); io.setElapsed(0); io.setSilent(false); setPhase("starting");
+    if (options.config.mode === "live") {
+      try { current.live = deps.prepareLive!(); } catch { fail(current, "format"); return; }
+    }
     schedule(current, () => fail(current, "timeout"), 30_000);
     const begin = () => acquire(current, mime.mimeType);
     if (deps.lock) {
@@ -249,16 +300,17 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
 export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
   const policy = useDictationPolicy();
   const secure = typeof window !== "undefined" && window.isSecureContext;
-  const supported = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined" && !!pickRecorderMime((type) => MediaRecorder.isTypeSupported(type));
+  const supported = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && (options.config.mode === "live" ? typeof AudioWorkletNode !== "undefined" && typeof AudioContext !== "undefined" : typeof MediaRecorder !== "undefined" && !!pickRecorderMime((type) => MediaRecorder.isTypeSupported(type)));
   const unavailableReason: VoiceUnavailable | null = !options.enabled ? "disabled" : !secure ? "insecure" : !supported ? "unsupported" : !options.config.activated ? "not_configured" : !configAllowed(options.config, policy) ? "policy" : null;
   const available = unavailableReason === null;
   const [state, setState] = useState<VoiceState>("idle");
   const [error, setError] = useState<VoiceError | null>(null);
   const [elapsedMs, setElapsed] = useState(0);
   const [silent, setSilent] = useState(false);
+  const [preview, setPreview] = useState("");
   const latest = useRef({ options, available }); latest.current = { options, available };
-  const [voice] = useState(() => createVoiceEngine({ options: () => latest.current.options, available: () => latest.current.available, setState, setError, setElapsed, setSilent }));
-  useLayoutEffect(() => () => voice.cancel(), [voice, available, options.config.baseUrl, options.config.model, options.config.activated]);
+  const [voice] = useState(() => createVoiceEngine({ options: () => latest.current.options, available: () => latest.current.available, setState, setError, setElapsed, setSilent, setPreview }));
+  useLayoutEffect(() => () => voice.cancel(), [voice, available, options.config.version, options.config.mode, options.config.model, options.config.activated]);
   useEffect(() => {
     const hidden = () => { if (document.hidden) voice.cancel(); };
     document.addEventListener("visibilitychange", hidden);
@@ -271,5 +323,6 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
       voice.cancel();
     };
   }, [voice]);
-  return { ...voice, available, unavailableReason, state, error, elapsedMs, silent };
+  useEffect(() => subscribeDictationInvalidation(voice.cancel), [voice]);
+  return { ...voice, available, unavailableReason, state, error, elapsedMs, silent, preview };
 }

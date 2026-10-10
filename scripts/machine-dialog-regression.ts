@@ -25,7 +25,8 @@ try {
     createRoot(document.getElementById("root")).render(<Fixture />);
   `);
   const out = join(root, "dist");
-  const build = await Bun.build({ entrypoints: [entry], outdir: out, target: "browser", define: { __APP_REVISION__: JSON.stringify("fixture"), __APP_VERSION__: JSON.stringify("fixture") } });
+  // Vite emits the worklet in production; this non-capture fixture never loads it.
+  const build = await Bun.build({ external: ["*?worker&url"], entrypoints: [entry], outdir: out, target: "browser", define: { __APP_REVISION__: JSON.stringify("fixture"), __APP_VERSION__: JSON.stringify("fixture") } });
   assert.ok(build.success, build.logs.map(String).join("\n"));
   writeFileSync(join(out, "index.html"), `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/entry.css"></head><body><div id="root"></div><script type="module" src="/entry.js"></script></body></html>`);
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
