@@ -15,7 +15,9 @@ import { paneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
 import { badRequest, errorResponse, isCount, isJsonObject, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
-import { dictationPolicy, dictationConfig } from "./dictation.ts";
+import { dictationPolicy, dictationConfig, dictationErrorResponse, DictationError } from "./dictation.ts";
+import { createDictationTransport, readRecording } from "./dictation/speaches-http.ts";
+import { DictationSocket } from "./dictation/socket.ts";
 import { startStatusCollector } from "./collector.ts";
 import { conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneRunsOmo, toolOutput } from "./conversation.ts";
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
@@ -262,6 +264,8 @@ async function agentLaunch(paneId: string, agent: AgentPayload): Promise<{ agent
 }
 
 interface SocketData {
+  kind?: "dictation";
+  dictation?: DictationSocket;
   deviceId?: string;
   readOnly?: boolean;
   revoked?: boolean;
@@ -356,8 +360,10 @@ export function createServer(
     usage?: UsageService;
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
     voice?: VoiceService;
-    /** Exact HTTPS speech origins; unset reads HERDR_WEB_DICTATION_ORIGINS (JSON array). Invalid policy refuses startup. */
-    dictationOrigins?: readonly string[];
+    /** Fixed HTTPS speech base URL; unset reads HERDR_WEB_DICTATION_BASE_URL; empty disables. */
+    dictationBaseUrl?: string;
+    /** Test transport; production retains fetch's TLS verification and refuses redirects. */
+    dictationFetch?: typeof fetch;
     machines?: boolean;
     registerBridge?: boolean;
     /** SUBMIT_DEADLINE_MS; tests shorten it */
@@ -384,7 +390,10 @@ export function createServer(
     sidecar?: boolean;
   } = {},
 ): { port: number; hostname: string; stop: () => void } {
-  const dictation = dictationPolicy(options.dictationOrigins);
+  const dictation = dictationPolicy(options.dictationBaseUrl);
+  const dictationTransport = createDictationTransport(dictation, options.dictationFetch);
+  const dictationClients = new Set<Client>();
+  const dictationRequests = new Set<AbortController>();
   const attachments = new Map<string, PaneAttachment>();
   /** whether this bridge can `terminal attach`: herdr is asked once, and the PTY sidecar has to be runnable here (server/pty/sidecar.ts) */
   /** whether the sidecar can run, settled as the server starts so that attach, /api/health and /api/bridge tell one answer; a forced answer (tests) stands in for it */
@@ -1423,8 +1432,39 @@ export function createServer(
       if (pathname === "/api/herdr/update") return handleHerdrUpdateRequest(request, options.herdrUpdate);
       if (pathname === "/api/telemetry") return handleTelemetryRequest(request, options.telemetry);
 
-      if (pathname === "/api/dictation/config" && request.method === "GET") {
-        return Response.json(dictationConfig(dictation), { headers: { "cache-control": "no-store" } });
+      if (pathname.startsWith("/api/dictation/")) {
+        if (!sameOrigin(request)) return jsonResponse({ error: { code: "invalid_origin", message: "Use dictation from this app" } }, 403);
+        if (readOnly) return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
+        if (pathname === "/api/dictation/config" && request.method === "GET") return Response.json(dictationConfig(dictation), { headers: { "cache-control": "no-store" } });
+        if (!dictation.enabled) return dictationErrorResponse(new DictationError("not_configured", "Dictation is not configured", 503));
+        if (pathname === "/api/dictation/ws" && request.method === "GET") {
+          const deviceId = access.level === "full" ? access.device?.id : undefined;
+          if (bunServer.upgrade(request, { data: { kind: "dictation", deviceId, attached: new Map(), output: new Map(), closing: false, mode: "interact", roles: 0 } })) return;
+          return badRequest("invalid_upgrade", "Expected a WebSocket upgrade");
+        }
+        if ((pathname === "/api/dictation/models" && request.method === "GET") || (pathname === "/api/dictation/transcribe" && request.method === "POST")) {
+          bunServer.timeout(request, 70);
+          const controller = new AbortController();
+          dictationRequests.add(controller);
+          const timeout = setTimeout(() => controller.abort(), pathname.endsWith("/models") ? 10_000 : 65_000);
+          const signal = AbortSignal.any([controller.signal, request.signal]);
+          const deviceId = access.level === "full" ? access.device?.id : undefined;
+          const unwatch = deviceId ? devices.onRevoke(deviceId, () => controller.abort()) : undefined;
+          try {
+            if (pathname.endsWith("/models")) {
+              const models = await dictationTransport.models(signal);
+              signal.throwIfAborted();
+              return Response.json({ models }, { headers: { "cache-control": "no-store" } });
+            }
+            const { file, model } = await readRecording(request, dictation, signal);
+            const text = await dictationTransport.transcribe(file, model, signal);
+            signal.throwIfAborted();
+            if (!text) throw new DictationError("no_speech", "No speech was recognized");
+            return Response.json({ text }, { headers: { "cache-control": "no-store" } });
+          } catch (error) {
+            return dictationErrorResponse(signal.aborted ? new DictationError("timeout", "Dictation request ended or timed out", 408) : error);
+          } finally { clearTimeout(timeout); unwatch?.(); dictationRequests.delete(controller); }
+        }
       }
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
@@ -1982,7 +2022,7 @@ export function createServer(
       }
 
       // static client - public even when the API is gated, so the login UI can load
-      return serveStatic(pathname, dictation);
+      return serveStatic(pathname);
     },
 
     websocket: {
@@ -1990,9 +2030,25 @@ export function createServer(
       backpressureLimit: OUTPUT_HARD_BYTES,
       closeOnBackpressureLimit: true,
       drain(client) {
+        if (client.data.kind === "dictation") return;
         for (const paneId of client.data.attached.keys()) reconcileOutput(paneId);
       },
       async open(client) {
+        if (client.data.kind === "dictation") {
+          dictationClients.add(client);
+          client.data.dictation = new DictationSocket(dictation, dictationTransport, (event) => {
+            if (client.data.closing) return;
+            if (client.send(JSON.stringify(event)) === 0 || client.getBufferedAmount() > 256 * 1024) {
+              client.data.closing = true; client.data.dictation?.close(); client.close(4008, "Dictation output stalled");
+            } else if (event.type === "finished" || event.type === "cancelled" || event.type === "error") {
+              client.data.closing = true; client.close(1000, "Dictation ended");
+            }
+          });
+          if (client.data.deviceId) client.data.unwatchDevice = devices.onRevoke(client.data.deviceId, () => {
+            client.data.closing = true; client.data.dictation?.close(); dictationClients.delete(client); client.close(1008, "Device access revoked");
+          });
+          return;
+        }
         if (client.data.deviceId) {
           client.data.unwatchDevice = devices.onRevoke(client.data.deviceId, () => {
             client.data.revoked = true;
@@ -2018,6 +2074,7 @@ export function createServer(
 
       async message(client, raw) {
         if (client.data.closing) return;
+        if (client.data.kind === "dictation") { client.data.dictation?.message(raw); return; }
         if (client.data.relay) { client.data.relay.message(raw); return; }
         let message: ClientMessage;
         try {
@@ -2497,6 +2554,7 @@ export function createServer(
 
       close(client) {
         client.data.unwatchDevice?.();
+        if (client.data.kind === "dictation") { client.data.closing = true; client.data.dictation?.close(); dictationClients.delete(client); return; }
         if (client.data.relay) { client.data.relay.close(); return; }
         pending.close(client);
         clients.delete(client);
@@ -2520,6 +2578,10 @@ export function createServer(
     port: server.port ?? 0,
     hostname,
     stop: () => {
+      for (const controller of dictationRequests) controller.abort();
+      dictationRequests.clear();
+      for (const client of dictationClients) { client.data.closing = true; client.data.dictation?.close(); client.data.unwatchDevice?.(); }
+      dictationClients.clear();
       clearInterval(outputTimer);
       collector.stop();
       omo.stop();

@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_DICTATION_CONFIG } from "./voiceTransport.ts";
-import { DICTATION_BASE_MAX_CHARS, DICTATION_MODEL_MAX_CHARS, sanitizeDictation, voiceButton } from "./settings.ts";
+import { DICTATION_MODEL_MAX_CHARS, sanitizeDictation, voiceButton } from "./settings.ts";
 import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
 import { alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
@@ -345,9 +345,9 @@ describe("dictation settings", () => {
   });
 
   it("retains valid explicitly applied settings across storage and unrelated updates", () => {
-    const dictation = { baseUrl: "https://speech.example/v1/", model: " custom/model ", activated: true };
+    const dictation = { version: 2, mode: "live", model: " custom/model ", activated: true };
     const saved = sanitizeSettings({ dictation, voiceInput: "off" });
-    expect(saved.dictation).toEqual({ baseUrl: "https://speech.example/v1", model: "custom/model", activated: true });
+    expect(saved.dictation).toEqual({ version: 2, mode: "live", model: "custom/model", activated: true });
     const reloaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
     expect(reloaded.dictation).toEqual(saved.dictation);
     expect(sanitizeSettings({ ...reloaded, theme: "light" }).dictation).toEqual(saved.dictation);
@@ -355,14 +355,14 @@ describe("dictation settings", () => {
   });
 
   it("requires explicit boolean activation and valid bounded fields", () => {
-    const valid = { baseUrl: "https://speech.example/v1", model: "custom/model", activated: true };
+    const valid = { version: 2, mode: "recording", model: "custom/model", activated: true } as const;
     for (const activated of [false, undefined, null, "true", 1]) expect(sanitizeDictation({ ...valid, activated }).activated).toBe(false);
-    for (const baseUrl of [undefined, 7, "http://speech.example/v1", "https://user:pass@speech.example/v1", "https://speech.example/v1?q=1", "https://speech.example/v1#part", "x".repeat(DICTATION_BASE_MAX_CHARS + 1)]) {
-      const clean = sanitizeDictation({ ...valid, baseUrl });
-      expect(clean.activated).toBe(false);
-      expect(clean.baseUrl.length).toBeLessThanOrEqual(DICTATION_BASE_MAX_CHARS);
+    for (const mode of [undefined, null, "invalid", 2]) expect(sanitizeDictation({ ...valid, mode }).activated).toBe(false);
+    for (const version of [undefined, null, 1, "2", 3]) {
+      expect(sanitizeDictation({ ...valid, version, mode: "live", baseUrl: "https://speech.example/v1" })).toEqual({ version: 2, mode: "recording", model: "custom/model", activated: false });
     }
-    for (const model of [undefined, 7, "", "  ", "bad\nmodel", "bad\u0000model", "x".repeat(DICTATION_MODEL_MAX_CHARS + 1)]) {
+    expect(sanitizeDictation({ ...valid, generation: "old", baseUrl: "https://speech.example/v1" })).toEqual(valid);
+    for (const model of [undefined, 7, "", "  ", "bad model", "../model", "https://model", "bad\nmodel", "bad\u0000model", "x".repeat(DICTATION_MODEL_MAX_CHARS + 1)]) {
       const clean = sanitizeDictation({ ...valid, model });
       expect(clean.activated).toBe(false);
       expect(clean.model.length).toBeLessThanOrEqual(DICTATION_MODEL_MAX_CHARS);
@@ -379,6 +379,23 @@ describe("dictation settings", () => {
     expect(handler).toContain('Object.hasOwn(patch, "voiceInput")');
   });
 
+  it("renders transient preview once outside the waveform row without editing the draft", () => {
+    const source = readFileSync(join(import.meta.dir, "..", "components", "VoiceInput.tsx"), "utf8");
+    const pill = source.slice(source.indexOf("export function VoiceRecordingPill"));
+    expect(pill.match(/className="voice-preview"/g)).toHaveLength(1);
+    expect(pill).toContain('aria-label={t("Dictation preview")} aria-live="off"');
+    expect(pill).toContain('voice.state === "recording" || voice.state === "transcribing"');
+    expect(pill).not.toContain("onText");
+    expect(pill).not.toContain("write(");
+    const css = readFileSync(join(import.meta.dir, "..", "components", "VoiceInput.css"), "utf8");
+    expect(css).toContain("max-height: 8em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere");
+  });
+
+  it("invalidates committed snapshots for every persisted configuration field", () => {
+    const source = readFileSync(join(import.meta.dir, "settings.ts"), "utf8");
+    expect(source).toContain("useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated])");
+  });
+
   it("keeps speech-service requests explicit and never acquires a microphone in settings", () => {
     const page = readFileSync(join(import.meta.dir, "..", "components", "DictationSettings.tsx"), "utf8");
     const dialog = readFileSync(join(import.meta.dir, "..", "components", "SettingsDialog.tsx"), "utf8");
@@ -390,7 +407,10 @@ describe("dictation settings", () => {
     }
     expect(page).toContain("discoverDictationModels({ ...applied }, controller.signal)");
     expect(page).toContain("generation !== request.current.generation");
-    expect(page).toContain("applied.activated && !urlEdited");
+    expect(page).toContain("applied.activated && policy !== null");
+    expect(page).not.toContain("baseUrl");
+    expect(page).toContain("mode !== applied.mode");
+    expect(page).toContain("setMode(applied.mode)");
     expect(dialog).toContain('case "voice": return <DictationSettings />');
   });
 });

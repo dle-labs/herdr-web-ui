@@ -19,7 +19,7 @@ class Recorder {
   stop() { this.state = "inactive"; if (!this.delayed) this.flush(); }
   flush() { this.ondataavailable?.({ data: new Blob(["audio"]) }); this.onstop?.(); }
 }
-function harness(lock?: VoiceEngineDependencies["lock"]) {
+function harness(lock?: VoiceEngineDependencies["lock"], prepareLive?: VoiceEngineDependencies["prepareLive"]) {
   const permissions: Array<(stream: MediaStream) => void> = [];
   const uploads: Array<{ resolve(text: string): void; signal: AbortSignal; config: unknown; blob: Blob }> = [];
   const timers = new Map<number, { callback(): void; ms: number }>();
@@ -27,7 +27,9 @@ function harness(lock?: VoiceEngineDependencies["lock"]) {
   const recorder = new Recorder();
   const texts: VoiceText[] = [], errors: Array<VoiceError | null> = [], states: string[] = [];
   const config = { ...DEFAULT_DICTATION_CONFIG, activated: true };
+  const previews: string[] = [];
   const deps: VoiceEngineDependencies = {
+    prepareLive,
     permission: () => new Promise((resolve) => permissions.push(resolve)),
     recorder: () => recorder as unknown as MediaRecorder,
     mime: () => ({ mimeType: "audio/mp4", extension: "m4a" }),
@@ -36,9 +38,9 @@ function harness(lock?: VoiceEngineDependencies["lock"]) {
     timer: (callback, ms) => { timers.set(++timerId, { callback, ms }); return timerId as unknown as ReturnType<typeof setTimeout>; },
     clearTimer: (id) => { timers.delete(id as unknown as number); },
   };
-  const voice = createVoiceEngine({ options: () => ({ enabled: true, config, onText: (text) => texts.push(text) }), available: () => true, setState: (state) => states.push(state), setError: (error) => errors.push(error), setElapsed: () => {}, setSilent: () => {} }, deps);
+  const voice = createVoiceEngine({ options: () => ({ enabled: true, config, onText: (text) => texts.push(text) }), available: () => true, setState: (state) => states.push(state), setError: (error) => errors.push(error), setElapsed: () => {}, setSilent: () => {}, setPreview: (text) => previews.push(text) }, deps);
   const grant = async () => { const stream = new Stream(); permissions.at(-1)!(stream as unknown as MediaStream); await drain(); return stream; };
-  return { voice, grant, recorder, permissions, uploads, texts, errors, states, timers, config };
+  return { voice, grant, recorder, permissions, uploads, texts, errors, states, timers, config, previews };
 }
 afterEach(invalidateDictation);
 describe("dictation coordinator", () => {
@@ -128,6 +130,50 @@ describe("dictation coordinator", () => {
     expect([...a.timers.values()].some((timer) => timer.ms === 30_000)).toBe(false);
     [...a.timers.values()].find((timer) => timer.ms === 120_000)!.callback(); await drain();
     expect(a.uploads).toHaveLength(1); a.voice.release(); expect(a.uploads).toHaveLength(1);
+  });
+});
+describe("live capture ownership", () => {
+  it("prepares before a denied lock and disposes without permission", async () => {
+    const events: string[] = [];
+    const a = harness(async (callback) => { events.push("lock"); await callback(false); }, () => {
+      events.push("prepare"); return { start: async () => {}, finish: async () => "", cancel: () => { events.push("close"); } };
+    });
+    a.config.mode = "live"; a.voice.press(); await drain();
+    expect(events).toEqual(["prepare", "lock", "close"]); expect(a.permissions).toHaveLength(0);
+  });
+  it("waits capture readiness, stops tracks before drain, clears previews and discards late finals", async () => {
+    let ready!: () => void, partial!: (text: string) => void, finish!: (text: string) => void;
+    let stream: Stream | undefined, stoppedAtFinish = false, closed = 0;
+    const a = harness(undefined, () => ({
+      start: (_config, _stream, _signal, onPartial) => { partial = onPartial; return new Promise<void>((resolve) => { ready = resolve; }); },
+      finish: () => { stoppedAtFinish = !!stream?.stopped; return new Promise<string>((resolve) => { finish = resolve; }); },
+      cancel: () => { closed++; },
+    }));
+    a.config.mode = "live"; a.voice.press(); stream = await a.grant();
+    expect(a.states.at(-1)).toBe("starting"); ready(); await drain(); expect(a.states.at(-1)).toBe("recording");
+    partial("preview"); expect(a.previews.at(-1)).toBe("preview"); a.voice.finish(); expect(stoppedAtFinish).toBe(true);
+    a.voice.cancel(); expect(a.previews.at(-1)).toBe(""); finish("late"); partial("late"); await drain();
+    expect(a.texts).toEqual([]); expect(a.previews.at(-1)).toBe(""); expect(closed).toBe(1);
+  });
+  it("a live sample limit finishes gracefully instead of cancelling the transcript", async () => {
+    let limit!: () => void, finishes = 0;
+    const a = harness(undefined, () => ({
+      start: async (_config, _stream, _signal, _partial, _failed, reachedLimit) => { limit = reachedLimit!; },
+      finish: async () => { finishes++; return "at the limit"; },
+      cancel: () => {},
+    }));
+    a.config.mode = "live"; a.voice.press(); const stream = await a.grant();
+    limit(); await drain();
+    expect(stream.stopped).toBe(true); expect(finishes).toBe(1);
+    expect(a.texts.map((result) => result.text)).toEqual(["at the limit"]); expect(a.states.at(-1)).toBe("idle");
+  });
+  it("Finish while starting cancels; late permission cannot affect a rapid restart", async () => {
+    let closed = 0;
+    const a = harness(undefined, () => ({ start: async () => {}, finish: async () => "never", cancel: () => { closed++; } }));
+    a.config.mode = "live"; a.voice.press(); const oldPermission = a.permissions[0]!;
+    a.voice.finish(); a.voice.press(); const old = new Stream(); oldPermission(old as unknown as MediaStream); await drain();
+    expect(old.stopped).toBe(true); expect(a.states.at(-1)).toBe("starting"); await a.grant();
+    expect(a.states.at(-1)).toBe("recording"); expect(closed).toBe(1); a.voice.cancel();
   });
 });
 describe("caret, format and meter helpers", () => {

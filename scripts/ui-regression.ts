@@ -810,7 +810,7 @@ try {
     const card = await page.locator(".composer-surface").boundingBox();
     assert.ok(pane && card);
     const [text, left, status, right] = await Promise.all([".composer-text", ".composer-controls-left", ".composer-status", ".composer-controls-right"]
-      .map((selector) => page.locator(`.composer-surface > ${selector}`).boundingBox()));
+      .map((selector) => page.locator(`.composer-surface ${selector}`).boundingBox()));
     assert.ok(text && left && status && right, "the message box and the three cells of the controls row");
     // each row spans the card's inner width: inside its hairline border, a fraction of a px either way
     assert.ok(Math.abs(text.x - card.x) <= 2.5 && Math.abs(text.width - card.width) <= 4, `.composer-text spans the box: ${JSON.stringify({ text, card })}`);

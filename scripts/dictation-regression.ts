@@ -1,4 +1,4 @@
-/** Production CSP + real cross-origin HTTPS/CORS + Chromium MediaRecorder, never a vendor service.
+/** Production same-origin CSP + backend HTTPS relay + Chromium MediaRecorder/AudioWorklet, never a vendor service.
  * Build first, then: bun run check run bun scripts/dictation-regression.ts
  * Only the owned test pane is attached. Speech requests are NOT Playwright-fulfilled.
  */
@@ -19,7 +19,6 @@ const model = "test/installed-english";
 const transcript = "spoken words";
 const requests: Array<{ path: string; method: string; origin: string | null; authorization: string | null; cookie: string | null; referer: string | null; fields?: Record<string, string>; fileSize?: number; fileType?: string; fileName?: string }> = [];
 let appOrigin = "";
-let cors = true;
 let hold = false;
 const pending: Array<() => void> = [];
 let completed = 0;
@@ -150,12 +149,23 @@ async function stores(page: Page): Promise<Array<{ comment: string }>> {
 }
 
 try {
+  // Synthetic mono PCM sine, generated at runtime; no private/user recording is stored in Git.
+  // Chrome's default fake tone can fall below backend VAD's speech threshold.
+  const sampleRate = 48_000;
+  const samples = sampleRate * 20;
+  const wav = Buffer.alloc(44 + samples * 2);
+  wav.write("RIFF", 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24); wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write("data", 36); wav.writeUInt32LE(samples * 2, 40);
+  for (let index = 0; index < samples; index++) wav.writeInt16LE(Math.round(Math.sin(index * 2 * Math.PI * 440 / sampleRate) * 0.25 * 32767), 44 + index * 2);
+  writeFileSync(join(root, "microphone.wav"), wav);
   // A disposable key, not a checked-in certificate or a dependency on the private speech host.
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", join(root, "key.pem"), "-out", join(root, "cert.pem"), "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"], { stdio: "ignore", timeout: 15_000 });
   speech = Bun.serve({ hostname: "127.0.0.1", port: 0, tls: { key: readFileSync(join(root, "key.pem")), cert: readFileSync(join(root, "cert.pem")) }, async fetch(request) {
     const path = new URL(request.url).pathname;
     const item: (typeof requests)[number] = { path, method: request.method, origin: request.headers.get("origin"), authorization: request.headers.get("authorization"), cookie: request.headers.get("cookie"), referer: request.headers.get("referer") };
-    const headers = cors && item.origin === appOrigin ? { "Access-Control-Allow-Origin": appOrigin, "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "content-type", Vary: "Origin" } : {};
+    const headers = {}; // Deliberately no CORS: only the backend can reach this service.
     if (request.method === "POST") {
       // Bun's File.type may infer video/webm from the filename; assert the browser's actual part header.
       const wire = new TextDecoder().decode((await request.clone().arrayBuffer()).slice(0, 4096));
@@ -182,19 +192,27 @@ try {
   workspace = owned.workspace.workspace_id;
   const pane = owned.root_pane.pane_id;
   writeFileSync(join(root, "dictation.txt"), "A fictional file line for a draft comment.\nSecond line.\n");
-  server = createServer({ hostname: "127.0.0.1", port: 0, token: "", stateDir: join(root, "state"), dictationOrigins: [speechOrigin], usage: new UsageService(undefined, []) });
+  const dictationFetch: typeof fetch = (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    assert.equal(url.origin, speechOrigin, "the injected CA applies only to the disposable fixture");
+    return Bun.fetch(input, { ...init, tls: { ca: readFileSync(join(root, "cert.pem")) } });
+  };
+  server = createServer({ hostname: "127.0.0.1", port: 0, token: "dictation-browser-test-token", stateDir: join(root, "state"), dictationBaseUrl: baseUrl, dictationFetch, usage: new UsageService(undefined, []) });
   appOrigin = `http://127.0.0.1:${server.port}`;
-  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", "--ignore-certificate-errors"] });
+  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox", "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", `--use-file-for-fake-audio-capture=${join(root, "microphone.wav")}`] });
 
   for (const mobile of [false, true]) {
-    const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 720 } : { width: 1280, height: 900 }, isMobile: mobile, hasTouch: mobile, ignoreHTTPSErrors: true, permissions: ["microphone"], locale: "en-US" });
+    const context = await browser.newContext({ viewport: mobile ? { width: 390, height: 720 } : { width: 1280, height: 900 }, isMobile: mobile, hasTouch: mobile, permissions: ["microphone"], locale: "en-US" });
     try {
       const initialRequests = requests.length;
       const sent: unknown[] = [];
       const legacy: string[] = [];
+      const crossOriginSpeech: string[] = [];
+      const auth = await context.request.post(`${appOrigin}/api/auth`, { data: { token: "dictation-browser-test-token" } });
+      assert.equal(auth.ok(), true, "browser is authenticated to WebUI");
       const errors: string[] = [];
       await context.addInitScript(({ pane, baseUrl, model }) => {
-        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false, voiceInput: "auto", terminalInputMode: "line", dictation: { baseUrl, model, activated: false } }));
+        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false, voiceInput: "auto", terminalInputMode: "line", dictation: { baseUrl, model, activated: true } }));
         localStorage.setItem(`herdr-web-ui:view:${pane}`, "chat");
         const Recorder = window.MediaRecorder;
         window.MediaRecorder = class extends Recorder {
@@ -216,11 +234,45 @@ try {
       }, { pane, baseUrl, model });
       const page = await context.newPage();
       page.setDefaultTimeout(15_000);
+      const liveTakes: Array<{ frames: number; samples: number; ready: boolean; preview: boolean; finished: boolean; cancelled: boolean }> = [];
+      page.on("websocket", (socket) => {
+        if (new URL(socket.url()).pathname !== "/api/dictation/ws") return;
+        const take = { frames: 0, samples: 0, ready: false, preview: false, finished: false, cancelled: false };
+        liveTakes.push(take);
+        socket.on("framereceived", ({ payload }) => {
+          if (typeof payload !== "string") return;
+          const frame = JSON.parse(payload);
+          if (frame.type === "ready") { assert.equal(frame.sample_rate, 16_000); take.ready = true; }
+          if (frame.type === "preview") take.preview = true;
+        });
+        socket.on("framesent", ({ payload }) => {
+          if (typeof payload === "string") {
+            const frame = JSON.parse(payload);
+            if (frame.type === "start") { assert.equal(frame.version, 2); assert.equal("baseUrl" in frame, false); }
+            if (frame.type === "finish") {
+              assert.equal(frame.frames, take.frames, "Finish follows the worklet frame drain");
+              assert.equal(frame.samples, take.samples, "Finish accounts for every produced sample");
+              take.finished = true;
+            }
+            if (frame.type === "cancel") take.cancelled = true;
+          } else {
+            assert.equal(take.ready, true, "no PCM before backend ready");
+            assert.ok(payload.length > 8 && payload.length <= 8 + 3200 * 2 && payload.length % 2 === 0);
+            assert.equal(payload.readUInt32LE(0), take.frames++, "contiguous PCM sequence");
+            assert.equal(payload.readUInt32LE(4), take.samples, "contiguous PCM sample offset");
+            take.samples += (payload.length - 8) / 2;
+          }
+        });
+      });
       page.on("pageerror", (error) => errors.push(error.message));
-      page.on("request", (request) => { if (new URL(request.url()).pathname.startsWith("/api/voice")) legacy.push(request.url()); });
+      page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.pathname.startsWith("/api/voice")) legacy.push(request.url());
+        if (/^https?:$/.test(url.protocol) && url.origin !== appOrigin) crossOriginSpeech.push(request.url());
+      });
       // Only transcript and outgoing PTY input are fixtures. CSP, policy, media capture and speech HTTP are real.
       await page.route("**/api/pane/conversation?*", (route) => route.fulfill({ json: { source: "claude-transcript", history_id: "dictation-fixture", turns: [{ role: "assistant", ts: "2026-01-01T00:00:00Z", end_ts: "2026-01-01T00:00:01Z", parts: [{ kind: "text", text: `A fictional reply for dictation comments.\n\n[dictation.txt](${join(root, "dictation.txt")})` }] }] } }));
-      await page.routeWebSocket(/\/ws(?:\?|$)/, (socket) => {
+      await page.routeWebSocket(/^wss?:\/\/[^/]+\/ws(?:\?|$)/, (socket) => {
         const upstream = socket.connectToServer();
         upstream.onMessage((raw) => socket.send(raw));
         socket.onMessage((raw) => {
@@ -233,7 +285,8 @@ try {
       });
       const response = await page.goto(`${appOrigin}/?pane=${encodeURIComponent(pane)}`);
       const csp = response!.headers()["content-security-policy"]!;
-      assert.ok(csp.includes(speechOrigin), "the production document allows the exact speech origin");
+      assert.equal(csp.match(/(?:^|;)\s*connect-src\s+([^;]+)/)?.[1]?.trim(), "'self'", "speech access never expands production connect-src");
+      assert.ok(!csp.includes(speechOrigin), "internal speech topology is absent from browser CSP");
       assert.ok(!/connect-src[^;]*(?:\shttps:|\swss:)(?:\s|;)/.test(csp), "no wildcard scheme permission");
       await page.locator(".conn-live").waitFor();
       const composer = page.locator(".composer");
@@ -245,7 +298,7 @@ try {
       await settings(page);
       assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true);
       assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "no legacy API key editor");
-      await page.locator("#dictation-base-url").fill(baseUrl);
+      assert.equal(await page.locator("#dictation-base-url").count(), 0, "backend service is not a browser-editable URL");
       await page.locator("#dictation-model").fill(model);
       await frames(page);
       assert.equal(requests.length, initialRequests, "loading or editing presets never contacts the speech host");
@@ -256,22 +309,12 @@ try {
       await page.locator("#dictation-model-list").waitFor();
       assert.equal(requests.length, initialRequests + 1);
       assert.equal(requests.at(-1)!.method, "GET");
-      await page.locator("#dictation-base-url").fill("https://unapproved.invalid/v1");
-      assert.equal(await page.getByRole("button", { name: "Apply", exact: true }).isDisabled(), true, "policy rejects an unapproved settings destination");
-      await page.locator("#dictation-base-url").fill(`${baseUrl}/other`);
-      assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true, "unsaved URL cannot be probed");
+      const applied = await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).dictation);
+      assert.deepEqual(applied, { version: 2, model, activated: true, mode: "recording" }, "legacy URL/activation migrate only through explicit Apply");
+      await page.locator("#dictation-model").fill("test/second-model");
+      assert.equal((await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).dictation)).model, model, "editing a model does not change applied configuration");
       await page.getByRole("button", { name: "Discard edits", exact: true }).click();
       await closeSettings(page);
-
-      // CORS is enforced by the browser even though CSP approves this origin.
-      cors = false;
-      assert.equal(await page.evaluate(async (url) => { try { await fetch(url, { credentials: "omit", referrerPolicy: "no-referrer" }); return false; } catch { return true; } }, `${baseUrl}/models`), true);
-      cors = true;
-      // Same server, different hostname: the exact-origin CSP must block BEFORE network access.
-      const beforeBlocked = requests.length;
-      const blocked = speechOrigin.replace("127.0.0.1", "localhost");
-      assert.equal(await page.evaluate(async (url) => { try { await fetch(url); return false; } catch { return true; } }, `${blocked}/v1/models`), true);
-      assert.equal(requests.length, beforeBlocked, "unapproved origin is blocked, not route-fulfilled");
 
       // An actual same-origin second tab excludes capture; repeating Busy must retain its explanation.
       const lockPage = await context.newPage();
@@ -581,17 +624,83 @@ try {
         assert.equal(posts().length, beforeInterrupted, `${event} cancels without an automatic upload`);
         assert.equal(await line.inputValue(), "echo spoken words");
       }
+      // Real AudioWorklet + authenticated backend WS + backend-segmented HTTPS inference.
+      // No Playwright route fulfils either dictation route or the speech service.
+      await page.locator('.view-switch button[title^="Chat"]').click();
+      await message.waitFor();
+      await settings(page);
+      await page.getByRole("button", { name: "Live preview", exact: true }).click();
+      await page.getByRole("button", { name: "Apply", exact: true }).click();
+      await closeSettings(page);
+      await message.fill("live draft");
+      const beforeLiveSend = sent.length;
+      await composer.getByRole("button", { name: "Start dictation", exact: true }).click();
+      await composer.locator('.voice-mic-wrap[data-state="recording"]').waitFor();
+      await composer.getByRole("region", { name: "Dictation preview", exact: true }).getByText(transcript, { exact: true }).waitFor();
+      assert.equal(await message.inputValue(), "live draft", "live hypotheses never mutate the draft before Finish");
+      assert.equal(liveTakes.at(-1)!.preview, true, "actual coordinator produces a preview before Finish");
+      assert.ok(liveTakes.at(-1)!.frames > 0, "real worklet emits binary PCM");
+      await composer.getByRole("button", { name: "Finish dictation", exact: true }).click();
+      await until("live final inserted once", async () => await message.inputValue() === "live draft spoken words");
+      assert.equal(liveTakes.at(-1)!.finished, true);
+      assert.equal(sent.length, beforeLiveSend, "live Finish never sends terminal input");
+      await composer.getByRole("button", { name: "Undo last dictation", exact: true }).click();
+      assert.equal(await message.inputValue(), "live draft", "live Undo removes only the final take");
+      assert.match(posts().at(-1)!.fileType!, /^audio\/wav/, "backend previews/finals are complete WAV uploads");
+
+      hold = true;
+      const beforeLiveCancel = posts().length;
+      await composer.getByRole("button", { name: "Start dictation", exact: true }).click();
+      await until("live preview inference held", () => posts().length > beforeLiveCancel && pending.length === 1);
+      await composer.getByRole("button", { name: "Cancel dictation", exact: true }).click();
+      await composer.locator('.voice-mic-wrap[data-state="idle"]').waitFor();
+      await release(page);
+      hold = false;
+      assert.equal(await message.inputValue(), "live draft", "late live preview cannot insert after Cancel");
+      assert.equal(await composer.locator(".voice-preview").count(), 0);
+      assert.equal(sent.length, beforeLiveSend);
+      const afterLiveCancel = posts().length;
+      await frames(page);
+      assert.equal(posts().length, afterLiveCancel, "Cancel never replays buffered audio");
+
+      await settings(page);
+      await page.getByRole("button", { name: "Off", exact: true }).click();
+      await closeSettings(page);
+      assert.equal(await composer.locator(".voice-mic").count(), 0, "Off remains explicit and hides capture");
+      await page.reload();
+      await page.locator(".conn-live").waitFor();
+      assert.equal(await composer.locator(".voice-mic").count(), 0, "Off survives reload");
       assert.deepEqual(legacy, [], "replacement client never requests /api/voice");
       assert.deepEqual(errors, []);
-      console.log(`PASS ${mobile ? "phone" : "desktop"}: direct HTTPS dictation, CORS/CSP, explicit settings, draft recovery, cancellation, IME, comments and terminal`);
-    } finally { while (pending.length) pending.shift()!(); hold = false; cors = true; await context.close(); }
+      assert.deepEqual(crossOriginSpeech, [], "browser makes zero direct speech-service requests");
+      console.log(`PASS ${mobile ? "phone" : "desktop"}: backend HTTPS dictation, same-origin CSP, explicit settings, draft recovery, cancellation, IME, comments and terminal`);
+    } finally { while (pending.length) pending.shift()!(); hold = false; await context.close(); }
   }
+  // Missing administrator configuration stays disabled even with current activated browser settings.
+  const disabled = createServer({ hostname: "127.0.0.1", port: 0, token: "dictation-disabled-test-token", stateDir: join(root, "disabled-state"), dictationBaseUrl: "", usage: new UsageService(undefined, []) });
+  const disabledContext = await browser.newContext({ locale: "en-US" });
+  try {
+    const origin = `http://127.0.0.1:${disabled.port}`;
+    assert.equal((await disabledContext.request.post(`${origin}/api/auth`, { data: { token: "dictation-disabled-test-token" } })).ok(), true);
+    await disabledContext.addInitScript(({ model }) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: "on", dictation: { version: 2, model, activated: true, mode: "recording" } })), { model });
+    const page = await disabledContext.newPage();
+    await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
+    await page.locator(".conn-live").waitFor();
+    const beforeDisabled = requests.length;
+    await settings(page);
+    await page.getByText("Managed by the WebUI backend", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Apply", exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "Check", exact: true }).isDisabled(), true);
+    assert.equal(await page.locator("#dictation-base-url").count(), 0);
+    assert.equal(requests.length, beforeDisabled, "missing backend URL never contacts a speech service");
+  } finally { await disabledContext.close(); disabled.stop(); }
   for (const request of requests.filter((item) => item.path.endsWith("audio/transcriptions") || item.path.endsWith("models"))) {
     assert.equal(request.authorization, null);
     assert.equal(request.cookie, null);
     assert.equal(request.referer, null, "discovery and audio both suppress Referer");
-    assert.equal(request.origin, appOrigin);
-    assert.ok(request.method === "GET" || request.method === "POST" || request.method === "OPTIONS");
+    assert.equal(request.origin, null, "backend does not forward browser Origin");
+    assert.ok(request.method === "GET" || request.method === "POST");
   }
   assert.ok(requests.every((request) => request.method !== "POST" || request.path === "/v1/audio/transcriptions"), "no model downloads or hidden inference checks");
 } finally {

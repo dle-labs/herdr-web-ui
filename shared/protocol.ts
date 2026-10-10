@@ -44,14 +44,16 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  * Legacy paths and missing machine IDs continue to mean local.
  */
 
-/** GET /api/dictation/config -> DictationConfigResponse, authenticated and no-store.
- * Direct browser speech policy only; never calls herdr or the speech service.
- * A policy change requires a page reload to receive matching CSP.
+/** Dictation uses the browser-facing WebUI, never the selected remote machine or herdr.
+ * GET /api/dictation/config -> DictationConfigResponse; authenticated, no-store, no upstream call.
+ * GET /api/dictation/models -> DictationModelsResponse; explicit installed-ASR discovery.
+ * POST /api/dictation/transcribe -> DictationTranscriptionResponse; multipart file/model/generation,
+ * bounded recorded audio to the administrator-configured Speaches service, English, no retry.
+ * WS /api/dictation/ws -> DictationClientMessage / DictationServerMessage and framed PCM16;
+ * same-origin authenticated connection, one take, no replay, no terminal frames or RPCs.
  */
-export interface DictationConfigResponse {
-  enabled: boolean;
-  allowed_origins: string[];
-}
+export type { DictationConfigResponse, DictationModelsResponse, DictationTranscriptionResponse,
+  DictationClientMessage, DictationServerMessage } from "./dictation.ts";
 
 /** HTTP API
  *  GET    /api/health                    -> { ok: true, herdr: HerdrIdentity (shared/machines.ts; terminal_attach false on a

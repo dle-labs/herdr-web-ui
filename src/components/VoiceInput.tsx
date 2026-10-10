@@ -16,8 +16,9 @@ function errorNote(t: Translate, error: string): string | null {
     case "insecure": return t("Voice input needs HTTPS");
     case "permission": return t("Microphone permission was denied");
     case "no_mic": return t("No microphone found");
-    case "not_configured": return t("Apply a speech server and model in Settings > Dictation");
-    case "policy": return t("Allow the speech origin in HERDR_WEB_DICTATION_ORIGINS, then reload");
+    case "not_configured": return t("Apply a model and mode in Settings > Dictation");
+    case "server_not_configured": return t("Configure HERDR_WEB_DICTATION_BASE_URL on the WebUI backend, restart it, then reload the app.");
+    case "policy": return t("Dictation configuration changed. Reload the app and check Settings > Dictation.");
     case "busy": return t("Another input or tab is using dictation");
     case "timeout": return t("The speech server took too long to respond");
     case "missing_model": return t("The selected speech model is not installed");
@@ -25,7 +26,7 @@ function errorNote(t: Translate, error: string): string | null {
     case "no_speech": return t("No speech was heard");
     case "format": return t("The recording or speech response format is not supported");
     case "unsupported": return t("This browser cannot record audio");
-    default: return t("Transcription failed. Check the speech server, VPN, CORS and HTTPS policy.");
+    default: return t("Transcription failed. Check the WebUI backend and its speech service connection.");
   }
 }
 
@@ -260,7 +261,7 @@ export function useDictation(options: DictationOptions): Dictation {
   }, [options.box, cancel]);
   useEffect(() => {
     if (voice.state === "starting") latest.current.onNote(null);
-    else if (voice.error) latest.current.onNote(errorNote(t, voice.error));
+    else if (voice.error) latest.current.onNote(errorNote(t, voice.error === "not_configured" ? "server_not_configured" : voice.error));
   }, [voice.error, voice.state, t]);
   useEffect(() => {
     const hidden = (): void => { if (document.hidden) cancel(); };
@@ -358,7 +359,7 @@ export function VoiceRecordingPill({ dictation, align, barCount = 7 }: { dictati
   const label = recovery !== null ? t("Draft changed. Review the dictation before inserting.")
     : voice.state === "transcribing" ? t("Transcribing…")
     : voice.state === "starting" ? t("Starting microphone…") : unavailableNote ?? (voice.silent ? t("No microphone input") : t("Recording"));
-  return <div className={`voice-pill${open ? " is-open" : ""}`} data-state={voice.state} data-align={align} hidden={!open}>
+  return <><div className={`voice-pill${open ? " is-open" : ""}`} data-state={voice.state} data-align={align} hidden={!open}>
     {voice.state === "recording" && recovery === null && unavailableNote === null && <>
       <span className="voice-bars" ref={voice.bindBars} aria-hidden="true">{Array.from({ length: barCount }, (_, i) => <span key={i} data-voice-bar="" />)}</span>
       <span className="voice-meter" aria-hidden="true"><span ref={voice.bindMeter} /></span>
@@ -373,5 +374,7 @@ export function VoiceRecordingPill({ dictation, align, barCount = 7 }: { dictati
       <button type="button" className="voice-pill-button" aria-label={t("Cancel dictation")} title={t("Cancel dictation")}
         onPointerDown={(event) => event.preventDefault()} onClick={dictation.cancel}><X aria-hidden="true" /></button>
     </>}
-  </div>;
+  </div>
+    {voice.preview && recovery === null && (voice.state === "recording" || voice.state === "transcribing") && <p className="voice-preview" role="region" aria-label={t("Dictation preview")} aria-live="off">{voice.preview}</p>}
+  </>;
 }

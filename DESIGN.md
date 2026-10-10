@@ -1352,10 +1352,13 @@ One set for both themes: the card is island black wherever it shows.
   Undo is disabled during capture/inference/recovery, and its history clears with the draft owner.
 - `voiceInput`: `auto`, `on` or `off`; default `auto`. Auto and On keep controls visible on desktop
   and mobile, including comment editors, disabled with a reason when configuration, browser capture
-  or server-origin policy is unavailable. Off hides them; Settings stays accessible. The terminal
+  or the backend speech service is unconfigured. Off hides them; Settings stays accessible. The terminal
   draft line is also available beside direct grid typing when dictation controls are enabled.
-- Dictation settings explicitly applies a HTTPS speech URL and model. Recognition is English;
-  recording is uploaded directly on Finish, with no vendor fallback or polishing. Live streaming is gated.
+- Dictation settings explicitly applies a model and mode; the HTTPS speech URL is managed by the
+  WebUI backend. Recognition is English. Completed recordings upload through WebUI on Finish;
+  optional Live preview streams audio to WebUI for buffering/segmentation and HTTP recognition.
+  Interim text is separate from the editable draft. No vendor fallback or polishing. Upstream
+  Speaches Realtime remains gated; the browser only connects to the app's own origin.
 - The in-flow, wrapping status row shows Cancel and status, with live level bars to the left of
   the recording label and a mono timer only during actual capture. In the composer, a denser
   waveform fills the remaining width before the compact label, seconds and close button, on one
