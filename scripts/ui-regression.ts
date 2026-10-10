@@ -155,8 +155,9 @@ try {
   assert.equal(await composer.getAttribute("autocorrect"), null, "the message box leaves autocorrect to the keyboard");
   assert.equal(await composer.getAttribute("spellcheck"), null, "the message box leaves spell checking to the browser");
   assert.equal(await composer.getAttribute("autocapitalize"), "sentences", "the message box capitalizes sentences");
-  assert.equal(await page.locator(".composer .voice-mic").count(), 0, "Auto hides dictation until configuration and administrator policy allow it");
-  console.log("PASS unactivated dictation is hidden on desktop");
+  assert.equal(await page.locator(".composer .voice-mic").count(), 1, "Auto keeps dictation discoverable before setup on desktop");
+  assert.equal(await page.locator(".composer .voice-mic").isDisabled(), true, "unconfigured dictation cannot record");
+  console.log("PASS unactivated dictation is visible but disabled on desktop");
   assert.equal(await workspaceHeader(workspaces[0]!).locator(".workspace-name").textContent(), "herdr-web-ui-test-browser-a",
     "Spaces names the workspace rather than its current pane");
   assert.equal(await workspaceGroup(workspaces[0]!).locator(".pane-select").count(), 1, "a workspace has one representative selector");
@@ -1540,7 +1541,7 @@ try {
   await mobilePage.route(promptRoute, (route) => route.fulfill(suggest));
   await mobileComposer.fill("");
   await until(async () => await mobileComposer.getAttribute("placeholder") === "run the tests", "a phone shows the suggestion as the placeholder");
-  assert.equal(await mobilePage.locator(".voice-mic").count(), 0, "unactivated dictation is hidden on phones");
+  assert.ok(await mobilePage.locator(".voice-mic").count() > 0, "unactivated dictation is discoverable on phones");
   await mobilePage.getByTitle("Use the suggestion", { exact: true }).click();
   assert.equal(await mobileComposer.inputValue(), "run the tests", "the chip puts the suggestion in the box");
   await mobilePage.unroute(promptRoute);
@@ -1610,7 +1611,7 @@ try {
   await line.fill("unsent 한글 😀");
   // typing straight into the grid is one tap away, and gives the keyboard back to it
   await touchPage.getByRole("button", { name: "Type straight into the terminal", exact: true }).click();
-  assert.equal(await touchPage.locator(".terminal-input").count(), 0);
+  assert.equal(await touchPage.locator(".terminal-input").count(), 1, "direct typing retains a separate dictation draft");
   assert.equal(await touchPage.locator(".xterm-helper-textarea").getAttribute("inputmode"), null);
   await touchPage.getByRole("button", { name: "Type straight into the terminal", exact: true }).click();
   await line.waitFor();
@@ -1627,7 +1628,7 @@ try {
     await touchPage.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "terminal-input-mobile.png") });
   }
   await touch.close();
-  console.log("PASS touch terminal input line sends whole lines, Enter alone, and yields to direct typing");
+  console.log("PASS touch terminal draft sends whole lines and Enter alone, and remains available alongside direct typing");
 
   // A closed pane and an obsolete saved pane both yield to a live pane. Local access
   // is automatic, so it must not offer a sign-out action that cannot lock the app.

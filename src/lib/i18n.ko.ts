@@ -598,7 +598,7 @@ export const KO: Record<string, string> = {
   "Apply or discard the URL edit before checking the applied server.": "적용된 서버를 확인하기 전에 URL 변경 사항을 적용하거나 버리세요.",
   "Ask the administrator to allow this speech origin, then reload the app.": "관리자에게 이 음성 서버의 출처를 허용해 달라고 요청한 뒤 앱을 새로고침하세요.",
   "Audio goes directly from this browser to your configured speech server, not OpenAI or a browser speech vendor. Nothing records until you press the microphone.": "오디오는 OpenAI나 브라우저 음성 서비스가 아닌, 설정한 음성 서버로 이 브라우저에서 직접 전송됩니다. 마이크를 누르기 전에는 녹음되지 않습니다.",
-  "Auto: available chat, terminal and comment drafts, including phones. On also shows unavailable controls with a reason. Off hides them.": "자동: 휴대폰을 포함해 사용 가능한 채팅, 터미널, 댓글 입력창에 표시합니다. 켜기: 사용할 수 없는 버튼도 이유와 함께 표시합니다. 끄기: 버튼을 숨깁니다.",
+  "Auto and On show the microphone in chat, terminal and comment drafts on desktop and mobile, with a reason when unavailable. Off hides it.": "자동과 켜기는 데스크톱과 모바일의 채팅, 터미널, 댓글 입력창에 마이크를 표시하며, 사용할 수 없으면 이유를 안내합니다. 끄기는 마이크를 숨깁니다.",
   "Check": "확인",
   "Checking applied speech server…": "적용된 음성 서버 확인 중…",
   "Choose a listed model": "목록에서 모델 선택",

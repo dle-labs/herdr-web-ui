@@ -21,7 +21,7 @@ export interface TerminalInputProps {
 const MAX_ROWS = 4;
 
 /**
- * The terminal's input line on a touch screen. A phone's keyboard rewrites what it typed
+ * The terminal's draft input line, including dictation on desktop. A phone's keyboard rewrites what it typed
  * (dictation revising a phrase, an IME finishing a syllable, autocorrect), and a terminal
  * cannot take back keys it already sent: every revision arrived as more text. Here the line
  * is written with the keyboard's own editing and goes to the pane whole, then Enter.

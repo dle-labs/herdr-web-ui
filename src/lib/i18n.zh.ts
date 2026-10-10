@@ -602,7 +602,7 @@ export const ZH: Record<string, string> = {
   "Apply or discard the URL edit before checking the applied server.": "检查已应用配置的服务器前，请先应用或放弃 URL 修改。",
   "Ask the administrator to allow this speech origin, then reload the app.": "请联系管理员允许该语音服务器的源，然后刷新应用。",
   "Audio goes directly from this browser to your configured speech server, not OpenAI or a browser speech vendor. Nothing records until you press the microphone.": "音频会从此浏览器直接发送到你配置的语音服务器，而非 OpenAI 或浏览器的语音服务商。按下麦克风前不会录音。",
-  "Auto: available chat, terminal and comment drafts, including phones. On also shows unavailable controls with a reason. Off hides them.": "自动：在可用的聊天、终端和评论输入框中显示，包括手机端。开启：也显示不可用的按钮及原因。关闭：隐藏按钮。",
+  "Auto and On show the microphone in chat, terminal and comment drafts on desktop and mobile, with a reason when unavailable. Off hides it.": "自动和开启会在桌面及移动端的聊天、终端和评论输入框中显示麦克风，不可用时会说明原因。关闭则隐藏麦克风。",
   "Check": "检查",
   "Checking applied speech server…": "正在检查已应用配置的语音服务器…",
   "Choose a listed model": "从列表中选择模型",

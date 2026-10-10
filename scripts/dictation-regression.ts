@@ -189,6 +189,8 @@ try {
       const composer = page.locator(".composer");
       const message = page.getByRole("textbox", { name: "Message", exact: true });
       await message.waitFor();
+      await composer.locator(".voice-mic").waitFor();
+      assert.equal(await composer.locator(".voice-mic").isDisabled(), true, "unconfigured dictation stays visible with a setup reason on both layouts");
       await settings(page);
       assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true);
       assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "no legacy API key editor");
@@ -451,6 +453,11 @@ try {
       assert.ok((await stores(page)).some((entry) => entry.comment === "visible saved-dialog edit"), "Composer saved-comment Save keeps only the visible edit");
       hold = false;
 
+      // Direct grid typing must not hide the separate dictation draft, even on desktop.
+      await page.keyboard.press("ControlOrMeta+Shift+Comma");
+      await openSettingsPage(page, "Terminal");
+      await page.locator("#terminal-input-mode").selectOption("direct");
+      await closeSettings(page);
       // Terminal line is also a draft: speech must never emit terminal input or Enter.
       await page.locator('.view-switch button[title^="Live terminal"]').click();
       const line = page.getByRole("textbox", { name: "Terminal input line", exact: true });

@@ -600,7 +600,7 @@ export const JA: Record<string, string> = {
   "Apply or discard the URL edit before checking the applied server.": "適用済みのサーバーを確認する前に、URL の変更を適用または破棄してください。",
   "Ask the administrator to allow this speech origin, then reload the app.": "管理者にこの音声サーバーのオリジンの許可を依頼し、アプリを再読み込みしてください。",
   "Audio goes directly from this browser to your configured speech server, not OpenAI or a browser speech vendor. Nothing records until you press the microphone.": "音声は OpenAI やブラウザーの音声サービスではなく、設定した音声サーバーへこのブラウザーから直接送信されます。マイクを押すまで録音されません。",
-  "Auto: available chat, terminal and comment drafts, including phones. On also shows unavailable controls with a reason. Off hides them.": "自動: スマートフォンを含め、利用可能なチャット・ターミナル・コメントの入力欄に表示します。オン: 利用できないボタンも理由付きで表示します。オフ: ボタンを非表示にします。",
+  "Auto and On show the microphone in chat, terminal and comment drafts on desktop and mobile, with a reason when unavailable. Off hides it.": "自動とオンは、デスクトップとモバイルのチャット・ターミナル・コメントの入力欄にマイクを表示し、利用できない場合は理由を示します。オフは非表示にします。",
   "Check": "確認",
   "Checking applied speech server…": "適用済みの音声サーバーを確認中…",
   "Choose a listed model": "一覧からモデルを選択",

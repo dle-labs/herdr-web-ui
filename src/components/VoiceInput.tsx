@@ -184,7 +184,8 @@ export function useDictation(options: DictationOptions): Dictation {
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
   const cancel = useCallback((): void => { clear(); voiceRef.current.cancel(); }, [clear]);
-  const shown = wanted && (settings.voiceInput === "on" || voice.available);
+  // Keep the entry point discoverable on every layout, even before setup or on HTTP.
+  const shown = wanted;
   const undo = useCallback((): void => {
     if (voiceRef.current.state !== "idle" || recoveryRef.current !== null || composing.current) return;
     const current = latest.current;

@@ -90,7 +90,7 @@ export function DictationSettings() {
 
   return <>
     <SettingsGroup note={t("Audio goes directly from this browser to your configured speech server, not OpenAI or a browser speech vendor. Nothing records until you press the microphone.")}>
-      <SettingsRow label={t("Microphone button")} description={t("Auto: available chat, terminal and comment drafts, including phones. On also shows unavailable controls with a reason. Off hides them.")} wide>
+      <SettingsRow label={t("Microphone button")} description={t("Auto and On show the microphone in chat, terminal and comment drafts on desktop and mobile, with a reason when unavailable. Off hides it.")} wide>
         <Segmented label={t("Microphone button")} value={settings.voiceInput} onChange={(voiceInput) => update({ voiceInput })} options={[{ value: "auto", label: t("Auto") }, { value: "on", label: t("On") }, { value: "off", label: t("Off") }]} />
       </SettingsRow>
       <SettingsRow label={t("Recognition language")}><span className="settings-description">{t("English (en)")}</span></SettingsRow>
