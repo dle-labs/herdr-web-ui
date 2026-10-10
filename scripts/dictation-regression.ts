@@ -54,6 +54,22 @@ async function caret(field: Locator, at: number): Promise<void> {
     node.dispatchEvent(new Event("select", { bubbles: true }));
   }, at);
 }
+async function assertInlineComposerStatus(surface: Locator): Promise<void> {
+  if (!await surface.evaluate((node) => node.classList.contains("composer"))) return;
+  assert.equal(await surface.locator(":scope > .voice-pill").count(), 0, "no separate dictation box outside the input card");
+  assert.ok(await surface.locator(".composer-draft > .voice-pill").evaluate((node) => {
+    const field = node.closest(".composer-draft")!;
+    const card = node.closest(".composer-surface")!;
+    const status = node.getBoundingClientRect();
+    const bounds = card.getBoundingClientRect();
+    const style = getComputedStyle(node);
+    return field.contains(card.querySelector("textarea"))
+      && status.left >= bounds.left && status.right <= bounds.right
+      && status.top >= bounds.top && status.bottom <= bounds.bottom
+      && style.borderTopWidth === "0px" && style.borderRadius === "0px";
+  }), "dictation status shares the editable message area without a separate border");
+  assert.equal(await surface.locator("textarea").getAttribute("placeholder"), "", "recording/transcribing takes the placeholder's place");
+}
 async function start(page: Page, surface: Locator, keyboard = false): Promise<void> {
   await surface.locator(".voice-mic").waitFor();
   assert.equal(await surface.locator(".voice-mic").count(), 1, "one replacement microphone per surface");
@@ -79,6 +95,7 @@ async function start(page: Page, surface: Locator, keyboard = false): Promise<vo
   await page.waitForFunction(() => (window as any).__dictationBytes > 0);
   assert.equal(await surface.locator('.voice-pill [role="status"]').getAttribute("aria-live"), "polite");
   assert.ok(await surface.locator(".voice-pill").evaluate((node) => !["absolute", "fixed"].includes(getComputedStyle(node).position)), "status is in flow");
+  await assertInlineComposerStatus(surface);
 }
 async function finish(page: Page, surface: Locator, keyboard = false): Promise<void> {
   const before = posts().length;
@@ -242,6 +259,10 @@ try {
       await message.fill("prefix suffix");
       await caret(message, 7);
       await start(page, composer, true);
+      if (process.env.UI_EVIDENCE_DIR) {
+        mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dictation-inline-recording-${mobile ? "phone" : "desktop"}.png`) });
+      }
       await finish(page, composer, true);
       await until("captured-caret insertion", async () => await message.inputValue() === "prefix spoken words suffix");
       assert.equal(sent.length, 0, "dictation never sends");
@@ -286,6 +307,10 @@ try {
       await message.fill("visible only");
       await start(page, composer);
       await finish(page, composer);
+      await composer.locator('.voice-pill[data-state="transcribing"]').waitFor();
+      await assertInlineComposerStatus(composer);
+      assert.equal(await message.inputValue(), "visible only", "transcription leaves the editable draft visible");
+      if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `dictation-inline-transcribing-${mobile ? "phone" : "desktop"}.png`) });
       await composer.getByRole("button", { name: "Cancel dictation", exact: true }).click();
       await release(page);
       assert.equal(await message.inputValue(), "visible only", "late cancelled result cannot insert");

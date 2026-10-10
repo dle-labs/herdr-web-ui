@@ -1116,6 +1116,8 @@ export function Composer({
           );
         })()}
 
+        <div className="composer-draft">
+          {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
         <textarea
           ref={textareaRef}
         onCompositionStart={() => { composingRef.current = true; }}
@@ -1124,7 +1126,7 @@ export function Composer({
           rows={1}
           maxLength={MAX_COMPOSER_CHARS}
           value={text}
-          placeholder={placeholder}
+          placeholder={dictation.voice.state !== "idle" ? "" : placeholder}
           aria-label={t("Message")}
           aria-controls={menuOpen ? menuId : undefined}
           aria-expanded={menuOpen}
@@ -1149,6 +1151,7 @@ export function Composer({
             setNote(null);
           }}
         />
+        </div>
 
         <div className="composer-controls composer-controls-left">
           <input
@@ -1282,8 +1285,6 @@ export function Composer({
       {!shownNote && terminalOnly !== null && (
         <div className="composer-hint" role="status">{t("{command} opens a tree the chat cannot show. It runs in the terminal — tap the terminal button at the top of the screen to choose a branch.", { command: `/${terminalOnly}` })}</div>
       )}
-      {/* In flow, so status/recovery does not cover the draft or the mobile keyboard. */}
-      {dictation.shown && <VoiceRecordingPill dictation={dictation} align="start" />}
     </div>
   );
 }

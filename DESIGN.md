@@ -1355,7 +1355,9 @@ One set for both themes: the card is island black wherever it shows.
   draft line is also available beside direct grid typing when dictation controls are enabled.
 - Dictation settings explicitly applies a HTTPS speech URL and model. Recognition is English;
   recording is uploaded directly on Finish, with no vendor fallback or polishing. Live streaming is gated.
-- The in-flow, wrapping status row shows Cancel, status, level bars and a mono timer. It does not
+- The in-flow, wrapping status row shows Cancel, status, level bars and a mono timer. In the chat
+  composer it shares the message field above any draft text, replacing the placeholder during capture
+  and transcription, without a separate border or card. The draft remains editable. It does not
   float over the draft or extend beyond narrow popovers. Changed drafts/selections get an owner-scoped
   transcript with Insert at cursor / Discard. Error text uses `role="alert"`; status uses `role="status"`.
   Accent only while recording; danger tokens stay for errors. Touch controls use `--touch-target`.

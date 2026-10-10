@@ -93,8 +93,7 @@
   visibility: hidden;
 }
 
-/* dictation's pill (VoiceInput.css) opens over the composer, where the greeting stands: the
-   greeting keeps its box and yields until the pill is gone */
+/* Dictation is inside the message area; the greeting yields while recording. */
 .composer[data-dictating] .composer-greeting {
   visibility: hidden;
 }
@@ -147,11 +146,6 @@
 .composer-note {
   width: min(100%, var(--chat-w));
   margin-inline: auto;
-}
-
-/* the dictation pill floats above the composer, on the same column edge */
-.composer > .voice-pill[data-align="start"] {
-  left: calc(var(--space-4) + max(0px, (100% - 2 * var(--space-4) - var(--chat-w)) / 2));
 }
 
 /* the middle of the card's last row, between add and the round button, pushed to the button's
@@ -512,8 +506,27 @@
   border-radius: var(--radius-sm);
 }
 
-.composer-text {
+/* Recording, transcription and recovery share the message field, not a separate card.
+   They stay in flow so an existing draft remains readable and editable. */
+.composer-draft {
   grid-area: text;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.composer-draft > .voice-pill {
+  padding: var(--space-4) var(--space-5) var(--space-1);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.composer-draft > .voice-pill.is-open + .composer-text {
+  padding-top: var(--space-1);
+}
+
+.composer-text {
   width: 100%;
   min-width: 0;
   min-height: calc(1lh + var(--space-5));
