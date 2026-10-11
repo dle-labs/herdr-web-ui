@@ -50,7 +50,7 @@ const ChatHistoryContext = createContext("");
 /** Bound once: a class method handed on loses its `this`. */
 const persistReplyComment = blockComments.save.bind(blockComments);
 import type { TypedAnswer } from "../lib/promptAnswer.ts";
-import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationTurn, InteractivePrompt, OmoTaskResult } from "../../shared/protocol.ts";
+import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationResponse, ConversationTurn, InteractivePrompt, OmoTaskResult } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
 import { currentLocale, useT } from "../lib/i18n.ts";
 
@@ -576,6 +576,41 @@ function FallbackTurn({ paneId, message }: { paneId: string; message: Transcript
   return <Turn paneId={paneId} turn={turn} live={false} waiting={false} showThinking={false} index={-1} commentable={false} />;
 }
 
+/** Optional terminal output must never hold initial display or transcript polling. */
+function TerminalFallback({ paneId }: { paneId: string }) {
+  const { fetchPaneTranscript } = useMachineApi();
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const visible = usePageVisible();
+  useEffect(() => {
+    if (!open || !visible) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const read = async (): Promise<void> => {
+      try {
+        const result = await fetchPaneTranscript(paneId, TRANSCRIPT_LINES);
+        if (cancelled) return;
+        setText(toTranscriptMessages(result.text).filter((message) => message.role !== "status").map((message) => message.text).join("\n\n"));
+        setError(null);
+      } catch (cause) {
+        if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => void read(), PROMPT_POLL_MS);
+      }
+    };
+    void read();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [paneId, open, visible, fetchPaneTranscript]);
+  return <details className="chat-terminal-fallback" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>{t("Conversation unavailable — show terminal output")}</summary>
+    {text !== null && <pre>{text}</pre>}
+    {text === null && error === null && <p className="chat-inline-state" role="status">{t("Loading…")}</p>}
+    {error !== null && <p className="chat-inline-state chat-inline-error" role="alert">{error}</p>}
+  </details>;
+}
+
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
 export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
@@ -585,7 +620,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   // polls pause while the page is hidden and pick up at once when it is back
   const visible = usePageVisible();
   /** the answer last laid out: an unchanged poll (a 304) hands back this very object */
-  const lastAnswer = useRef<unknown>(null);
+  const lastAnswer = useRef<ConversationResponse | null>(null);
   const [conversationRefresh] = useState(() => new ConversationRefresh());
   const onMetadataRef = useRef(onMetadata);
   onMetadataRef.current = onMetadata;
@@ -742,7 +777,15 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
         setAbandoned(conversation.abandoned ?? null);
         let next: ChatState;
         if (conversation.source !== "scrollback") next = { source: "conversation", conversationSource: conversation.source, turns: conversation.turns, messages: [], truncated: false };
+        else if (agent !== null) next = { source: "scrollback", turns: [], messages: [], truncated: false };
         else {
+          // The reader has rejected this history. Hide it before the separate terminal
+          // request, which may wait or fail; a transport error must not revive those turns.
+          if (lastAnswer.current?.source !== "scrollback") {
+            setState((previous) => previous.source === "conversation"
+              ? { source: "scrollback", turns: [], messages: [], truncated: false } : previous);
+            signature.current = ""; lastAnswer.current = null;
+          }
           const result = await fetchPaneTranscript(paneId, TRANSCRIPT_LINES);
           if (cancelled || generation !== olderGeneration.current) return;
           next = { source: "scrollback", turns: [], messages: toTranscriptMessages(result.text).filter((message) => message.role !== "status"), truncated: result.truncated === true };
@@ -774,13 +817,13 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
       onConversationWatch?.(paneId, false);
       conversationRefresh.stop();
     };
-  }, [paneId, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, visible, onConversationWatch]);
+  }, [paneId, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, visible, onConversationWatch, agent]);
 
   // Sends, status/history repairs and visibility return read immediately without cancelling
   // the answer in flight. The reader is installed before this effect requests its first read.
   useEffect(() => {
     if (visible) conversationRefresh.refresh();
-  }, [paneId, refreshKey, pollKey, visible, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, onConversationWatch]);
+  }, [paneId, refreshKey, pollKey, visible, fetchPaneConversation, fetchPaneTranscript, conversationRefresh, onConversationWatch, agent]);
 
   // Mount/visibility return already read immediately; only a changed push key invalidates.
   useEffect(() => {
@@ -976,7 +1019,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
   }, [turns, restored]);
   heldPage.current = state.turns;
   const finishedBeforeSend = sentOver !== null && sentOver.page === state.turns ? sentOver.turn : null;
-  const empty = state.source === "conversation" ? turns.length === 0 : state.messages.length === 0;
+  const empty = state.source === "conversation" ? turns.length === 0 : agent === null && state.messages.length === 0;
   const blank = !ended && chatIsBlank({ loaded, failed: error !== null, transcript: state.source === "conversation", turns: turns.length, older: typeof olderCursor === "string", abandoned: abandoned?.count ?? 0, prompt: prompt !== null, agent });
   // the scrollback standing in says nothing of the conversation: it has no history to compare
   const known = loaded && error === null && !ended && state.source === "conversation";
@@ -1077,7 +1120,7 @@ export const ChatView = memo(function ChatView({ paneId, refreshKey, invalidatio
             </RenderBoundary>;
           })
         : agent !== null
-          ? <details className="chat-terminal-fallback"><summary>{t("Conversation unavailable — show terminal output")}</summary><pre>{state.messages.map((message) => message.text).join("\n\n")}</pre></details>
+          ? <TerminalFallback key={paneId} paneId={paneId} />
           : state.messages.map((message, index) => <FallbackTurn key={index} paneId={paneId} message={message} />)}
       {!ended && !connected && <p className="chat-inline-state" role="status">{t("Reconnecting…")}</p>}
       {error !== null && <p className="chat-inline-state chat-inline-error" role="alert">{errorStatus === 401 ? t("locked — the token gate is asking again") : error}</p>}

@@ -1,5 +1,5 @@
 import { createContext, forwardRef, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Maximize2 } from "lucide-react";
 
 import "./BlockComments.css";
 
@@ -9,6 +9,9 @@ import { fileUriPath } from "../lib/terminalFileLinks.ts";
 import { CHAT_HIGHLIGHT_LIMIT, languageForFence } from "../lib/highlight.ts";
 import { HighlightedCode } from "./HighlightedCode.tsx";
 import { useT } from "../lib/i18n.ts";
+import { type MarkdownImagePreview } from "../lib/markdownImages.ts";
+import { formatBytes } from "../lib/bridgeProgress.ts";
+import { MermaidLightbox } from "./MermaidLightbox.tsx";
 import { copyText } from "../lib/clipboard.ts";
 import { BlockCommentContext, partAnchor, replyParts, usePartTouched, type PartLookup } from "../lib/blockComments.ts";
 import { forgetCommentPart, rememberCommentPart } from "../lib/commentSelection.ts";
@@ -67,6 +70,79 @@ function MathExpression({ value, displayMode = false }: { value: string; display
   }
 }
 
+type MermaidRender = typeof import("../lib/mermaid.ts").renderMermaid;
+let mermaidLoad: Promise<MermaidRender> | null = null;
+
+/** Mermaid, fetched once with the first diagram (lib/mermaid.ts); offline before that, a diagram stays a code block. */
+function loadMermaid(): Promise<MermaidRender> {
+  mermaidLoad ??= import("../lib/mermaid.ts").then((module) => module.renderMermaid);
+  return mermaidLoad;
+}
+
+/** Whether the page is drawn dark (`data-theme` on <html>, which Settings keeps current). */
+function useDarkTheme(): boolean {
+  const [dark, setDark] = useState(() => document.documentElement.dataset.theme !== "light");
+  useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => setDark(root.dataset.theme !== "light"));
+    observer.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+  return dark;
+}
+
+/** A ```mermaid fence drawn as a diagram. Until it parses (a reply still streaming, a syntax error) it shows as the code block it is. */
+function MermaidDiagram({ value, source }: { value: string; source?: SourceLines }) {
+  const t = useT();
+  const [svg, setSvg] = useState<string | null>(null);
+  const [zoomed, setZoomed] = useState(false);
+  const dark = useDarkTheme();
+  useEffect(() => {
+    let live = true;
+    // the parse runs after a pause, so a streaming block is not re-parsed on every poll
+    const timer = window.setTimeout(() => {
+      loadMermaid().then((render) => render(value, dark)).then(
+        (markup) => { if (live) setSvg(markup); },
+        () => { if (live) setSvg(null); },
+      );
+    }, 300);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [value, dark]);
+  if (svg === null) return <CodeBlock language="mermaid" value={value} firstLine={source === undefined ? undefined : source[0] + 1} />;
+  return (
+    <div className="markdown-mermaid-frame">
+      <div className="markdown-mermaid" {...sourceAttributes(source)} onClick={() => setZoomed(true)} dangerouslySetInnerHTML={{ __html: svg }} />
+      <button type="button" className="icon-button markdown-mermaid-zoom" onClick={() => setZoomed(true)} aria-label={t("Enlarge diagram")} title={t("Enlarge diagram")}>
+        <Maximize2 aria-hidden="true" />
+      </button>
+      {zoomed && <MermaidLightbox svg={svg} onClose={() => setZoomed(false)} />}
+    </div>
+  );
+}
+
+/** Stats an image before it can load; null context keeps chat images as links. */
+type MarkdownImageResolver = (src: string) => Promise<MarkdownImagePreview | null>;
+export const MarkdownImageContext = createContext<MarkdownImageResolver | null>(null);
+
+function MarkdownImage({ src, alt, fallback, resolve, interactive }: { src: string; alt: string; fallback: ReactNode; resolve: MarkdownImageResolver; interactive: boolean }) {
+  const t = useT();
+  const [loaded, setLoaded] = useState<{ src: string; resolve: MarkdownImageResolver; preview: MarkdownImagePreview | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    resolve(src).then(
+      (preview) => { if (live) setLoaded({ src, resolve, preview }); },
+      () => { if (live) setLoaded({ src, resolve, preview: null }); },
+    );
+    return () => { live = false; };
+  }, [src, resolve]);
+  const preview = loaded?.src === src && loaded.resolve === resolve ? loaded.preview : undefined;
+  if (preview === undefined) return <span>{alt}</span>;
+  if (preview === null) return <>{fallback}</>;
+  if (preview.kind === "inline") return <img className="markdown-image" src={preview.url} alt={alt} loading="lazy" />;
+  const message = t("This image is {size}; download it to view.", { size: formatBytes(preview.size) });
+  return interactive ? <a href={preview.downloadUrl} download>{message}</a> : <span>{message}</span>;
+}
+
 /** A file path the viewer opens: a button that reads as the text or code it replaced. */
 function FilePath({ path, code, open }: { path: string; code: boolean; open: (path: string) => void }) {
   const t = useT();
@@ -80,6 +156,7 @@ function Inline({ nodes, interactive = true }: { nodes: InlineNode[]; interactiv
   const open = interactive ? context : null;
   const quoted = useContext(QuotedContext);
   const t = useT();
+  const imageResolver = useContext(MarkdownImageContext);
   return <>{nodes.map((node, index) => {
     const key = `${node.type}-${index}`;
     switch (node.type) {
@@ -94,6 +171,11 @@ function Inline({ nodes, interactive = true }: { nodes: InlineNode[]; interactiv
         return open !== null && codeIsFilePath(node.value) ? <FilePath key={key} path={node.value} code open={open} /> : <code key={key}>{node.value}</code>;
       }
       case "math": return <MathExpression key={key} value={node.value} />;
+      case "image": {
+        return imageResolver === null
+          ? <Inline key={key} nodes={node.fallback} interactive={interactive} />
+          : <MarkdownImage key={key} src={node.src} alt={node.alt} resolve={imageResolver} interactive={interactive && !quoted} fallback={<Inline nodes={node.fallback} interactive={interactive} />} />;
+      }
       case "strong": return <strong key={key}><Inline nodes={node.children} interactive={interactive} /></strong>;
       case "em": return <em key={key}><Inline nodes={node.children} interactive={interactive} /></em>;
       case "del": return <del key={key}><Inline nodes={node.children} interactive={interactive} /></del>;
@@ -232,6 +314,7 @@ function Blocks({ blocks, path = NO_PATH, commentable = true }: { blocks: Markdo
  */
 function BlockView({ block, path, commentable }: { block: MarkdownBlock; path: number[]; commentable: boolean }): ReactNode {
   const comment = useCommentable(path, commentable && block.type !== "hr" && block.type !== "list");
+  const quoted = useContext(QuotedContext);
   const { className, ref } = comment;
   switch (block.type) {
     case "heading": {
@@ -256,7 +339,9 @@ function BlockView({ block, path, commentable }: { block: MarkdownBlock; path: n
         const line = block.type === "table" ? block.rowLines?.[row] : undefined;
         return line === undefined ? {} : { "data-source-line": line };
       };
-      const body = block.type === "code" ? <CodeBlock language={block.language} value={block.value} firstLine={block.source === undefined ? undefined : block.source[0] + 1} />
+      const body = block.type === "code" ? (block.language === "mermaid" && !quoted
+        ? <MermaidDiagram value={block.value} source={block.source} />
+        : <CodeBlock language={block.language} value={block.value} firstLine={block.source === undefined ? undefined : block.source[0] + 1} />)
         : block.type === "math" ? <MathExpression value={block.value} displayMode />
         : <div className="markdown-table-wrap">
           <table><thead><tr {...rowLine(0)}>{block.header.map((cell, cellIndex) => <th key={cellIndex}><Inline nodes={cell} /></th>)}</tr></thead>

@@ -203,7 +203,7 @@ function itemBlock(list: ListBlock, index: number): ListBlock {
 
 /** The text of inline nodes with their markup dropped: a link or emphasis reads as its words. */
 function inlineText(nodes: InlineNode[]): string {
-  return nodes.map((node) => "value" in node ? node.value : inlineText(node.children)).join("");
+  return nodes.map((node) => "value" in node ? node.value : inlineText(node.type === "image" ? node.fallback : node.children)).join("");
 }
 
 /** The plain text of a block, without markup: what is quoted, and what tells two blocks apart. */

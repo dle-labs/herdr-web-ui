@@ -33,7 +33,9 @@ Neither command updates itself; only `bun run start` and the plugin run the upda
   managed by a maintainer for a genuine code dependency; code conflicts and approval gates are
   scheduling constraints, not reasons to stack. See the [coordinated-work procedure](docs/development.md#coordinated-work).
   Contributors must not assume elevated permissions or that a stack has been authorized.
-- One change per PR. PRs are squash merged, so the PR title becomes the commit:
+- One change per PR. Changes that cannot stand apart, because one needs another's code, may share
+  a PR: keep each as its own commit, in the order they depend on each other, and say in the
+  description what needs what. PRs are squash merged, so the PR title becomes the commit:
   `type(scope): summary`, for example `fix(chat): keep the finished turn finished after Send`.
   The merge adds `(#N)`.
 - Fill in the [PR template](.github/pull_request_template.md): what changed and how you checked it.

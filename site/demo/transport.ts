@@ -12,7 +12,7 @@
  * one notice instead of a TUI. A message sent from a chat gets a demo answer.
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
-import type { DictationConfigResponse, AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PluginActionResult, PluginActions, PluginActionsResponse, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { DictationConfigResponse, AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
@@ -93,6 +93,11 @@ function addAgent(pane: Pane): void {
 /** The OmO pane's background tasks (the composer's "2 background tasks"), timed from now. */
 const OMO_TASKS_PANE = "docs";
 const ago = (minutes: number): string => new Date(Date.now() - minutes * 60_000).toISOString();
+const planSteps: PlanStep[] = [
+  { id: "1", label: "Trace replayed requests", active: null, status: "completed", blocked_by: [], owner: null, started_at: ago(8), ended_at: ago(6) },
+  { id: "2", label: "Count idempotent replays", active: "Adding the replay metric", status: "in_progress", blocked_by: ["1"], owner: null, started_at: ago(5), ended_at: null },
+  { id: "3", label: "Cover the metric with tests", active: null, status: "pending", blocked_by: ["2"], owner: null, started_at: null, ended_at: null },
+];
 const omoTasks = () => [
   { id: "st_demo1", title: "Check every link in the guide", category: "quick", model: "Claude Haiku 4.5", status: "running", started_at: ago(3), ended_at: null, turns: 6, tool_calls: 41, tokens: 52_300 },
   { id: "st_demo2", title: "Rewrite the install section for Windows", category: "writing", model: "Claude Opus 5.5", status: "running", started_at: ago(1), ended_at: null, turns: 2, tool_calls: 7, tokens: 18_900 },
@@ -147,6 +152,7 @@ function backfillPanes(): void {
 }
 backfillPanes();
 for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === OMO_TASKS_PANE) Object.assign(pane, { background_tasks: 2 });
+for (const pane of snapshot().panes) if (keyOfPane.get(pane.pane_id) === "api") Object.assign(pane, { plan: { done: 1, total: planSteps.length, current: "Adding the replay metric" } });
 
 // Fictional repositories keep their checkout catalog after a workspace closes. The list joins
 // each checkout to the current snapshot, so closed checkouts can be opened again without git.
@@ -529,30 +535,33 @@ const DEMO_FILES = ["src/routes/payments.ts", "src/lib/idempotency.ts", "src/met
 function usageReport(): UsageReport {
   const now = Date.now();
   const at = (hours: number) => new Date(now + hours * 3_600_000).toISOString();
+  // Claude and Codex state a window's length (5 h, 7 days), so the server knows when it began; the others do not
+  const session = (hours: number) => ({ resets_at: at(hours), starts_at: at(hours - 5) });
+  const week = (hours: number) => ({ resets_at: at(hours), starts_at: at(hours - 168) });
   const checked = new Date(now).toISOString();
   return { providers: [
     { id: "claude", key: "claude:demo-claude", account: "sam@example.com", plan: "max", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 38, resets_at: at(2.4) },
-      { kind: "week", scope: null, used_percent: 61, resets_at: at(78) },
-      { kind: "week", scope: "Sonnet", used_percent: 12, resets_at: at(78) },
+      { kind: "session", scope: null, used_percent: 38, ...session(2.4) },
+      { kind: "week", scope: null, used_percent: 61, ...week(78) },
+      { kind: "week", scope: "Sonnet", used_percent: 12, ...week(78) },
     ] },
     { id: "codex", key: "codex:demo-codex-work", account: "sam@work.example", plan: "pro", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 22, resets_at: at(1.2) },
-      { kind: "week", scope: null, used_percent: 84, resets_at: at(97) },
+      { kind: "session", scope: null, used_percent: 22, ...session(1.2) },
+      { kind: "week", scope: null, used_percent: 84, ...week(97) },
     ] },
     { id: "codex", key: "codex:demo-codex-home", account: "sam@example.com", plan: "plus", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 5, resets_at: at(3.1) },
-      { kind: "week", scope: null, used_percent: 31, resets_at: at(140) },
+      { kind: "session", scope: null, used_percent: 5, ...session(3.1) },
+      { kind: "week", scope: null, used_percent: 31, ...week(140) },
     ] },
     { id: "cursor", key: "cursor:demo-cursor", account: "sam@example.com", plan: "pro", problem: null, checked_at: checked, windows: [
-      { kind: "month", scope: null, used_percent: 27, resets_at: at(290) },
-      { kind: "month", scope: "Cursor models", used_percent: 19, resets_at: at(290) },
-      { kind: "month", scope: "Other models", used_percent: 8, resets_at: at(290) },
+      { kind: "month", scope: null, used_percent: 27, resets_at: at(290), starts_at: null },
+      { kind: "month", scope: "Cursor models", used_percent: 19, resets_at: at(290), starts_at: null },
+      { kind: "month", scope: "Other models", used_percent: 8, resets_at: at(290), starts_at: null },
     ] },
     { id: "opencode", key: "opencode:demo-opencode", account: null, plan: "Go", problem: null, checked_at: checked, windows: [
-      { kind: "session", scope: null, used_percent: 10, resets_at: at(3.2) },
-      { kind: "week", scope: null, used_percent: 28, resets_at: at(18) },
-      { kind: "month", scope: null, used_percent: 15, resets_at: at(520) },
+      { kind: "session", scope: null, used_percent: 10, resets_at: at(3.2), starts_at: null },
+      { kind: "week", scope: null, used_percent: 28, resets_at: at(18), starts_at: null },
+      { kind: "month", scope: null, used_percent: 15, resets_at: at(520), starts_at: null },
     ] },
   ] };
 }
@@ -661,6 +670,11 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     if (!chat) return json({ source: "scrollback", turns: [] });
     const source = agent === "claude" ? "claude-transcript" : agent === "codex" ? "codex-transcript" : agent === "gjc" ? "gjc-transcript" : agent === "omo" ? "omo-transcript" : agent === "pi" ? "pi-transcript" : agent === "devin" ? "devin-transcript" : agent === "hermes" ? "hermes-transcript" : "omp-transcript";
     return json({ source, turns: chat.turns, metadata: chat.metadata, cursor: null });
+  }
+  if (path === "/api/pane/plan") {
+    if (method !== "GET") return error("method_not_allowed", "use GET", 400);
+    if (!paneId) return error("missing_pane_id", "pane_id query parameter is required", 400);
+    return json({ plan: keyOfPane.get(paneId) === "api" ? { steps: planSteps } : null, server_time: new Date().toISOString() } satisfies PanePlan);
   }
   if (path === "/api/pane/prompt") return json({ prompt: keyOfPane.get(paneId) === "web" && promptOpen ? { ...PROMPT, id: promptId } : null });
   if (path === "/api/pane/prompt/answer") {

@@ -34,6 +34,7 @@ import { PushTestControls } from "./PushTestControls.tsx";
 import { previewAlertSound, unlockAlertSound } from "../lib/alertSound.ts";
 import { HerdrUpdateControls, UpdateControls } from "./UpdateControls.tsx";
 import { TelemetryControls } from "./TelemetryControls.tsx";
+import { useSheetSwipe } from "../lib/sheets.ts";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -175,6 +176,18 @@ function AppearancePage() {
       </SettingsRow>
       <SettingsRow label={t("Agents order")} description={t("Activity keeps a waiting agent on top, then the one that changed last; herdr's own order is not changed")} wide>
         <Segmented label={t("Agents order")} value={settings.agentOrder} onChange={(agentOrder) => update({ agentOrder })} options={[{ value: "workspace", label: t("Workspaces") }, { value: "activity", label: t("Activity") }]} />
+      </SettingsRow>
+      <SettingsRow label={t("Workspace cards")} description={t("In the Workspaces order, put each workspace's agents in a card under the workspace's name")}>
+        <Toggle label={t("Workspace cards")} checked={settings.agentCards} onChange={(agentCards) => update({ agentCards })} />
+      </SettingsRow>
+      <SettingsRow label={t("Pin agents")} description={t("Show a star beside each agent that keeps it at the top of the Agents list")}>
+        <Toggle label={t("Pin agents")} checked={settings.agentPins} onChange={(agentPins) => update({ agentPins })} />
+      </SettingsRow>
+      <SettingsRow label={t("Plan count in the header")} description={t("Show how many steps of the open pane's plan are done in the header, where a press opens the plan; off, the header has no plan button")}>
+        <Toggle label={t("Plan count in the header")} checked={settings.planButton} onChange={(planButton) => update({ planButton })} />
+      </SettingsRow>
+      <SettingsRow label={t("Plan flow")} description={t("Draw a plan as a flow of boxes, with a switch to its list; off, a plan opens as the list alone")}>
+        <Toggle label={t("Plan flow")} checked={settings.planFlow} onChange={(planFlow) => update({ planFlow })} />
       </SettingsRow>
       <SettingsRow label={t("Quiet opened finishes")} description={t("A finished agent you have opened here loses its dot, as herdr's own view would clear it; remembered per PC on this browser")}>
         <Toggle label={t("Quiet opened finishes")} checked={settings.quietOpenedDone} onChange={(quietOpenedDone) => update({ quietOpenedDone })} />
@@ -688,6 +701,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
   const settingsScrollRef = useRef(0);
   // Tab stays inside the dialog, and the focus returns to whatever opened it
   const surface = useFocusTrap<HTMLElement>(true, { initialFocus: backRef });
+  useSheetSwipe(surface, onClose);
   // opened (by its shortcut) over a comment's dialog, which is portalled to the end of the body and lies above the
   // dialogs' own layer: raised over it, as over a preview. Read once, as it opens: it is mounted per opening
   const [overComment] = useState(() => hasCommentDialog(document));

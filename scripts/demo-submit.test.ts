@@ -28,6 +28,13 @@ it("the demo refuses draft clearing, drains accepted pending IDs once, and never
     const initial = (await json("/api/session")).snapshot;
     const codex = initial.panes.find((pane: any) => pane.agent === "codex").pane_id;
     const claude = initial.panes.find((pane: any) => pane.agent === "claude").pane_id;
+    assert.deepEqual(initial.panes.find((pane: any) => pane.pane_id === claude).plan, { done: 1, total: 3, current: "Adding the replay metric" });
+    const demoPlan = await json(`/api/pane/plan?pane_id=${claude}`);
+    assert.deepEqual(demoPlan.plan.steps.map((step: any) => [step.label, step.status]), [
+      ["Trace replayed requests", "completed"], ["Count idempotent replays", "in_progress"], ["Cover the metric with tests", "pending"],
+    ]);
+    assert.ok(Date.parse(demoPlan.server_time) > 0);
+    assert.deepEqual((await json(`/api/pane/plan?pane_id=${codex}`)).plan, null);
     const transcript = () => json("/api/pane/conversation?pane_id=" + codex);
     const connect = () => {
       const socket = new demo.WebSocket("ws://demo.test/ws");

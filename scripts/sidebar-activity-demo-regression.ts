@@ -82,6 +82,43 @@ try {
     const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
     try {
       // Workspace menus no longer mix in pane operations; header More keeps pane movement.
+      // off by default: herdr's order in a flat list, each row naming its own workspace
+      await withPage(browser, {}, async (page) => {
+        assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER);
+        assert.equal(await page.locator(".agents-sidebar .agent-group").count(), 0, "no workspace cards unless Settings turns them on");
+        assert.equal(await page.locator(".agents-sidebar .agent-pin-toggle").count(), 0, "no pin stars unless Settings turns them on");
+        assert.match(await agent(page, API).locator(".agent-context").textContent() ?? "", /checkout-api/, "a row outside a card names its workspace");
+      });
+      console.log("PASS by default the Agents list is flat, in herdr's order, with no pin stars");
+
+      // a pane's plan: the header's count and the flow stand unless Settings turns them off
+      const planned = async (page: Page): Promise<void> => {
+        await page.goto(`${url}?pane=${encodeURIComponent(panes.api)}`);
+        await page.locator(".conn-live").waitFor({ state: "attached" });
+        await agents(page).first().waitFor({ state: "attached" });
+      };
+      for (const mobile of [false, true]) {
+        await withPage(browser, {}, async (page) => {
+          await planned(page);
+          await page.locator(".plan-button").click();
+          const plan = page.getByRole("dialog", { name: /^Plan/ });
+          await plan.locator(".plan-node").first().waitFor();
+          assert.equal(await plan.locator(".plan-view-switch").count(), 1, "by default the plan opens as a flow, with its switch to the list");
+        }, undefined, mobile);
+        await withPage(browser, { planFlow: false }, async (page) => {
+          await planned(page);
+          await page.locator(".plan-button").click();
+          const plan = page.getByRole("dialog", { name: /^Plan/ });
+          await plan.locator(".plan-step").first().waitFor();
+          assert.equal(await plan.locator(".plan-view-switch, .plan-node").count(), 0, "Plan flow off: the list alone, with no switch");
+        }, undefined, mobile);
+        await withPage(browser, { planButton: false }, async (page) => {
+          await planned(page);
+          assert.equal(await page.locator(".plan-button").count(), 0, "Plan count in the header off: no plan button");
+        }, undefined, mobile);
+      }
+      console.log("PASS the plan's flow and its header count stand by default, on a desktop and a phone, and each goes with its setting");
+
       await withPage(browser, {}, async (page) => {
         await runMoreItem(page, "Move pane to…");
         const move = page.getByRole("menu", { name: /^Move .* to$/ });
@@ -111,7 +148,7 @@ try {
       console.log("PASS header More moves the selected pane and closes stale targets");
 
       // Default: herdr's order before and after a finish, and an opened DONE keeps herdr's dot
-      await withPage(browser, {}, async (page) => {
+      await withPage(browser, { agentCards: true, agentPins: true }, async (page) => {
         const selected = await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection"));
         await page.locator(".header-more-button").focus();
         const workspace = page.locator(`.workspace-select[data-pane="${panes.api}"]`);
@@ -131,11 +168,40 @@ try {
         await page.keyboard.press("Escape");
         const agentRow = agent(page, API);
         const agentSelect = agentRow.locator(".agent-select");
+        // pin an agent that is not first: it must stand above the workspace cards, outside every card
+        const pinnedRow = agent(page, INFRA);
+        const pin = pinnedRow.getByRole("button", { name: `Pin agent: ${INFRA} · infra`, exact: true });
+        assert.equal(await pin.count(), 1, "each agent has a pin control named for it and its workspace");
+        const pinFocused = () => pinnedRow.locator(".agent-pin-toggle").evaluate((star) => document.activeElement === star);
+        assert.equal(await pin.getAttribute("aria-pressed"), "false");
+        await pin.focus();
+        await page.keyboard.press("Space");
+        await page.waitForFunction((key) => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]").includes(key), `local:${panes.infra}`);
+        assert.equal(await pin.getAttribute("aria-pressed"), "true", "keyboard pin persists the agent and keeps the control's name");
+        assert.equal(await pinFocused(), true, "the star keeps the keyboard focus as it moves above the cards");
+        assert.deepEqual(await agentTitles(page), [INFRA, ...AGENTS_HERDR_ORDER.filter((title) => title !== INFRA)], "a pinned agent moves to the top, the rest keep herdr's order");
+        const pinnedLayout = () => page.evaluate((title) => {
+          const list = document.querySelector(".agents-sidebar .agent-list")!;
+          const first = list.firstElementChild;
+          return { inCard: [...document.querySelectorAll(".agents-sidebar .agent-group .agent-title")].some((node) => node.textContent === title), firstIsPinnedRow: first?.classList.contains("agent-item") === true && first.querySelector(".agent-title")?.textContent === title };
+        }, INFRA);
+        assert.deepEqual(await pinnedLayout(), { inCard: false, firstIsPinnedRow: true }, "the pinned agent leads the list above the cards, not inside one");
+        await page.reload();
+        await page.locator(".conn-live").waitFor({ state: "attached" });
+        await agents(page).first().waitFor({ state: "attached" });
+        assert.deepEqual(await pinnedLayout(), { inCard: false, firstIsPinnedRow: true }, "the pin survives a reload");
+        await pin.focus();
+        await page.keyboard.press("Enter");
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]").length === 0);
+        assert.equal(await pinFocused(), true, "the star keeps the keyboard focus as it moves back into its card");
+        assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER, "unpin restores the source order");
+        assert.equal((await pinnedLayout()).inCard, true, "unpinned, the agent returns to its card");
+        const refreshedAgentRow = agent(page, API);
         await agentRow.hover();
-        assert.equal(await agentRow.getByRole("button").count(), 1, "hover leaves only the agent selection button");
-        assert.equal(await agentRow.locator('.agent-actions, .row-menu-toggle, [aria-haspopup="menu"]').count(), 0, "hover exposes no agent menu trigger");
+        assert.equal(await refreshedAgentRow.getByRole("button").count(), 2, "hover keeps selection and pin controls");
+        assert.equal(await refreshedAgentRow.locator('.agent-actions, .row-menu-toggle, [aria-haspopup="menu"]').count(), 0, "hover exposes no agent menu trigger");
         await agentSelect.focus();
-        assert.equal(await agentRow.getByRole("button").count(), 1, "keyboard focus exposes no agent menu trigger");
+        assert.equal(await agentRow.getByRole("button").count(), 2, "keyboard focus exposes the pin control");
         await page.keyboard.press("Shift+F10");
         assert.equal(await page.locator(".row-menu, .row-sheet").count(), 0, "the agent has no keyboard context menu");
         await page.keyboard.press("Escape");
@@ -145,6 +211,17 @@ try {
         await page.keyboard.press("Escape");
         console.log("PASS workspace right-click scope, pointer anchor and focus; matching ⋯ menu and existing sidebar layout retained");
         assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER);
+        // herdr's order puts each workspace's agents in a card named for it; a row's dim line
+        // leaves the workspace to the card, its tooltip and the list's label keep it
+        assert.deepEqual(await page.locator(".agents-sidebar .agent-group-name").allTextContents(), ["checkout-api", "web-dashboard", "infra", "docs-site", "cli-tools"]);
+        const apiRow = agent(page, API);
+        // with nothing else to say, the line says the kind rather than stay empty
+        const apiLine = await apiRow.locator(".agent-context").textContent() ?? "";
+        assert.doesNotMatch(apiLine, /checkout-api/, "a row in a card leaves its workspace to the card");
+        assert.match(apiLine, /claude/i, "a row in a card with nothing else to say names its kind");
+        assert.match(await apiRow.locator(".agent-select").getAttribute("title") ?? "", /checkout-api/, "the tooltip still names the workspace");
+        const labelledBy = await page.locator(".agents-sidebar .agent-group-rows", { has: page.locator(".agent-title", { hasText: API }) }).getAttribute("aria-labelledby");
+        assert.equal(await page.locator(`[id="${labelledBy}"]`).textContent(), "checkout-api", "the card's rows are labelled by its head");
         await waitStatus(page, API, "done");
         assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER, "a finish does not move an agent");
         await agentSelect.click();
@@ -153,9 +230,9 @@ try {
         assert.equal(await page.locator(".row-menu, .row-sheet").count(), 0, "selecting the agent does not open a menu");
         assert.equal(await agentStatus(page, API), "done", "herdr's DONE stands until herdr itself shows the pane");
       });
-      console.log("PASS by default the Agents list keeps herdr's order, and an opened DONE keeps its dot");
+      console.log("PASS with Workspace cards on the Agents list keeps herdr's order in workspace cards, and an opened DONE keeps its dot");
 
-      await withPage(browser, {}, async (page) => {
+      await withPage(browser, { agentPins: true }, async (page) => {
         const drawerToggle = page.locator('button[aria-controls="workspace-drawer"]');
         await drawerToggle.tap();
         const agentToggle = page.locator(".agents-sidebar .agent-section-toggle");
@@ -164,8 +241,12 @@ try {
         const agentRow = agent(page, API);
         const agentSelect = agentRow.locator(".agent-select");
         await agentSelect.waitFor();
-        assert.equal(await agentRow.getByRole("button").count(), 1, "touch rows have only an agent selection button");
+        assert.equal(await agentRow.getByRole("button").count(), 2, "touch rows expose selection and pin controls");
         assert.equal(await agents(page).locator('.agent-actions, .row-menu-toggle, [aria-haspopup="menu"]').count(), 0, "touch does not expose an agent menu trigger");
+        const pin = agentRow.getByRole("button", { name: `Pin agent: ${API} · checkout-api`, exact: true });
+        await pin.tap();
+        await page.waitForFunction((key) => JSON.parse(localStorage.getItem("herdr-web-ui:sidebar-agent-pins") ?? "[]").includes(key), `local:${panes.api}`);
+        assert.equal(await pin.getAttribute("aria-pressed"), "true", "a tap pins the agent");
         await agentSelect.tap();
         await page.waitForFunction((paneId) => JSON.parse(sessionStorage.getItem("herdr-web-ui:selection") ?? "{}").pane_id === paneId, panes.api, { timeout: 5_000 });
         assert.equal(await agentSelect.getAttribute("aria-current"), "true", "a tap still selects the agent");
@@ -176,6 +257,8 @@ try {
 
       await withPage(browser, { agentOrder: "activity", quietOpenedDone: true }, async (page) => {
         assert.equal((await agentTitles(page))[0], WEB, "the blocked agent is pinned on top");
+        assert.equal(await page.locator(".agents-sidebar .agent-group").count(), 0, "Activity mixes workspaces, so it draws no cards");
+        assert.match(await agent(page, WEB).locator(".agent-context").textContent() ?? "", /web-dashboard/, "a row outside a card names its workspace");
 
         // the demo's Claude pane finishes out of sight: it rises under the blocked one, and keeps its dot
         await waitStatus(page, API, "done");
@@ -240,7 +323,7 @@ try {
           await page.waitForTimeout(100);
         }
       }, {});
-      console.log("PASS Activity pins blocked and follows recency; an opened DONE reads as ready in both lists, an unopened one keeps its dot");
+      console.log("PASS Activity pins blocked and follows recency without cards; an opened DONE reads as ready in both lists, an unopened one keeps its dot");
 
       // the demo keeps its agent template after its last agent closes (#529 review): a workspace
       // made in an emptied demo still lists its agent with herdr's counter

@@ -493,3 +493,28 @@ describe("conversation invalidation refresh", () => {
     expect(clock.pending()).toBe(0);
   });
 });
+
+it("a timed-out JSON body cannot replace the last conversation ETag, even when it answers late", async () => {
+  const originalTimer = globalThis.setTimeout;
+  const clock = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, delay: number) => originalTimer(callback, delay === 15_000 ? 10 : delay)) as typeof setTimeout);
+  try {
+    const pane = "deadline-cache:p1";
+    globalThis.fetch = (async (_url: string) => Response.json({ source: "codex-transcript", turns: [], cursor: null }, { headers: { etag: '"current"' } })) as typeof fetch;
+    const current = await fetchPaneConversation(pane);
+    let resolve!: (body: ConversationResponse) => void;
+    const late = new Promise<ConversationResponse>((done) => { resolve = done; });
+    const lateResponse = Response.json({}, { headers: { etag: '"obsolete"' } });
+    lateResponse.json = () => late;
+    globalThis.fetch = (async (_url: string) => lateResponse) as typeof fetch;
+    await expect(fetchPaneConversation(pane)).rejects.toThrow("timed out");
+    resolve({ source: "codex-transcript", turns: [], cursor: null });
+    await Promise.resolve();
+    const asked: (string | null)[] = [];
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      asked.push(new Headers(init?.headers).get("if-none-match"));
+      return new Response(null, { status: 304 });
+    }) as typeof fetch;
+    expect(await fetchPaneConversation(pane)).toBe(current);
+    expect(asked).toEqual(['"current"']);
+  } finally { clock.mockRestore(); }
+});

@@ -70,6 +70,11 @@
   color: var(--text-strong);
 }
 
+/* a key shows its press in its own colours, not with the dim other buttons take (styles.css) */
+.key:active {
+  opacity: 1;
+}
+
 @media (pointer: coarse), (max-width: 768px) {
   .key-bar {
     display: flex;

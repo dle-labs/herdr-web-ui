@@ -7,6 +7,8 @@ export type InlineNode =
   | { type: "math"; value: string }
   | { type: "strong" | "em" | "del"; children: InlineNode[] }
   | { type: "link"; href: string; children: InlineNode[] }
+  /** `![alt](src)`; `fallback` is what a surface that draws no images shows after the `!` */
+  | { type: "image"; alt: string; src: string; fallback: InlineNode[] }
   /** a link to a local file (`[report](/repo/out/REPORT.md)`): its label opens the path */
   | { type: "file"; path: string; children: InlineNode[] };
 
@@ -182,8 +184,11 @@ export function parseInline(source: string, links = true, depth = 0): InlineNode
   let offset = 0;
   for (const match of inlineMarks(source)) {
     const index = match.index ?? 0;
-    if (index > offset) nodes.push({ type: "text", value: source.slice(offset, index) });
     let token = match[0];
+    // the `!` of an image stays in the text before its bracket
+    const image = token.startsWith("[") && index > offset && source[index - 1] === "!";
+    const textEnd = image ? index - 1 : index;
+    if (textEnd > offset) nodes.push({ type: "text", value: source.slice(offset, textEnd) });
     // like an http address it stops at the first non-ASCII character (`file:///tmp/a.md에서`); a
     // name with other letters in it is percent-encoded in a URI
     if (token.startsWith("file:///")) {
@@ -209,9 +214,11 @@ export function parseInline(source: string, links = true, depth = 0): InlineNode
       // a label holds no `]`, so no link nests in one: only emphasis counts toward the depth
       const href = safeMarkdownHref(target) ?? webLikeHref(target);
       const file = href === null ? markdownFileTarget(target) : null;
-      nodes.push(href !== null ? { type: "link", href, children: parseInline(label, false, depth) }
+      const shown: InlineNode = href !== null ? { type: "link", href, children: parseInline(label, false, depth) }
         : file !== null ? { type: "file", path: file, children: parseInline(label, false, depth) }
-        : { type: "text", value: label });
+        : { type: "text", value: label };
+      if (image) nodes.push({ type: "image", alt: label, src: target, fallback: [{ type: "text", value: "!" }, shown] });
+      else nodes.push(shown);
     } else if (token.startsWith("**") || token.startsWith("__")) {
       nodes.push({ type: "strong", children: parseInline(token.slice(2, -2), links, depth + 1) });
     } else if (token.startsWith("~~")) {

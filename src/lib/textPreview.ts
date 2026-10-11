@@ -73,12 +73,54 @@ export function hasPreview(language: string | null): boolean {
  * 416 (it has no first byte to send) and is loaded as empty. Any other error answer rejects: it
  * carries JSON (the file gone since, a remote PC dropped), never the file's text.
  */
-export async function readTextStart(response: Response): Promise<LoadedText> {
+export async function readTextStart(response: Response, options: { signal?: AbortSignal } = {}): Promise<LoadedText> {
   const range = response.headers.get("content-range");
   const empty = response.status === 416 && answeredFileSize(response.status, range, 0) === 0;
-  if (!response.ok && !empty) throw new Error(`the file answered ${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  // the size as it was sent, not as the stat saw it: a file grown since is still cut short
-  const size = answeredFileSize(response.status, range, bytes.length);
-  return loadedText(decodeStart(bytes, TEXT_LOAD_LIMIT), size, TEXT_LOAD_LIMIT);
+  const discard = () => { void response.body?.cancel().catch(() => {}); };
+  if (!response.ok && !empty) { discard(); throw new Error(`the file answered ${response.status}`); }
+  if (options.signal?.aborted) { discard(); throw new Error("File preview aborted."); }
+  if (empty) { discard(); return loadedText("", 0, TEXT_LOAD_LIMIT); }
+  const reader = response.body?.getReader();
+  if (!reader) return loadedText("", answeredFileSize(response.status, range, 0), TEXT_LOAD_LIMIT);
+  // A range is only a request: never buffer a whole 200 from a peer that ignored it.
+  const bytes = new Uint8Array(TEXT_LOAD_LIMIT);
+  let received = 0;
+  let complete = false;
+  let stopped: Error | undefined;
+  let reject!: (error: Error) => void;
+  const interruption = new Promise<never>((_, fail) => { reject = fail; });
+  const aborted = () => {
+    stopped = new Error("File preview aborted.");
+    reject(stopped);
+    // Never wait for cancellation: a stalled peer can leave this promise pending forever.
+    void reader.cancel().catch(() => {});
+  };
+  options.signal?.addEventListener("abort", aborted, { once: true });
+  try {
+    while (true) {
+      const { value, done } = await Promise.race([reader.read(), interruption]);
+      if (stopped) throw stopped;
+      if (done) { complete = true; break; }
+      const remaining = TEXT_LOAD_LIMIT - received;
+      bytes.set(value.subarray(0, remaining), received);
+      received += Math.min(remaining, value.byteLength);
+      if (received === TEXT_LOAD_LIMIT) {
+        // A 200 ending exactly at the budget is whole; one more read distinguishes it.
+        if (response.status === 200 && value.byteLength <= remaining) {
+          const next = await Promise.race([reader.read(), interruption]);
+          if (stopped) throw stopped;
+          complete = next.done;
+        }
+        break;
+      }
+    }
+    // Only a complete 200 says its whole size. A cut 200 has an unknown total, not a
+    // misleading size equal to the budget (which would enable copying a partial file).
+    const size = response.status === 200 && !complete ? null : answeredFileSize(response.status, range, received);
+    return loadedText(decodeStart(bytes.subarray(0, received), TEXT_LOAD_LIMIT), size, TEXT_LOAD_LIMIT);
+  } finally {
+    options.signal?.removeEventListener("abort", aborted);
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
 }

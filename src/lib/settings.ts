@@ -5,6 +5,7 @@
  * `--term-*` tokens of each theme for PaneTerminal's theme object.
  */
 
+import { REPORTED_SETTINGS, type ReportedSetting } from "../../shared/telemetry.ts";
 import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { blockComments } from "./blockComments.ts";
 import { invalidateDictation } from "./voice.ts";
@@ -67,6 +68,14 @@ export interface Settings {
   sidebarRows: SidebarRows;
   /** The Agents list's order. Activity is display-only: herdr's own order never changes. */
   agentOrder: AgentOrder;
+  /** In the Workspaces order, each workspace's agents sit in a card under its name. */
+  agentCards: boolean;
+  /** Each agent row carries a star that keeps it on top of the Agents list. */
+  agentPins: boolean;
+  /** A plan opens as a flow of boxes with a switch to its list; off, as the list alone. */
+  planFlow: boolean;
+  /** The header carries the selected pane's plan count, which opens the plan. */
+  planButton: boolean;
   /** a DONE opened here since it finished reads as ready, as herdr's own view would make it (per browser and PC) */
   quietOpenedDone: boolean;
   /** the chrome color family, keyed as data-palette in src/styles.css */
@@ -153,6 +162,11 @@ export interface Settings {
 export const MARKDOWN_WIDTHS = ["readable", "full"] as const;
 export type MarkdownWidth = (typeof MARKDOWN_WIDTHS)[number];
 
+/** The appearance settings that differ from their defaults, by name: what the anonymous counts tell (shared/telemetry.ts). */
+export function changedSettings(settings: Settings): ReportedSetting[] {
+  return REPORTED_SETTINGS.filter((name) => settings[name] !== DEFAULT_SETTINGS[name]);
+}
+
 export const DEFAULT_SETTINGS: Settings = {
   terminalInputMode: "auto",
   keyBarExtras: ["alt"],
@@ -162,6 +176,10 @@ export const DEFAULT_SETTINGS: Settings = {
   density: "comfortable",
   sidebarRows: "two",
   agentOrder: "workspace",
+  agentCards: false,
+  agentPins: false,
+  planFlow: true,
+  planButton: true,
   quietOpenedDone: false,
   palette: "amber",
   terminalFontSize: 13,
@@ -337,6 +355,10 @@ export function sanitizeSettings(raw: unknown): Settings {
     density: density === "compact" || density === "comfortable" ? density : DEFAULT_SETTINGS.density,
     sidebarRows: record["sidebarRows"] === "one" || record["sidebarRows"] === "two" ? record["sidebarRows"] : DEFAULT_SETTINGS.sidebarRows,
     agentOrder: record["agentOrder"] === "workspace" || record["agentOrder"] === "activity" ? record["agentOrder"] : DEFAULT_SETTINGS.agentOrder,
+    agentCards: record["agentCards"] === true,
+    agentPins: record["agentPins"] === true,
+    planFlow: record["planFlow"] !== false,
+    planButton: record["planButton"] !== false,
     quietOpenedDone: record["quietOpenedDone"] === true,
     palette: record["palette"] === "amber" || record["palette"] === "report" || record["palette"] === "charcoal" || record["palette"] === "catppuccin" || record["palette"] === "lilac" || record["palette"] === "forest" ? record["palette"] : DEFAULT_SETTINGS.palette,
     terminalFontSize: typeof font === "number" && Number.isFinite(font) ? clampFont(font) : DEFAULT_SETTINGS.terminalFontSize,

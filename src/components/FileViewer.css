@@ -185,6 +185,12 @@
   background: var(--pdf-page);
 }
 
+.file-viewer-markdown {
+  align-self: stretch;
+  min-width: 0;
+  padding: var(--space-3);
+}
+
 .file-viewer-text {
   align-self: stretch;
   margin: 0;

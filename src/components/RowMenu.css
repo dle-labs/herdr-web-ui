@@ -151,6 +151,11 @@
   background: var(--bg-hover);
 }
 
+/* the row fills when pressed, as an iPhone's does: it does not dim as a lone button would (styles.css) */
+.row-sheet-item:active {
+  opacity: 1;
+}
+
 .row-sheet-cancel {
   height: 44px;
   margin-top: var(--space-2);

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Check, Code, Copy, Download, ExternalLink, MessageSquare, TriangleAlert, X } from "lucide-react";
 
 import "./FileViewer.css";
@@ -7,6 +7,7 @@ import { useFileCommentLayer, useFileCommentWalk, type FileCommentScope } from "
 import { useHighlightedLines } from "./HighlightedCode.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { TextFileView } from "./TextFileView.tsx";
+import { MarkdownImageContext } from "./Markdown.tsx";
 
 import type { FileInfo } from "../../shared/protocol.ts";
 import { ApiError } from "../lib/api.ts";
@@ -20,13 +21,12 @@ import { fileLines, pathLabel, type FileComment, type FileView, type LineRange }
 import { pathParts } from "../lib/filePaths.ts";
 import { languageForPath } from "../lib/highlight.ts";
 import { useT } from "../lib/i18n.ts";
+import { MAX_INLINE_IMAGE_BYTES, markdownImagePreview } from "../lib/markdownImages.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+import { useSheetSwipe } from "../lib/sheets.ts";
 import { previewHosts, type MarkdownBlock } from "../lib/markdown.ts";
 import { knownPreview, parsePreviewOffThread } from "../lib/markdownPreview.ts";
 import { hasPreview, readTextStart, TEXT_START_HEADERS, type LoadedText, type TextViewMode } from "../lib/textPreview.ts";
-
-/** Bigger images are offered as a download: a phone decodes an image whole. */
-const MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024;
 
 type Preview = { status: "none" | "pending" | "failed" } | { status: "ready"; blocks: MarkdownBlock[] };
 
@@ -105,9 +105,9 @@ function CopyFileButton({ text, sourceRef, onShowSource }: { text: string; sourc
 
 /**
  * A file an agent wrote, opened in the browser: images, video and audio (streamed, so they
- * play and seek at once), PDFs, and the start of a text file. Each opens whole in a new tab (a
- * text file raw), and anything can be downloaded: an installed app on a phone opens a new tab in
- * an in-app view, which does not always offer to save it.
+ * play and seek at once), PDFs, and the start of a text file (Markdown images read through the
+ * file endpoint). Each opens whole in a new tab (a text file raw), and anything can be downloaded:
+ * an installed app on a phone opens a new tab in an in-app view, which does not always offer to save it.
  */
 export function FileViewer({ connected, path: asked, paneId, machineId, paneFolder, onClose, onOpen, commentId = null, keyboardActive = true }: FileViewerProps) {
   const t = useT();
@@ -122,6 +122,7 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
   const [candidates, setCandidates] = useState<string[] | null>(null);
   // Escape closes it, Tab stays in it, and the focus goes back to the row that opened it
   const surface = useFocusTrap<HTMLElement>(true);
+  useSheetSwipe(surface, onClose);
   // Settings → Chat width, Default: the Preview is as wide as the chat of the pane that opened it
   useOpeningPaneLane(surface, paneId === null ? null : paneStorageId(machineId, paneId));
   // a kind, not a message: it is said in the language of the moment it shows
@@ -157,15 +158,20 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
     let cancelled = false;
     // a closed viewer, or another file, stops the download of up to a quarter megabyte
     const download = new AbortController();
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     setInfo(null); setCandidates(null); setError(null); setLoaded(null); setDirectory(null);
     fetchFileInfo(path, paneId).then(async (next) => {
       if (cancelled) return;
       if ("candidates" in next) { setCandidates(next.candidates); return; }
       setInfo(next);
       if (next.kind !== "text") return;
-      // only the first part of a text file travels
-      const text = await readTextStart(await fetch(fileUrl(next.path, paneId), { headers: TEXT_START_HEADERS, signal: download.signal }));
-      if (!cancelled) setLoaded(text);
+      // only the first part of a text file travels; the deadline covers fetch and its body
+      deadline = setTimeout(() => download.abort(), 5_000);
+      try {
+        const response = await fetch(fileUrl(next.path, paneId), { headers: TEXT_START_HEADERS, signal: download.signal });
+        const text = await readTextStart(response, { signal: download.signal });
+        if (!cancelled) setLoaded(text);
+      } finally { clearTimeout(deadline); }
     }).catch(async (reason: unknown) => {
       if (cancelled) return;
       // a folder is listed from the pane's folder, as a file is found from it
@@ -179,7 +185,7 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
       if (cancelled) return;
       setError(reason instanceof ApiError && reason.status === 404 ? "missing" : "unreadable");
     });
-    return () => { cancelled = true; download.abort(); };
+    return () => { cancelled = true; clearTimeout(deadline); download.abort(); };
   }, [path, paneId, fetchFileInfo, fileUrl, fetchDirectories, remote]);
 
   // A comment popover is open: Escape is its own first, wherever the focus is. It closes one with nothing typed in it
@@ -292,6 +298,10 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
   // every file has Download, and all but a binary one a new tab (Raw for text) as well; a binary
   // one has a second action only in its comments
   const stacked = info?.kind !== "binary" || commentsShown;
+  // images of a Markdown file load through the file endpoint, as the file itself does
+  const imagePreview = useCallback((src: string) => markdownImagePreview(
+    src, shownPath, (target) => fetchFileInfo(target, paneId), (target, download) => fileUrl(target, paneId, download),
+  ), [shownPath, paneId, fetchFileInfo, fileUrl]);
   /** What the viewer shows below its header: a folder, an error, a choice of files, or the file. */
   const body = (() => {
     if (directory !== null) return <DirectoryBrowser key={directory} start={directory} onOpenFile={onOpen ?? setPath} />;
@@ -304,7 +314,7 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
     switch (info.kind) {
       case "image":
         return info.size > MAX_INLINE_IMAGE_BYTES
-          ? <p className="file-viewer-note">{t("This image is {size}; open it in a new tab to view it.", { size: formatBytes(info.size) })}</p>
+          ? <p className="file-viewer-note">{t("This image is {size}; download it to view.", { size: formatBytes(info.size) })}</p>
           : <img className="file-viewer-media" src={url} alt={info.name} />;
       case "video":
         return <video className="file-viewer-media" src={url} controls playsInline preload="metadata" />;
@@ -323,7 +333,9 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
               <button type="button" className="btn btn-ghost" onClick={() => setChosen({ path, mode: "code" })}>{t("Show source")}</button>
             </div>
             : <p className="file-viewer-note" role="alert">{t("The file could not be opened.")}</p>}>
-            <TextFileView path={info.path} blocks={view === "markdown" && preview.status === "ready" ? preview.blocks : null} lines={code.lines} onOpen={onOpen ?? setPath} sourceRef={sourceRef} previewRef={previewRef} />
+            <MarkdownImageContext.Provider value={imagePreview}>
+              <TextFileView path={info.path} blocks={view === "markdown" && preview.status === "ready" ? preview.blocks : null} lines={code.lines} onOpen={onOpen ?? setPath} sourceRef={sourceRef} previewRef={previewRef} />
+            </MarkdownImageContext.Provider>
           </RenderBoundary>;
       default:
         return <p className="file-viewer-note">{info.mime}, {formatBytes(info.size)}. This file can't be shown here; download it instead.</p>;

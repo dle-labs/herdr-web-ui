@@ -1483,3 +1483,28 @@
   color: var(--text-dim);
   font-size: var(--fs-xs);
 }
+
+/* A phone's input card floats over the transcript's end, as an iPhone's input bar does: the
+   composer rises --composer-over into the transcript, whose last lines fade into the chat's
+   surface and blur behind the glass card. Only while the card follows the transcript directly
+   (no held message, pending row or prompt card between them) and no greeting stands over it;
+   ChatView.css keeps the last line and its jump button clear of the card. The transcript's box
+   still shrinks as the card grows, so a reader at the end stays at the end. Raised over the
+   transcript, which is positioned (z-index 1) and comes first. */
+@media (max-width: 768px) {
+  .terminal-stack.is-chat:not(.is-greeted):has(> .terminal-surface + .prompt-dock:empty + .composer) {
+    --composer-over: var(--space-8);
+  }
+
+  .terminal-stack.is-chat:not(.is-greeted) > .terminal-surface + .prompt-dock:empty + .composer {
+    z-index: 1;
+    margin-top: calc(-1 * var(--composer-over));
+    background: linear-gradient(transparent, var(--bg) var(--composer-over));
+  }
+
+  .terminal-stack.is-chat:not(.is-greeted) > .terminal-surface + .prompt-dock:empty + .composer .composer-surface {
+    background: var(--card-glass);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+}
