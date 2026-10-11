@@ -12,7 +12,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Undo the last inserted dictation segment without clearing earlier takes or unrelated draft text.
 
 ### Changed
-- Merge upstream voice settings with self-hosted dictation: explicitly choose OpenAI, Speaches or browser recognition, with one provider per recording and no automatic fallback. Restore server-side OpenAI key controls, language selection and separate chat/terminal polishing preferences without discarding saved Speaches settings.
+- Merge upstream voice settings with self-hosted dictation: explicitly choose OpenAI, Speaches or browser recognition, with one provider per recording and no automatic fallback. Restore server-side OpenAI key controls, language selection and separate chat/terminal polishing preferences without discarding saved Speaches settings. ([#2](https://github.com/dle-labs/herdr-web-ui/pull/2) by @polaroidkidd)
 - Send directly while dictating in chat or the terminal input line: finish capture, wait for the final transcript and submit once, without a separate Stop tap. Cancellation, errors or changed drafts prevent the send.
 - Route dictation and model discovery through the WebUI backend to the existing Speaches service. Add opt-in live previews with backend audio segmentation, bounded per-take buffering and no direct browser-to-speech connection. Configure `HERDR_WEB_DICTATION_BASE_URL`, reload and explicitly re-apply Dictation settings after migrating; the old browser-origin allowlist is retired.
 - The recording input is taller, with a single continuous full-width waveform followed by the recording label, seconds and close button.
