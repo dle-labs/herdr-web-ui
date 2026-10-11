@@ -4,6 +4,13 @@
   flex: 1;
 }
 
+/* A column form needs the field's natural control height, not flex growth. */
+.dictation-settings-key-input {
+  min-width: 0;
+  width: 100%;
+  flex: 0 0 auto;
+}
+
 .dictation-settings-key {
   width: 100%;
   display: flex;
