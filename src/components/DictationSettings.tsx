@@ -215,14 +215,14 @@ function OpenAiKeySettings() {
     }
   };
   return <SettingsGroup title={t("OpenAI API key")} section="openai-key" note={t("Audio is sent to OpenAI with your key. Nothing is recorded until you press the mic.")}>
-    <SettingsRow label={t("OpenAI API key")} description={status ? status.configured ? status.source === "env" ? t("OpenAI key set by HERDR_WEB_OPENAI_API_KEY") : t("OpenAI key saved on this PC") : t("No OpenAI key configured. OpenAI dictation is unavailable.") : undefined} wide>
+    <SettingsRow label={t("OpenAI API key")} description={status ? status.configured ? status.source === "env" ? t("OpenAI key set by HERDR_WEB_OPENAI_API_KEY") : t("OpenAI key saved on this PC") : t("No OpenAI key configured. OpenAI dictation is unavailable.") : undefined} stacked>
       {status && status.source !== "env" && <form className="dictation-settings-key" onSubmit={(event) => {
         event.preventDefault();
         const key = input.current?.value.trim() ?? "";
         if (input.current) input.current.value = "";
         if (key) void changeKey(key);
       }}>
-        <input ref={input} className="input dictation-settings-input" type="password" aria-label={t("OpenAI API key")} placeholder="sk-..." autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={busy} />
+        <input ref={input} className="input dictation-settings-key-input" type="password" aria-label={t("OpenAI API key")} placeholder="sk-..." autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" disabled={busy} />
         <div className="dictation-settings-actions">
           <button type="submit" className="btn" disabled={busy}>{t("Save key")}</button>
           <button type="button" className="btn btn-ghost" disabled={busy || !status.configured} onClick={() => { if (input.current) input.current.value = ""; void changeKey(null); }}>{t("Remove key")}</button>

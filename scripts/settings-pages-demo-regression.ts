@@ -42,6 +42,27 @@ const cutOff = (page: Page): Promise<string[]> => page.locator(".settings-body:n
   return body.scrollWidth > body.clientWidth ? [`the page scrolls sideways (${body.scrollWidth} > ${body.clientWidth})`, ...out] : out;
 });
 
+/** The key editor must stack even above the phone breakpoint, with a full-height input. */
+const checkOpenAiKeyLayout = async (page: Page): Promise<void> => {
+  const layout = await page.locator(".dictation-settings-key").evaluate((form) => {
+    const text = form.parentElement!.querySelector(".settings-row-text")!.getBoundingClientRect();
+    const field = form.querySelector("input")!.getBoundingClientRect();
+    const actions = form.querySelector(".dictation-settings-actions")!.getBoundingClientRect();
+    const box = form.getBoundingClientRect();
+    return {
+      textBottom: text.bottom, textWidth: text.width, formTop: box.top, formWidth: box.width,
+      fieldBottom: field.bottom, fieldHeight: field.height, fieldWidth: field.width, actionsTop: actions.top,
+      controlHeight: parseFloat(getComputedStyle(form).getPropertyValue("--control-h")),
+    };
+  });
+  assert.ok(layout.formTop >= layout.textBottom, "key editor sits below its label and status, without overlap");
+  assert.ok(Math.abs(layout.textWidth - layout.formWidth) <= 1, "key status retains the full row width");
+  assert.ok(Math.abs(layout.fieldWidth - layout.formWidth) <= 1, "key input fills the form");
+  assert.ok(layout.fieldHeight >= layout.controlHeight - 0.5, "key input does not collapse in the column form");
+  assert.ok(layout.actionsTop >= layout.fieldBottom, "key actions sit below the input");
+  assert.deepEqual(await cutOff(page), [], "OpenAI settings stay within their card");
+};
+
 try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
@@ -128,7 +149,7 @@ try {
               assert.equal(await page.locator('.settings-dialog .settings-section[data-section="openai-key"]').count(), 1, "OpenAI key group supports settings deep links");
               assert.equal(await page.locator('.settings-dialog .settings-section[data-section="tidy-dictation"]').count(), 1, "OpenAI polishing group supports settings deep links");
               assert.equal(await page.locator("#dictation-model").count(), 0, "OpenAI hides self-hosted controls");
-              assert.deepEqual(await cutOff(page), [], `OpenAI settings fit ${width}px (${language})`);
+              await checkOpenAiKeyLayout(page);
               await provider.selectOption("browser");
               assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "browser recognition hides the OpenAI key");
               assert.equal(await page.locator("#dictation-model").count(), 0, "browser recognition hides Speaches controls");
@@ -349,6 +370,18 @@ try {
         await page.goto(url);
         await page.locator(".conn-live").waitFor({ state: "attached" });
         await openSettings(page);
+        await openSettingsPage(page, "Dictation");
+        await page.locator("#voice-provider").selectOption("openai");
+        await page.locator(".dictation-settings-key").waitFor();
+        for (const width of [1280, 834, 641, 640, 390, 320]) {
+          await page.setViewportSize({ width, height: 800 });
+          await checkOpenAiKeyLayout(page);
+          if (process.env.UI_EVIDENCE_DIR && width === 1280) {
+            await page.locator('[data-section="openai-key"]').screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "openai-key-settings-desktop.png") });
+          }
+        }
+        await page.setViewportSize({ width: 1280, height: 800 });
+        console.log("PASS OpenAI key label, input and actions stack without collapse on desktop, tablet and phone");
         // beside the list, turning pages is one step however many are turned
         for (const name of ["Chat", "Shortcuts", "About"]) await openSettingsPage(page, name);
         await page.waitForFunction(() => (history.state as Record<string, { page: string; depth: number }> | null)?.["herdr-web-ui:settings"]?.page === "about");
