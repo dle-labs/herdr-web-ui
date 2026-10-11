@@ -9,16 +9,6 @@ import { t } from "./i18n.ts";
 
 export type TypedAnswer = Pick<PromptAnswer, "option_index" | "option_indices" | "custom_text">;
 
-/** Terminal-only prompts never accept chat text, even if they also carry options or a custom row. */
-export function promptRequiresTerminal(prompt: InteractivePrompt | null): boolean {
-  return prompt?.terminal_only === true;
-}
-
-/** RPIV/Pi questionnaires own their input; keep the ordinary draft mounted but out of view. */
-export function promptOwnsInput(prompt: InteractivePrompt | null): boolean {
-  return prompt?.agent === "pi" && prompt.kind === "question" && !prompt.queued;
-}
-
 /** The options a typed number can pick, by the number the agent shows (index + 1). */
 function choices(prompt: InteractivePrompt): number[] {
   return prompt.options.flatMap((_, index) => index === prompt.custom_option_index ? [] : [index]);
@@ -35,7 +25,6 @@ function bareLabel(label: string): string {
 
 /** null: the prompt only takes its options, and the text names none of them. */
 export function answerFromText(prompt: InteractivePrompt, text: string): TypedAnswer | null {
-  if (promptRequiresTerminal(prompt)) return null;
   const value = text.trim();
   if (!value) return null;
   const valid = choices(prompt);
@@ -66,7 +55,6 @@ function range(prompt: InteractivePrompt): string {
 
 /** How a typed message answers this prompt: the composer's placeholder while it waits. */
 export function answerHint(prompt: InteractivePrompt): string {
-  if (promptRequiresTerminal(prompt)) return t("Answer in the terminal. Your draft stays here and will not be sent.");
   if (prompt.multi_select) return t("Type the numbers you choose, e.g. 1 3");
   // a free-form question (Codex's queue) has no options to number
   if (choices(prompt).length === 0) return t("Type your reply…");
@@ -77,7 +65,6 @@ export function answerHint(prompt: InteractivePrompt): string {
 
 /** Why a message was not sent: the prompt takes only its options (answerFromText gave null). */
 export function answerRefusal(prompt: InteractivePrompt): string {
-  if (promptRequiresTerminal(prompt)) return answerHint(prompt);
   return prompt.multi_select
     ? t("Choose with the option numbers above, e.g. 1 3.")
     : t("Choose one of the options above: type {range}.", { range: range(prompt) });

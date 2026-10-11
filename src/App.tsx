@@ -1195,7 +1195,6 @@ export function App() {
                 machineName={selectedMachine?.name ?? selectedMachineId}
                 view={active ? view : storedView(lenses, item!.pane_id, selectedMachineId, item!.agent != null, terminalAttach)}
                 active={active}
-                onShowTerminal={active && item?.pane_id === selectedPaneId ? () => setView("terminal") : undefined}
                 findRequest={findRequest.paneId === item?.pane_id ? findRequest.serial : 0}
                 autoSelected={autoSelected}
                 terminalFontSize={settings.terminalFontSize}

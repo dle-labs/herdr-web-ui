@@ -1,13 +1,12 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Check, Send } from "lucide-react";
-import { flushSync } from "react-dom";
 
 import "./PromptCard.css";
 
 import { ApiError } from "../lib/api.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import type { InteractivePrompt, PromptAnswer } from "../../shared/protocol.ts";
-import { focusFollowsAnswer, pressOrigin, promptOwnsInput, promptRequiresTerminal, type TypedAnswer } from "../lib/promptAnswer.ts";
+import { focusFollowsAnswer, pressOrigin, type TypedAnswer } from "../lib/promptAnswer.ts";
 import { dismissKeyboardOn } from "../lib/keyboard.ts";
 import { useT } from "../lib/i18n.ts";
 
@@ -26,18 +25,13 @@ export interface PromptCardProps {
   /** an option picked by a typed message, sent only on Confirm */
   typedAnswer?: TypedAnswer | null;
   onTypedAnswerDone?(): void;
-  onShowTerminal?(): void;
 }
 
-export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone, onShowTerminal }: PromptCardProps) {
+export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedAnswer = null, onTypedAnswerDone }: PromptCardProps) {
   const t = useT();
-  const terminalOnly = promptRequiresTerminal(prompt);
-  const optionFirst = promptOwnsInput(prompt);
   const { answerPanePrompt } = useMachineApi();
-  const [selected, setSelected] = useState<Set<number>>(() => new Set(prompt.checked_option_indices ?? []));
+  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [custom, setCustom] = useState("");
-  const [customChosen, setCustomChosen] = useState(false);
-  const customInputRef = useRef<HTMLInputElement | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cardRef = useRef<HTMLElement | null>(null);
@@ -73,7 +67,6 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
    * prompt took its place, or after its pane was left, changes nothing there.
    */
   const answer = async (choice: Omit<PromptAnswer, "pane_id" | "prompt_id">, press?: { nativeEvent: Event; currentTarget: EventTarget }): Promise<boolean> => {
-    if (terminalOnly) return false;
     // read now: the pressed button is disabled while the answer is on its way, and loses the focus
     const fromCard = cardRef.current?.contains(document.activeElement) === true;
     const click = press?.nativeEvent as Partial<PointerEvent> | undefined;
@@ -106,7 +99,6 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
   };
 
   const toggle = (index: number): void => {
-    setCustomChosen(false);
     setSelected((current) => {
       const next = new Set(current);
       if (next.has(index)) next.delete(index); else next.add(index);
@@ -120,7 +112,7 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
     const text = label.replace(/\s*\(recommended\)$/i, "");
     return { text, recommended: text !== label };
   };
-  const hasChoices = !terminalOnly && prompt.options.some((_, index) => index !== prompt.custom_option_index);
+  const hasChoices = prompt.options.some((_, index) => index !== prompt.custom_option_index);
 
   return (
     <section className="prompt-card" ref={cardRef} role="region" aria-label={t("Agent is asking")} aria-busy={pending}
@@ -149,11 +141,7 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
       )}
       {/* a Claude approval's heading is its question too: said once */}
       {prompt.question !== prompt.title && <p className="prompt-card-question">{prompt.question}</p>}
-      {terminalOnly && <>
-        <p className="prompt-card-hint" role="status">{t("Answer this questionnaire in the terminal. Its live keybindings cannot be verified here.")}</p>
-        {onShowTerminal && <button type="button" className="btn prompt-card-terminal" onClick={onShowTerminal}>{t("Answer in terminal")}</button>}
-      </>}
-      {!terminalOnly && prompt.queued && (
+      {prompt.queued && (
         <p className="prompt-card-hint">
           {prompt.queued === "open"
             ? t("Codex keeps working meanwhile. Answer here; the question holds the terminal's input until it is answered or closed.")
@@ -165,8 +153,7 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
       {hasChoices && (
         <div className="prompt-card-options" role={prompt.multi_select ? "group" : undefined} aria-label={prompt.multi_select ? prompt.question : undefined}>
           {prompt.options.map((option, index) => {
-            const customOption = index === prompt.custom_option_index;
-            if (customOption && !optionFirst) return null;
+            if (index === prompt.custom_option_index) return null;
             const { text, recommended } = labelOf(option.label);
             const content = (
               <span className="prompt-card-option-text">
@@ -177,18 +164,6 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
             // the key the user can type, drawn as a keycap; the option's name keeps the menu's "1."
             const number = <span className="prompt-card-number"><span aria-hidden="true">{index + 1}</span><span className="visually-hidden">{index + 1}.</span></span>;
             const described = option.description !== null ? " has-description" : "";
-            if (customOption) {
-              return <button key={index} type="button" className={`prompt-card-option${described}${customChosen ? " is-typed" : ""}`} disabled={pending}
-                aria-expanded={customChosen} aria-controls={`${customLabelId}-field`}
-                onClick={() => {
-                  // Commit the field inside the user gesture so tapping this option can open
-                  // the phone keyboard. Other options never focus a text box.
-                  flushSync(() => { setCustomChosen(true); setSelected(new Set()); });
-                  customInputRef.current?.focus({ preventScroll: true });
-                }}>
-                {number} {content}
-              </button>;
-            }
             if (prompt.multi_select) {
               const checked = selected.has(index);
               return (
@@ -206,16 +181,16 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
           })}
         </div>
       )}
-      {!terminalOnly && prompt.multi_select && !customChosen && (
-        <button type="button" className={`btn${selected.size > 0 ? " btn-primary" : ""} prompt-card-submit`} disabled={pending || (selected.size === 0 && !prompt.allow_empty_selection)} onClick={(event) => void answer({ option_indices: [...selected].sort((a, b) => a - b) }, event)}>
+      {prompt.multi_select && (
+        <button type="button" className={`btn${selected.size > 0 ? " btn-primary" : ""} prompt-card-submit`} disabled={pending || selected.size === 0} onClick={(event) => void answer({ option_indices: [...selected].sort((a, b) => a - b) }, event)}>
           {selected.size > 0 ? t("Submit ({n})", { n: selected.size }) : t("Submit")}
         </button>
       )}
-      {!terminalOnly && prompt.custom_option_index !== null && (!optionFirst || !hasChoices || customChosen) && (
-        <div className="prompt-card-custom" id={`${customLabelId}-field`}>
+      {prompt.custom_option_index !== null && (
+        <div className="prompt-card-custom">
           {hasChoices && <span className="prompt-card-custom-label" id={customLabelId}>{t("Or type your own answer")}</span>}
           <div className="prompt-card-custom-row">
-            <input ref={customInputRef} className="input" value={custom} disabled={pending} placeholder={prompt.options[prompt.custom_option_index]?.label ?? t("Type an answer")} aria-label={hasChoices ? undefined : t("Custom answer")} aria-labelledby={hasChoices ? customLabelId : undefined} onChange={(event) => setCustom(event.currentTarget.value)} onKeyDown={(event) => {
+            <input className="input" value={custom} disabled={pending} placeholder={prompt.options[prompt.custom_option_index]?.label ?? t("Type an answer")} aria-label={hasChoices ? undefined : t("Custom answer")} aria-labelledby={hasChoices ? customLabelId : undefined} onChange={(event) => setCustom(event.currentTarget.value)} onKeyDown={(event) => {
               // an IME's Enter commits the candidate; WebKit can send it after compositionend, as key code 229
               if (event.key === "Enter" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229 && custom.trim().length > 0) void answer({ custom_text: custom.trim() });
             }} />
@@ -225,7 +200,7 @@ export function PromptCard({ paneId, prompt, onPromptChanged, onAnswered, typedA
           </div>
         </div>
       )}
-      {!terminalOnly && typedAnswer?.option_index !== undefined && (
+      {typedAnswer?.option_index !== undefined && (
         <div className="prompt-card-confirm" role="alert" ref={confirmRef}>
           {/* an option's label can run to pages (a review to approve): the question shows two lines
               of it and scrolls in itself, and the two buttons stay whole, on one line */}

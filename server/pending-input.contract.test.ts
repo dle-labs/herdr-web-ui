@@ -1,13 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from "bun:test";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
 import * as herdrClient from "./herdr/client.ts";
 import { herdrRpc, paneRead, paneScrollInfo, sessionSnapshot } from "./herdr/client.ts";
 import { noteSubmitted, parseInteractivePrompt } from "./prompt.ts";
-import { companionPath, processIdentity, RPIV_VERSION } from "./rpiv-runtime.ts";
-import { isRpivPiProcess, readRpivState } from "./rpiv-bridge.ts";
 import type { PendingMessage } from "../shared/protocol.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-pending-"));
@@ -71,7 +69,7 @@ beforeAll(() => {
   // The recorder polls its screen file: fs.watch can drop the change that follows writeFileSync's
   // truncation, leaving the cleared screen it read in between up for good.
   writeFileSync(join(root, "record.cjs"), `const fs=require("node:fs");const out=process.argv[2];process.stdin.setRawMode(true);process.stdin.resume();process.stdout.write("\\x1b[?2004h"+(process.argv[3]||"").replace(/\\\\x1b/g,"\\x1b"),()=>fs.writeFileSync(out,""));process.stdin.on("data",c=>fs.appendFileSync(out,JSON.stringify(c.toString("utf8"))+"\\n"));let shown="";setInterval(()=>{const next=fs.readFileSync(process.argv[4],"utf8");if(next!==shown){shown=next;process.stdout.write("\\x1b[2J\\x1b[H"+next);}},20);`);
-  for (const name of ["claude", "codex", "plain", "pi"]) { copyFileSync(process.execPath, join(root, name)); chmodSync(join(root, name), 0o755); }
+  for (const name of ["claude", "codex", "plain"]) { copyFileSync(process.execPath, join(root, name)); chmodSync(join(root, name), 0o755); }
 });
 afterEach(async () => {
   for (const item of active.splice(0)) { for (const socket of item.sockets) socket.close(); item.stop(); await herdrRpc("workspace.close", { workspace_id: item.workspace }).catch(() => undefined); }
@@ -91,7 +89,7 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
   const deadline = Date.now() + 10_000;
   while (!existsSync(log)) { if (Date.now() > deadline) throw new Error("recorder did not start"); await Bun.sleep(25); }
   // "plain" is a program herdr knows as no agent
-  if (agent !== "plain") await herdrRpc("pane.report_agent", { pane_id: pane, source: agent === "pi" ? "herdr:pi" : "manual", agent, state: "working" });
+  if (agent !== "plain") await herdrRpc("pane.report_agent", { pane_id: pane, source: "manual", agent, state: "working" });
   const server = createServer({ ...options, port: 0, stateDir: join(root, `state-${id}`) });
   entry.stop = server.stop;
   const socket = new Socket(server.port); entry.sockets.push(socket);
@@ -501,52 +499,6 @@ describe("connection-owned pending input", () => {
     await f.state("idle"); await f.removed(first.id);
     await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: PendingMessage) => item.id === second.id && item.state === "held" && item.error?.code === "pending_turn_unconfirmed"));
     expect(f.bytes()).toBe(`${paste("first")}\r`);
-  }, 30_000);
-
-  it.skipIf(process.platform !== "linux")("holds input for an unseen owned Pi questionnaire despite idle status, but not a closed one", async () => {
-    const previous = process.env.PI_CODING_AGENT_SESSION_DIR;
-    const store = join(root, "pi-sessions");
-    const directory = join(store, "--pending--");
-    mkdirSync(directory, { recursive: true });
-    process.env.PI_CODING_AGENT_SESSION_DIR = store;
-    let heartbeat: ReturnType<typeof setInterval> | undefined;
-    try {
-      const f = await setup("rpiv-hidden", "pi", "Ordinary Pi screen\n");
-      const session = join(directory, "hidden.jsonl");
-      writeFileSync(session, JSON.stringify({ type: "session", version: 3, id: "hidden", cwd: root }) + "\n");
-      await herdrRpc("pane.report_agent_session", { pane_id: f.pane, source: "herdr:pi", agent: "pi", seq: Date.now() * 1000, agent_session_path: session, session_start_source: "startup" });
-      const info = await herdrRpc<{ process_info: { foreground_processes: { pid: number; argv: string[] }[] } }>("pane.process_info", { pane_id: f.pane });
-      const pid = info.process_info.foreground_processes.find(p => isRpivPiProcess(p.argv))?.pid;
-      expect(pid).toBeDefined();
-      const path = companionPath(session);
-      mkdirSync(join(directory, ".herdr-rpiv"), { mode: 0o700 });
-      let closed = false;
-      const publish = () => {
-        writeFileSync(`${path}.tmp`, JSON.stringify({ schema: 1, version: RPIV_VERSION, session, pid, process: processIdentity(pid!),
-          request: "rpiv-hidden-contract-request", toolCall: "fixture", updated: Date.now(), revision: 1, closed, view: null }), { mode: 0o600 });
-        renameSync(`${path}.tmp`, path);
-      };
-      publish(); heartbeat = setInterval(publish, 200);
-      await herdrRpc("pane.report_agent", { pane_id: f.pane, source: "herdr:pi", agent: "pi", state: "idle", seq: Date.now() * 1000 + 1 });
-      for (const deadline = Date.now() + 5000; (await sessionSnapshot()).panes.find(p => p.pane_id === f.pane)?.agent_status !== "idle";) {
-        if (Date.now() >= deadline) throw new Error("Pi idle report did not settle");
-        await Bun.sleep(25);
-      }
-      expect(await herdrRpc("agent.get", { target: f.pane })).toMatchObject({ agent: { agent_session: { kind: "path", value: session } } });
-      expect(await readRpivState(f.pane)).toMatchObject({ present: true });
-      f.socket.send({ type: "submit", id: 1, pane_id: f.pane, text: "Do not send", payload: "unused", delivery: "queue" });
-      expect(await f.socket.result(1)).toMatchObject({ ok: false, code: "agent_blocked" });
-      expect(f.bytes()).toBe("");
-      closed = true; publish();
-      f.socket.send({ type: "submit", id: 2, pane_id: f.pane, text: "Questionnaire closed", payload: "unused", delivery: "queue" });
-      expect(await f.socket.result(2)).toMatchObject({ ok: true });
-      await f.waitBytes("\r");
-      expect(f.bytes()).toBe(`${paste("Questionnaire closed")}\r`);
-    } finally {
-      clearInterval(heartbeat);
-      if (previous === undefined) delete process.env.PI_CODING_AGENT_SESSION_DIR;
-      else process.env.PI_CODING_AGENT_SESSION_DIR = previous;
-    }
   }, 30_000);
 
   it("rejects ordinary queue input and Send now at a visible password prompt despite a working state", async () => {

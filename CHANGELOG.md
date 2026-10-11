@@ -8,7 +8,6 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
-- Recognize RPIV questionnaires and provide an experimental opt-in adapter for version 2.12.0 on Linux: verified single-choice, checkbox and one-line custom answers. Unpatched or unverified states remain terminal-only; installing the adapter is a separate manual step.
 - Show recorded Pi subagent and workflow evidence outside folded chat work, with expandable results and explicit last-recorded status rather than inferred live progress.
 - Undo the last inserted dictation segment without clearing earlier takes or unrelated draft text.
 - Native conversation transcripts for Hermes Agent: turns, thinking blocks, and tool calls are read directly from its SQLite session store. ([#604](https://github.com/devswha/herdr-web-ui/pull/604) by @RikiSanjayaa)
@@ -141,8 +140,6 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   takes the unused height, and an empty one follows the folded section directly. The Agents height
   cap, independent scrolling and fixed footer stay unchanged.
   ([#780](https://github.com/devswha/herdr-web-ui/pull/780) by @vibewriter-hand)
-- Pi questionnaires present clickable choices and hide the ordinary chat composer without losing its draft or attachments; the custom-answer field opens only after selecting Type something.
-- Terminal-only questionnaires keep chat drafts unsent and offer an explicit Answer in terminal action instead of inviting unsupported typed answers.
 - Comment editors no longer stop at 2,000 characters; the combined message is still checked against the send limit.
 - Chat selection comments keep list bullets, numbering and task checkbox markers in their quotes.
 - Comments sent from chat or file selections stay outside the quoted text in terminal Markdown renderers.

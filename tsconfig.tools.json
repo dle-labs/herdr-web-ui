@@ -18,8 +18,7 @@
     "scripts/grok-chat-browser-qa.ts",
     "scripts/file-preview-text-browser-qa.ts",
     "scripts/file-preview-text-fixture.tsx",
-    "scripts/pi-delegation-regression.ts",
-    "scripts/rpiv-questionnaire-regression.ts"
+    "scripts/pi-delegation-regression.ts"
   ],
   "include": []
 }

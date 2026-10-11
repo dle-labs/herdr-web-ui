@@ -85,7 +85,6 @@ import {
 } from "./herdr/client.ts";
 import { type AlertTiming, createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
 import { CLAUDE_CLEAR_INPUT_KEYS, claudeClearableDraft, claudeHeldIsGrey, claudeInputDraft, claudeInputEmpty, viewportShowsLive, codexQuestionsCollapsed, handlePromptRequest, isClaudeHeld, heldCandidate, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted } from "./prompt.ts";
-import { readRpivState } from "./rpiv-bridge.ts";
 import { submitRoute } from "./submit-route.ts";
 import { secretPrompt, validSecret } from "../shared/secret-prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
@@ -816,11 +815,6 @@ export function createServer(
     const screen = (await paneRead({ paneId, source: "detection", format: "text" })).text;
     if (secretPrompt(screen, lease.attachment.cols) !== null) {
       throw new HerdrError("agent_blocked", "The terminal is waiting for masked input; answer it with the secret-input form first");
-    }
-    // A hidden or unsupported opt-in questionnaire still owns input. Check the
-    // live companion after the screen, at both pre-paste and pre-Enter gates.
-    if (current.agent === "pi" && (await readRpivState(paneId)).present) {
-      throw new HerdrError("agent_blocked", "The Pi questionnaire still owns terminal input");
     }
     const collapsed = current.agent === "codex" && codexQuestionsCollapsed(screen);
     // a message Claude Code holds for its invisible characters is a card to answer first, also once its hint has gone.
