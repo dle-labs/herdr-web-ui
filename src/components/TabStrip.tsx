@@ -1,10 +1,11 @@
 /**
  * Herdr's tab row, visible for a single tab too. Left-click selects; right-click opens
  * New tab / Rename / Close at the pointer. Pane actions belong to PaneCanvas.
- * A phone keeps an ellipsis on the selected tab as a touch entry to the same menu.
+ * A phone keeps an ellipsis on the selected tab as a touch entry to the same menu. Where the
+ * canvas shows a split tab's panes one at a time (SOLO_PANE_QUERY), that menu lists them first.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { ArrowLeft, ArrowRight, Ellipsis, Pencil, Plus, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Ellipsis, Pencil, Plus, Terminal, X } from "lucide-react";
 
 import "./TabStrip.css";
 
@@ -16,11 +17,13 @@ import { useT } from "../lib/i18n.ts";
 import { customTabLabel, tabLabel } from "../lib/tabName.ts";
 import { STRIP_AT_REST, stripPlaced, stripScrolled, stripSelected, type StripScroll } from "../lib/tabStripScroll.ts";
 import { PANE_TABPANEL_ID, paneTabPanelLabel } from "../lib/paneRegion.ts";
+import { SOLO_PANE_QUERY } from "../lib/paneCanvas.ts";
 import { rosterPanes } from "../lib/dagPane.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useTabReorder } from "../lib/useTabReorder.ts";
 import { paneStatus, rollupStatus } from "../lib/status.ts";
+import { AgentMark } from "./AgentMark.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { displayPaneTitle } from "./Sidebar.tsx";
 import { RowMenu, type RowMenuItem } from "./RowMenu.tsx";
@@ -43,6 +46,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   const machineId = useMachineId();
   const { closeTab, renameTab, moveTab } = useMachineApi();
   const touchMenu = useMediaQuery("(pointer: coarse), (max-width: 768px)");
+  const soloPanes = useMediaQuery(SOLO_PANE_QUERY);
   // a short phone screen (landscape, a small phone) has no height to spare: a lone tab is not
   // drawn there, so an approval card keeps its options in reach; its actions stay in the header
   const cramped = useMediaQuery("(max-width: 768px) and (max-height: 600px)");
@@ -291,8 +295,22 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
       previousFocus: touch ? tabButton : document.activeElement instanceof HTMLElement ? document.activeElement : null, touch });
   };
 
-  // Native tab menu: pane actions live on the pane itself.
-  const pickerItems = (tab: HerdrTab): RowMenuItem[] => [
+  // Native tab menu: pane actions live on the pane itself. A split tab drawn one pane at a time
+  // has no other way to its panes, so they lead its menu, the open one marked.
+  const pickerItems = (tab: HerdrTab): RowMenuItem[] => {
+    const own = soloPanes ? panesOf(tab) : [];
+    const actions = tabActions(tab);
+    if (own.length < 2) return actions;
+    return [
+      ...own.map((pane): RowMenuItem => ({
+        id: `pane:${pane.pane_id}`, label: displayPaneTitle(pane), icon: Terminal,
+        glyph: pane.agent ? <AgentMark agent={pane.agent} size={16} /> : undefined,
+        current: pane.pane_id === selectedPane.pane_id, run: () => onSelectPane(pane.pane_id),
+      })),
+      ...actions.map((action, index) => index === 0 ? { ...action, divider: true } : action),
+    ];
+  };
+  const tabActions = (tab: HerdrTab): RowMenuItem[] => [
     ...(!reorder.moving && tabs.findIndex((entry) => entry.tab_id === tab.tab_id) > 0
       ? [{ id: "move-left", label: t("Move tab left"), icon: ArrowLeft, run: () => reorder.moveAdjacent(tab.tab_id, -1) }] : []),
     ...(!reorder.moving && tabs.findIndex((entry) => entry.tab_id === tab.tab_id) < tabs.length - 1

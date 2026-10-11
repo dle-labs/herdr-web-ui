@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { selectBrowserScripts, serialBrowserScripts } from "./ci-browser-parallel.ts";
 
 // Exercise the whole lane without installing Chromium, building, or opening a browser.
 const stub = `
@@ -22,7 +23,7 @@ async function lane(fail = "", kept = false, ci = "") {
   try {
     const child = Bun.spawn(["bash", "-c", stub, "stub", join(import.meta.dir, "ci-browser.sh")], {
       cwd: dir,
-      env: { ...process.env, CI: ci, CHECK_DIR: kept ? dir : "", UI_EVIDENCE_DIR: "", FAIL_SCRIPT: fail, TMPDIR: dir },
+      env: { ...process.env, BROWSER_PARALLEL: "", CI: ci, CHECK_DIR: kept ? dir : "", UI_EVIDENCE_DIR: "", FAIL_SCRIPT: fail, TMPDIR: dir },
       stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 5_000,
     });
     const [text, error, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
@@ -39,6 +40,31 @@ async function lane(fail = "", kept = false, ci = "") {
 const rows = (text: string) => [...text.matchAll(/^(scripts\/\S+)\s+(\d+)\s+(\d+)$/gm)].map((row) => ({
   script: row[1], seconds: Number(row[2]), code: Number(row[3]),
 }));
+
+describe("parallel browser selection", () => {
+  it("reads the complete serial regression list, including fork scripts", () => {
+    const scripts = serialBrowserScripts();
+    expect(scripts).toHaveLength(36);
+    expect(new Set(scripts).size).toBe(scripts.length);
+    expect(scripts).toContain("scripts/grok-chat-browser-qa.ts");
+    expect(scripts).toContain("scripts/dictation-regression.ts");
+    expect(scripts).toContain("scripts/pi-delegation-regression.ts");
+    expect(scripts).toContain("scripts/block-comments-regression.ts");
+    expect(scripts).toContain("scripts/file-viewer-comments-regression.ts");
+    expect(scripts).toContain("scripts/deep-link-demo-regression.ts");
+    expect(scripts).not.toContain("scripts/demo-build.ts");
+    expect(selectBrowserScripts(scripts)).toEqual(scripts);
+  });
+
+  it("filters without reordering or repeating selected scripts", () => {
+    const scripts = ["scripts/a.ts", "scripts/b.ts", "scripts/c.ts"];
+    expect(selectBrowserScripts(scripts, " scripts/c.ts, scripts/a.ts, scripts/c.ts ", "scripts/a.ts")).toEqual(["scripts/c.ts"]);
+    expect(selectBrowserScripts(scripts, "", "scripts/b.ts")).toEqual(["scripts/a.ts", "scripts/c.ts"]);
+    expect(selectBrowserScripts(scripts, "scripts/a.ts", "scripts/a.ts")).toEqual([]);
+    expect(() => selectBrowserScripts(scripts, "scripts/missing.ts")).toThrow("Not in scripts/ci-browser.sh");
+    expect(() => selectBrowserScripts(scripts, undefined, "scripts/missing.ts")).toThrow("Not in scripts/ci-browser.sh");
+  });
+});
 
 describe("browser lane", () => {
   it("summarizes passing and failing scripts and stops at the original exit code", async () => {
@@ -62,17 +88,21 @@ describe("browser lane", () => {
     const { text, code, evidence } = await lane();
     expect(code).toBe(0);
     expect(rows(text)).toHaveLength(37);
+    expect(rows(text).map((row) => row.script)).toContain("scripts/grok-chat-browser-qa.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/pending-pane-switch-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/chat-fallback-browser-qa.ts");
-    expect(rows(text).map((row) => row.script)).toContain("scripts/grok-chat-browser-qa.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/file-preview-text-browser-qa.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/terminal-viewport-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/palette-machines-demo-regression.ts");
-    expect(rows(text).map((row) => row.script)).toContain("scripts/restored-draft-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/dictation-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/pi-delegation-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/file-viewer-comments-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/block-comments-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/restored-draft-demo-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/workspace-rows-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/key-bar-hold-repeat-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/deep-link-demo-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/sidebar-spacing-demo-regression.ts");
     expect(rows(text).every((row) => row.code === 0 && row.seconds >= 0)).toBe(true);
     expect(rows(text).at(-1)?.script).toBe("scripts/machine-conflict-regression.ts");
     expect(evidence).toBe(false);

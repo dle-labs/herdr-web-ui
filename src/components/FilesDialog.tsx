@@ -4,6 +4,7 @@ import { X } from "lucide-react";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
 import { useT } from "../lib/i18n.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+import { useSheetSwipe } from "../lib/sheets.ts";
 
 export interface FilesDialogProps {
   /** the folder to open at: the pane's own */
@@ -18,6 +19,7 @@ export interface FilesDialogProps {
 export function FilesDialog({ start, viewing, onOpenFile, onClose }: FilesDialogProps) {
   const t = useT();
   const surface = useFocusTrap<HTMLElement>(true);
+  useSheetSwipe(surface, onClose);
   useEffect(() => {
     if (viewing) return;
     // a native modal over it (Add PC, from the palette) takes its own Escape

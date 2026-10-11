@@ -92,7 +92,7 @@ function useDarkTheme(): boolean {
 }
 
 /** A ```mermaid fence drawn as a diagram. Until it parses (a reply still streaming, a syntax error) it shows as the code block it is. */
-function MermaidDiagram({ value, firstLine }: { value: string; firstLine?: number }) {
+function MermaidDiagram({ value, source }: { value: string; source?: SourceLines }) {
   const t = useT();
   const [svg, setSvg] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
@@ -108,10 +108,10 @@ function MermaidDiagram({ value, firstLine }: { value: string; firstLine?: numbe
     }, 300);
     return () => { live = false; window.clearTimeout(timer); };
   }, [value, dark]);
-  if (svg === null) return <CodeBlock language="mermaid" value={value} firstLine={firstLine} />;
+  if (svg === null) return <CodeBlock language="mermaid" value={value} firstLine={source === undefined ? undefined : source[0] + 1} />;
   return (
     <div className="markdown-mermaid-frame">
-      <div className="markdown-mermaid" onClick={() => setZoomed(true)} dangerouslySetInnerHTML={{ __html: svg }} />
+      <div className="markdown-mermaid" {...sourceAttributes(source)} onClick={() => setZoomed(true)} dangerouslySetInnerHTML={{ __html: svg }} />
       <button type="button" className="icon-button markdown-mermaid-zoom" onClick={() => setZoomed(true)} aria-label={t("Enlarge diagram")} title={t("Enlarge diagram")}>
         <Maximize2 aria-hidden="true" />
       </button>
@@ -339,11 +339,9 @@ function BlockView({ block, path, commentable }: { block: MarkdownBlock; path: n
         const line = block.type === "table" ? block.rowLines?.[row] : undefined;
         return line === undefined ? {} : { "data-source-line": line };
       };
-      const diagram = block.type === "code" && block.language === "mermaid" && !quoted;
-      const firstLine = block.source === undefined ? undefined : block.source[0] + 1;
-      const body = block.type === "code" ? (diagram
-        ? <MermaidDiagram value={block.value} firstLine={firstLine} />
-        : <CodeBlock language={block.language} value={block.value} firstLine={firstLine} />)
+      const body = block.type === "code" ? (block.language === "mermaid" && !quoted
+        ? <MermaidDiagram value={block.value} source={block.source} />
+        : <CodeBlock language={block.language} value={block.value} firstLine={block.source === undefined ? undefined : block.source[0] + 1} />)
         : block.type === "math" ? <MathExpression value={block.value} displayMode />
         : <div className="markdown-table-wrap">
           <table><thead><tr {...rowLine(0)}>{block.header.map((cell, cellIndex) => <th key={cellIndex}><Inline nodes={cell} /></th>)}</tr></thead>
@@ -352,9 +350,10 @@ function BlockView({ block, path, commentable }: { block: MarkdownBlock; path: n
         </div>;
       // a code block, a table or a formula is commentable on a host around it. The
       // host is there whether or not the block is commentable, so a reply turning final (or live
-      // again) keeps the same element, and a code block the reader unfolded stays unfolded. A
-      // formula's or diagram's host carries its source range; ordinary code and table lines are their own
-      return <div ref={ref} className={className === undefined ? "markdown-block" : `markdown-block ${className}`} {...(block.type === "math" || diagram ? sourceAttributes(block.source) : {})}>{body}</div>;
+      // again) keeps the same element, and a code block the reader unfolded stays unfolded.
+      // A formula's host carries its range. Diagrams carry theirs only once rendered;
+      // fallback code and tables instead expose their individual source lines.
+      return <div ref={ref} className={className === undefined ? "markdown-block" : `markdown-block ${className}`} {...(block.type === "math" ? sourceAttributes(block.source) : {})}>{body}</div>;
     }
   }
 }

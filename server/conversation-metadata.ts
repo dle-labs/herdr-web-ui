@@ -36,6 +36,8 @@ function contextOf(used: number, model: string | null, window: number | null, be
 export function parseConversationMetadata(text: string, source: ConversationResponse["source"], before?: ConversationMetadata): ConversationMetadata {
   // `before` is what the text preceding this one said: the fold picks up where it stopped
   const metadata: ConversationMetadata = before ? { ...before } : { model: null, reasoning_effort: null };
+  // Agy's exported rows do not attest the selected model or reasoning effort.
+  if (source === "agy-transcript") return metadata;
   // pi states the provider on the same records that state usage, so the window is asked for
   // from what this line says rather than remembered across sources
   let piProvider: string | null = null;

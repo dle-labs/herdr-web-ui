@@ -23,6 +23,7 @@ import type {
   PaneMoved,
   PaneDirection,
   PaneInfo,
+  PanePlan,
   PaneReadResult,
   PaneResized,
   PaneSplit,
@@ -30,6 +31,7 @@ import type {
   PaneZoomed,
   PaneFindRequest,
   PaneFindResponse,
+  PlanStep,
   PromptAnswer,
   PushKey,
   RemoteAccess,
@@ -56,10 +58,25 @@ import type {
 import type { PaneScrollInfo } from "../../shared/herdr-api.generated.ts";
 import { readInstalledNotes, readUpdateNotes, type HerdrUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
 import type { AlertPrefs } from "../../shared/notify-policy.ts";
-import type { TelemetryStatus } from "../../shared/telemetry.ts";
+import type { ReportedSetting, TelemetryStatus } from "../../shared/telemetry.ts";
+import type { VoiceConfigUpdate, VoiceStatus } from "../../shared/voice.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { t } from "./i18n.ts";
 import { chatReadDeadlineMs, withChatReadDeadline } from "./chatReadDeadline.ts";
+
+/** GET /api/voice: only status comes back, never the server-held secret. */
+export async function fetchVoiceStatus(signal?: AbortSignal): Promise<VoiceStatus> {
+  const response = await fetch("/api/voice", { cache: "no-store", signal });
+  if (!response.ok) throw await errorFrom("/api/voice", response);
+  return (await response.json()) as VoiceStatus;
+}
+
+/** An environment key is read-only; the server rejects changes with key_from_env. */
+export async function saveVoiceConfig(update: VoiceConfigUpdate): Promise<VoiceStatus> {
+  const response = await fetch("/api/voice/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(update) });
+  if (!response.ok) throw await errorFrom("/api/voice/config", response);
+  return (await response.json()) as VoiceStatus;
+}
 
 /** Settings → Phone: what Tailscale on the server's PC already serves, or the command to run. */
 export function fetchRemoteAccess(): Promise<RemoteAccess> {
@@ -108,7 +125,7 @@ export async function fetchTelemetry(): Promise<TelemetryStatus | null> {
   catch (error) { if (error instanceof ApiError && error.status === 404) return null; throw error; }
 }
 
-export async function changeTelemetry(change: { enabled?: boolean; notice_seen?: true }): Promise<TelemetryStatus> {
+export async function changeTelemetry(change: { enabled?: boolean; notice_seen?: true; changed_settings?: ReportedSetting[] }): Promise<TelemetryStatus> {
   const url = "/api/telemetry";
   const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-herdr-update": "1" }, body: JSON.stringify(change) });
   if (!response.ok) throw await errorFrom(url, response);
@@ -629,6 +646,12 @@ export async function fetchPaneOmoActivity(paneId: string, machineId = "local"):
   const activity = await getJson<Partial<OmoActivity>>(machinePath(machineId, `pane/omo-tasks?pane_id=${encodeURIComponent(paneId)}`));
   // a bridge from before workflows answers tasks only
   return { tasks: activity.tasks ?? [], runs: activity.runs ?? [], serverTime: activity.server_time ?? null };
+}
+
+/** GET /api/pane/plan: the plan the pane's Claude Code or Codex session keeps, and that PC's clock. */
+export async function fetchPanePlan(paneId: string, machineId = "local"): Promise<{ steps: PlanStep[] | null; serverTime: string | null }> {
+  const answer = await getJson<Partial<PanePlan>>(machinePath(machineId, `pane/plan?pane_id=${encodeURIComponent(paneId)}`));
+  return { steps: answer.plan?.steps ?? null, serverTime: answer.server_time ?? null };
 }
 
 /** GET /api/pane/files: paths under the pane's cwd matching `query`, for @-mentions. */

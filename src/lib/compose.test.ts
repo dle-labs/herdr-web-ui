@@ -38,6 +38,8 @@ describe("composerMessage and submitNote", () => {
     expect(submitNotTyped({ code: "timeout", typed: false })).toBe(true);
     expect(submitNotTyped({ code: "some_new_refusal", typed: false })).toBe(true);
     expect(submitNotTyped({ code: "some_new_refusal" })).toBe(false);
+    // Clearing uncertainty wins even over a malformed nothing-typed receipt.
+    expect(submitNotTyped({ code: "submit_partial", typed: false })).toBe(false);
   });
 
   it("judges a refusal from a bridge that does not send typed by its code", () => {
@@ -64,6 +66,7 @@ describe("composerMessage and submitNote", () => {
     expect(submitRefusal("input_draft", "x")).toBe(submitNote("input_draft", "x"));
     expect(submitRefusal("agent_blocked", "x", "ㅔ")).toBe(submitNote("agent_blocked", "x"));
     expect(submitRefusal("agent_not_found", "x", undefined, true)).toBe(submitNote("agent_not_found", "x", true));
+    expect(submitRefusal("agent_not_ready", "x", undefined, true)).toBe(submitNote("agent_not_ready", "x", true));
   });
 });
 

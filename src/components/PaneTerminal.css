@@ -91,6 +91,15 @@
   overflow: hidden;
 }
 
+/* A phone's glass header lies over the stack's top (styles.css): the transcript reaches up under
+   it (ChatView.css), so the clip opens upward by that height and stays shut below and aside */
+@media (max-width: 768px) {
+  .terminal-stack.is-chat > .terminal-surface {
+    overflow: visible;
+    clip-path: inset(calc(-1 * var(--header-over, 0px)) 0 0 0);
+  }
+}
+
 /* no pane selected: the mount keeps its size (the fit needs it) but never paints, so its
    cursor cannot show through the placeholder */
 .pane-terminal.is-idle {
@@ -150,7 +159,8 @@
    clicks pass through to the pty except where the review banner re-enables them */
 .terminal-banners {
   position: absolute;
-  top: var(--space-2);
+  /* below a phone's glass header when it lies over the chat (styles.css) */
+  top: calc(var(--space-2) + var(--header-over, 0px));
   right: var(--space-3);
   z-index: var(--z-banner);
   display: flex;

@@ -7,8 +7,8 @@ type Handler = (message: ServerMessage) => void;
  * A submit was delivered, accepted into the bridge's pending queue, or refused. `typed: false`:
  * nothing of the message reached the pane, as the bridge (or this socket, refusing before it
  * sent anything) knows; absent, an older bridge did not say (compose.ts submitNotTyped).
+ * `draft`: an input_draft refusal's one-row Claude draft, which a send with clearDraft may clear.
  */
-/** `draft`: an input_draft refusal's one-row Claude draft, which a send with clearDraft may clear */
 export type SubmitResult = { ok: true; pending?: PendingMessage } | { ok: false; code: string; message: string; typed?: false; draft?: string };
 
 /** Right after a reconnect the snapshot that says what the server supports may still be on its way. */
@@ -378,8 +378,8 @@ export class HerdrSocket {
    * as written, `payload` the same shaped for the pane's paste mode. null, sending
    * nothing, when offline.
    */
-  submit(paneId: string, text: string, payload: string, { delivery = "immediate", agentOnly = false, clearDraft }: SubmitOptions = {}): Promise<SubmitResult> | null {
-    return this.sendMessage(paneId, text, payload, false, delivery, agentOnly, clearDraft);
+  submit(paneId: string, text: string, payload: string, options: SubmitOptions = {}): Promise<SubmitResult> | null {
+    return this.sendMessage(paneId, text, payload, false, options);
   }
 
   /**
@@ -388,10 +388,10 @@ export class HerdrSocket {
    * agent-only, which a server would refuse or ignore for a typed line.
    */
   typeLine(paneId: string, text: string, payload: string): Promise<SubmitResult> | null {
-    return this.sendMessage(paneId, text, payload, true, "immediate", false);
+    return this.sendMessage(paneId, text, payload, true);
   }
 
-  private sendMessage(paneId: string, text: string, payload: string, typed: boolean, delivery: "immediate" | "queue", agentOnly: boolean, clearDraft?: string): Promise<SubmitResult> | null {
+  private sendMessage(paneId: string, text: string, payload: string, typed: boolean, { delivery = "immediate", agentOnly = false, clearDraft }: SubmitOptions = {}): Promise<SubmitResult> | null {
     const socket = this.socket;
     if (!this.connected || socket === null || this.mode === "observe") return null;
     return (async (): Promise<SubmitResult> => {

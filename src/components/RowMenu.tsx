@@ -15,6 +15,7 @@ import "./RowMenu.css";
 
 import { useT } from "../lib/i18n.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
+import { SHEET_QUERY, useSheetSwipe } from "../lib/sheets.ts";
 
 export interface RowMenuItem {
   id: string;
@@ -52,8 +53,6 @@ interface Props {
   onClose: () => void;
 }
 
-/** where the menu is the bottom sheet; a caller that lays its header out for the sheet reads the same line */
-export const SHEET_QUERY = "(max-width: 640px)";
 const GAP = 4;
 const EDGE = 8;
 const POPOVER_ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
@@ -64,6 +63,7 @@ export function RowMenu({ anchor, point, restoreFocusTo, title, subtitle, header
   const t = useT();
   const sheet = useMediaQuery(SHEET_QUERY);
   const surface = useRef<HTMLDivElement>(null);
+  useSheetSwipe(surface, sheet ? onClose : null);
   const [place, setPlace] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   // where the button was when the menu was placed: a scroll that leaves it there is not a reason to close
   const placedAt = useRef<{ top: number; left: number } | null>(null);

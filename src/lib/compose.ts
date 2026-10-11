@@ -48,6 +48,8 @@ const LEGACY_NOT_TYPED_CODES: readonly string[] = Object.freeze(["agent_blocked"
  * bridge that does not say, its code is one such a bridge used only before typing.
  */
 export function submitNotTyped(result: { code: string; typed?: false }): boolean {
+  // A partial clear may have changed the pane even if a malformed receipt says otherwise.
+  if (result.code === "submit_partial") return false;
   return result.typed === false || LEGACY_NOT_TYPED_CODES.includes(result.code);
 }
 
@@ -65,6 +67,7 @@ export function sameMessage(a: string, b: string): boolean {
   const bare = (text: string): string => text.replace(/[\s\u00a0]+/gu, "");
   return bare(a) !== "" && bare(a) === bare(b);
 }
+
 /**
  * Why a composer message did not go (SubmitResult's code): the composer keeps the text and says this.
  * `agentOnly`: the message was sent to an agent only (it carries comments), so a missing or not-ready

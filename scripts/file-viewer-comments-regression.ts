@@ -27,6 +27,7 @@ import { createServer } from "../server/index.ts";
 import { TEXT_LOAD_LIMIT } from "../src/lib/textPreview.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { openSettingsPage } from "./settings-page.ts";
+import { sheetsSettled } from "./sheets-settled.ts";
 
 /** `src/sync.ts`: line 8 is the comparison a comment questions. */
 const SYNC_LINES = [
@@ -343,6 +344,8 @@ async function openSync(page: Page, touch = false): Promise<Locator> {
   else await link.click();
   const viewer = page.getByRole("dialog", { name: "sync.ts", exact: true });
   await viewer.locator(`.file-viewer-text .hl-line[data-source-line="${SYNC_LINES.length}"]`).waitFor();
+  // Coordinate-based touch taps need the sheet's final position, not its opening frame.
+  await sheetsSettled(page);
   return viewer;
 }
 
@@ -353,6 +356,7 @@ async function openSpec(page: Page, touch = false): Promise<Locator> {
   else await link.click();
   const viewer = page.getByRole("dialog", { name: "spec.md", exact: true });
   await viewer.locator(`.file-viewer-markdown .hl-line[data-source-line="${FOLD_HEAD_LAST}"]`).waitFor();
+  await sheetsSettled(page);
   return viewer;
 }
 

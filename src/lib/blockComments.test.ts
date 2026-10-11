@@ -53,6 +53,9 @@ describe("blockContent", () => {
   it("joins a paragraph's lines and drops inline markup", () => {
     expect(blockContent(first("a **b** [c](https://x)\nd"))).toBe("a b c\nd");
   });
+  it("quotes image link fallbacks without loading their sources", () => {
+    expect(blockContent(first("Before ![chart](plot.png) after"))).toBe("Before !chart after");
+  });
   it("reads a heading with inline code", () => {
     expect(blockContent(first("## Title `code`"))).toBe("Title code");
   });

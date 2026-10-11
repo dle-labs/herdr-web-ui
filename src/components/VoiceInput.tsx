@@ -10,14 +10,14 @@ import { createDictationDraft, type DictationSnapshot } from "../lib/dictationDr
 import { createDictationUndo } from "../lib/dictationUndo.ts";
 import { VOICE_MAX_SECONDS } from "../../shared/voice.ts";
 
-function errorNote(t: Translate, error: string): string | null {
+function errorNote(t: Translate, error: string, provider: "openai" | "speaches" | "browser"): string | null {
   switch (error) {
     case "disabled": return null;
     case "insecure": return t("Voice input needs HTTPS");
     case "permission": return t("Microphone permission was denied");
     case "no_mic": return t("No microphone found");
-    case "not_configured": return t("Apply a model and mode in Settings > Dictation");
-    case "server_not_configured": return t("Configure HERDR_WEB_DICTATION_BASE_URL on the WebUI backend, restart it, then reload the app.");
+    case "not_configured": return provider === "speaches" ? t("Apply a model and mode in Settings > Dictation") : t("Configure an OpenAI API key in Settings > Dictation");
+    case "server_not_configured": return provider === "speaches" ? t("Configure HERDR_WEB_DICTATION_BASE_URL on the WebUI backend, restart it, then reload the app.") : t("Configure an OpenAI API key in Settings > Dictation");
     case "policy": return t("Dictation configuration changed. Reload the app and check Settings > Dictation.");
     case "busy": return t("Another input or tab is using dictation");
     case "timeout": return t("The speech server took too long to respond");
@@ -26,7 +26,7 @@ function errorNote(t: Translate, error: string): string | null {
     case "no_speech": return t("No speech was heard");
     case "format": return t("The recording or speech response format is not supported");
     case "unsupported": return t("This browser cannot record audio");
-    default: return t("Transcription failed. Check the WebUI backend and its speech service connection.");
+    default: return t("Transcription failed. Check the selected provider and its connection.");
   }
 }
 
@@ -103,6 +103,8 @@ export interface DictationOptions {
   /** Update the visible draft only, without raising the soft keyboard. */
   write: (value: string, caret: number) => void;
   maxLength?: number;
+  /** Non-secret contextual vocabulary, snapshotted by the engine at take start. */
+  keywords?: () => string[];
   onNote: (note: string | null) => void;
 }
 export interface Dictation {
@@ -136,7 +138,7 @@ export function useDictation(options: DictationOptions): Dictation {
   const insertedCaret = useRef<{ owner: string; value: string; caret: number } | null>(null);
   const recoveryRef = useRef<string | null>(null);
   const [recovery, setRecovery] = useState<string | null>(null);
-  const configKey = JSON.stringify(settings.dictation);
+  const configKey = JSON.stringify([settings.voiceProvider, settings.voiceLanguage, settings.voicePolishChat, settings.voicePolishTerminal, settings.dictation]);
   const liveConfig = useRef(configKey);
   liveConfig.current = configKey;
   const wanted = wantsVoiceInput(settings.voiceInput, options.mode);
@@ -197,7 +199,16 @@ export function useDictation(options: DictationOptions): Dictation {
     recoveryRef.current = result.text;
     setRecovery(result.text);
   }, [insert, sync]);
-  const voice = useVoiceInput({ enabled: wanted && options.active !== false, config: settings.dictation, onText });
+  const voice = useVoiceInput({
+    enabled: wanted && options.active !== false,
+    provider: settings.voiceProvider,
+    language: settings.voiceLanguage,
+    polish: options.mode === "terminal" ? settings.voicePolishTerminal : settings.voicePolishChat,
+    mode: options.mode === "terminal" ? "terminal" : "chat",
+    keywords: options.keywords?.(),
+    config: settings.dictation,
+    onText,
+  });
   const voiceRef = useRef(voice);
   voiceRef.current = voice;
   const cancel = useCallback((): void => { clear(); voiceRef.current.cancel(); }, [clear]);
@@ -286,8 +297,8 @@ export function useDictation(options: DictationOptions): Dictation {
   }, [options.box, cancel]);
   useEffect(() => {
     if (voice.state === "starting") latest.current.onNote(null);
-    else if (voice.error) latest.current.onNote(errorNote(t, voice.error === "not_configured" ? "server_not_configured" : voice.error));
-  }, [voice.error, voice.state, t]);
+    else if (voice.error) latest.current.onNote(errorNote(t, voice.error === "not_configured" ? "server_not_configured" : voice.error, settings.voiceProvider));
+  }, [voice.error, voice.state, settings.voiceProvider, t]);
   useEffect(() => {
     const hidden = (): void => { if (document.hidden) cancel(); };
     document.addEventListener("visibilitychange", hidden);
@@ -360,19 +371,20 @@ export function useDictation(options: DictationOptions): Dictation {
     });
   }, [shown, options.active, options.mode, options.box, cancel, press]);
   const unavailableNote = !options.connected ? t("Not sent: the terminal is disconnected.")
-    : voice.unavailableReason ? errorNote(t, voice.unavailableReason) : null;
+    : voice.unavailableReason ? errorNote(t, voice.unavailableReason, settings.voiceProvider) : null;
   return { shown, connected: options.connected, unavailableNote, statusId, voice: { ...voice, cancel }, cancel, press, finishAndSubmit, recovery, insertRecovery, canUndo, undo };
 }
 
 /** Tap-to-toggle also works with Enter/Space. Pointer presses never force the keyboard open. */
 export function MicButton({ dictation, className = "" }: { dictation: Dictation; className?: string }) {
   const t = useT();
+  const { settings } = useSettings();
   const { voice, connected, press, recovery } = dictation;
   const pointerClick = useRef(false);
   const recording = voice.state === "recording";
   const starting = voice.state === "starting";
   const reason = !connected ? t("Not sent: the terminal is disconnected.")
-    : voice.unavailableReason ? errorNote(t, voice.unavailableReason) : null;
+    : voice.unavailableReason ? errorNote(t, voice.unavailableReason, settings.voiceProvider) : null;
   const label = starting ? t("Cancel dictation") : recording ? t("Finish dictation") : t("Start dictation");
   return <span className={`voice-mic-wrap ${className}`} data-state={voice.state}>
     <span className="voice-mic-ring" ref={voice.bindRing} aria-hidden="true" />

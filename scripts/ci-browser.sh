@@ -74,8 +74,8 @@ run_script scripts/chat-fallback-browser-qa.ts
 run_script scripts/grok-chat-browser-qa.ts
 run_script scripts/math-browser-qa.ts
 run_script scripts/file-viewer-regression.ts
-run_script scripts/file-preview-text-browser-qa.ts
 run_script scripts/file-viewer-comments-regression.ts
+run_script scripts/file-preview-text-browser-qa.ts
 run_script scripts/keyboard-viewport-regression.ts
 run_script scripts/file-viewer-mobile-regression.ts
 run_script scripts/droplet-demo-regression.ts

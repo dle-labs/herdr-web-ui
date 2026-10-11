@@ -136,6 +136,76 @@ describe("readTextStart", () => {
     expect(cancelled).toBe(true);
   });
 
+  it("bounds and cancels a range-ignoring body without awaiting its cancellation", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode("x".repeat(TEXT_LOAD_LIMIT + 100))); },
+      cancel() { cancelled = true; return new Promise<void>(() => {}); },
+    });
+    const loaded = await readTextStart(new Response(stream));
+    expect(loaded.text.length).toBe(TEXT_LOAD_LIMIT);
+    expect(loaded.truncated).toBe(true);
+    expect(loaded.size).toBeNull();
+    expect(cancelled).toBe(true);
+    expect(stream.locked).toBe(false);
+  });
+
+  it("keeps an exactly-budget 200 whole after checking the stream ends", async () => {
+    const text = "a".repeat(TEXT_LOAD_LIMIT - 1) + "b";
+    expect(await readTextStart(answer(text, 200))).toEqual({ text, truncated: false, limit: TEXT_LOAD_LIMIT, size: TEXT_LOAD_LIMIT });
+  });
+
+  it("decodes UTF-8 across stream chunks", async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([120, 195]));
+        controller.enqueue(new Uint8Array([164]));
+        controller.close();
+      },
+    });
+    expect(await readTextStart(new Response(stream))).toEqual({ text: "xä", truncated: false, limit: TEXT_LOAD_LIMIT, size: 3 });
+  });
+
+  for (const lookahead of [false, true]) {
+    it(`aborts a stalled ${lookahead ? "exact-budget lookahead" : "body read"} without awaiting cancellation`, async () => {
+      const abort = new AbortController();
+      let cancelled = false;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) { if (lookahead) controller.enqueue(new Uint8Array(TEXT_LOAD_LIMIT)); },
+        // Abort when the reader asks for the stalled chunk, with no timing-based sleep.
+        pull() { abort.abort(); return new Promise<void>(() => {}); },
+        cancel() { cancelled = true; return new Promise<void>(() => {}); },
+      }, { highWaterMark: 0 });
+      await expect(readTextStart(new Response(stream), { signal: abort.signal })).rejects.toThrow("File preview aborted.");
+      expect(cancelled).toBe(true);
+      expect(stream.locked).toBe(false);
+    });
+  }
+
+  it("discards an already-aborted response before reading it", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
+    await expect(readTextStart(new Response(stream), { signal: abort.signal })).rejects.toThrow("File preview aborted.");
+    expect(cancelled).toBe(true);
+  });
+
+  it("rejects already-aborted empty responses too", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    for (const response of [new Response(null), new Response(null, { status: 416, headers: { "content-range": "bytes */0" } })]) {
+      await expect(readTextStart(response, { signal: abort.signal })).rejects.toThrow("File preview aborted.");
+    }
+  });
+
+  it("cancels an error body rather than displaying it", async () => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
+    await expect(readTextStart(new Response(stream, { status: 404 }))).rejects.toThrow("the file answered 404");
+    expect(cancelled).toBe(true);
+  });
+
   it("loads an empty file, which has no first byte to send", async () => {
     expect(await readTextStart(answer("", 416, "bytes */0"))).toEqual({ text: "", truncated: false, limit: TEXT_LOAD_LIMIT, size: 0 });
   });

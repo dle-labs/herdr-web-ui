@@ -1,0 +1,268 @@
+/* The header's plan button: beside the view switch, as quiet as it, a count, not a word */
+.plan-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.plan-button svg {
+  width: 15px;
+  height: 15px;
+  color: var(--status-working);
+}
+
+.plan-button.is-done svg {
+  color: var(--status-done);
+}
+
+.plan-button:hover,
+.plan-button:focus-visible {
+  color: var(--text-strong);
+}
+
+.plan-dialog {
+  width: min(100%, 720px);
+}
+
+.plan-dialog-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.plan-dialog-pane {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-view-switch {
+  flex: 0 0 auto;
+}
+
+.plan-note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.plan-error {
+  color: var(--status-blocked);
+}
+
+.plan-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+  margin: 0 0 var(--space-3);
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-summary-now {
+  min-width: 0;
+  color: var(--status-working);
+  font-weight: var(--fw-regular);
+  overflow-wrap: anywhere;
+}
+
+/* the flow: boxes laid out by lib/plan.ts, scrolled sideways when a wave is wider than the sheet */
+.plan-flow-scroll {
+  overflow: auto;
+}
+
+.plan-flow {
+  position: relative;
+  margin: 0 auto;
+}
+
+.plan-flow-edges {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.plan-edge {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  opacity: 0.7;
+}
+
+.plan-edge.is-done {
+  stroke: var(--status-done);
+  stroke-dasharray: none;
+  opacity: 1;
+}
+
+.plan-arrow path {
+  fill: var(--text-dim);
+}
+
+.plan-arrow.is-done path {
+  fill: var(--status-done);
+}
+
+.plan-flow-nodes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-panel);
+  border: var(--hairline) dashed var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-dim);
+  box-sizing: border-box;
+}
+
+.plan-node.is-completed {
+  background: var(--status-done-tint);
+  border-style: solid;
+  border-color: var(--status-done);
+  color: var(--text);
+}
+
+.plan-node.is-in_progress {
+  background: var(--status-working-tint);
+  border: 2px solid var(--status-working);
+  color: var(--text-strong);
+}
+
+.plan-node-label {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+
+.plan-node-label svg {
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
+.plan-node.is-completed .plan-node-label svg {
+  color: var(--status-done);
+}
+
+.plan-node.is-in_progress .plan-node-label svg {
+  color: var(--status-working);
+}
+
+.plan-node-meta {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-node .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* the list: the same steps in wave order, each with what it does now and how long it took */
+.plan-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--text-dim);
+}
+
+.plan-step > svg {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.plan-step.is-completed > svg {
+  color: var(--status-done);
+}
+
+.plan-step.is-in_progress > svg {
+  color: var(--status-working);
+}
+
+.plan-step-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.plan-step-label {
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.plan-step.is-pending .plan-step-label {
+  color: var(--text);
+}
+
+.plan-step-active {
+  color: var(--status-working);
+  font-size: var(--fs-xs);
+}
+
+.plan-step-meta {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* a phone: the title gives the switch its room */
+@media (max-width: 480px) {
+  .plan-dialog-pane {
+    display: none;
+  }
+}

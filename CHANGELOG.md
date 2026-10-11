@@ -34,6 +34,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   `grok-1.0.50-linux-x86_64` on Linux; other builds, macOS and Windows show the terminal view.
   See [setup and limits](docs/grok-chat.md).
   ([#777](https://github.com/devswha/herdr-web-ui/pull/777) by @infowolfe)
+- **Experimental Antigravity chat** reads native messages and tool activity, follows the
+  running process’s active conversation, and honors saved rewind boundaries. macOS is untested.
+  See [compatibility and validation](docs/agy-chat.md).
+  ([#789](https://github.com/devswha/herdr-web-ui/pull/789) by @infowolfe)
 - Hermes's clarify questions get an answer card, as Claude Code's and Codex's do: one tap per
   choice, a typed answer for its "Other" row and for an open question, and ticks for a question
   that takes several answers. Text already on its answer line is cleared first, so it does not
@@ -42,16 +46,45 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Settings → Appearance → Colors offers **Forest**, a low-saturation green-grey palette for long
   sessions, in dark and light, with matching terminal and title-bar colors.
   ([#775](https://github.com/devswha/herdr-web-ui/pull/775) by @vibewriter-hand)
+- A Claude Code or Codex pane's plan appears as progress in the header and sidebar. Open it
+  from the header in Chat or Terminal to see its steps as a flow or a list, with the current
+  step and elapsed times. It is read from the agent's transcript. **Settings → Appearance** can
+  take the count out of the header (**Plan count in the header**) and open the plan as the
+  list alone (**Plan flow**); both are on by default.
+  ([#531](https://github.com/devswha/herdr-web-ui/pull/531) by @kilhyeonjun, [#820](https://github.com/devswha/herdr-web-ui/pull/820))
 - A `mermaid` code block in the chat is drawn as a diagram, with a full-screen lightbox to zoom and
   pan it, and the file viewer renders markdown files with local images; larger images are offered
   as downloads. ([#616](https://github.com/devswha/herdr-web-ui/pull/616) by @lyonbot)
-- Pin agents to the top of the Agents list with the star beside each row; pins keep their order across reloads. ([#778](https://github.com/devswha/herdr-web-ui/pull/778) by @vibewriter-hand)
+- **Settings → Appearance → Pin agents** (off by default) shows a star beside each row of the Agents list that pins the agent to the top; pins keep their order across reloads. ([#778](https://github.com/devswha/herdr-web-ui/pull/778) by @vibewriter-hand, [#820](https://github.com/devswha/herdr-web-ui/pull/820))
 - An OpenCode pane on a 1.x store (`session`/`message`/`part`) reads as a conversation again, where
   the chat used to keep the terminal's text: prompts with the pictures pasted in them, each answer's
   steps with their tool calls and outputs, and the turns an `/undo` took back.
   ([#690](https://github.com/devswha/herdr-web-ui/pull/690) by @okcedric)
 
 ### Changed
+- Merge upstream voice settings with self-hosted dictation: explicitly choose OpenAI, Speaches or browser recognition, with one provider per recording and no automatic fallback. Restore server-side OpenAI key controls, language selection and separate chat/terminal polishing preferences without discarding saved Speaches settings. ([#2](https://github.com/dle-labs/herdr-web-ui/pull/2) by @polaroidkidd)
+- Send directly while dictating in chat or the terminal input line: finish capture, wait for the final transcript and submit once, without a separate Stop tap. Cancellation, errors or changed drafts prevent the send.
+- Route dictation and model discovery through the WebUI backend to the existing Speaches service. Add opt-in live previews with backend audio segmentation, bounded per-take buffering and no direct browser-to-speech connection. Configure `HERDR_WEB_DICTATION_BASE_URL`, reload and explicitly re-apply Dictation settings after migrating; the old browser-origin allowlist is retired.
+- The recording input is taller, with a single continuous full-width waveform followed by the recording label, seconds and close button.
+- Recording and transcription replace the visible message field without discarding its draft; live bars sit to the left of the recording label, with no bars or recording indicator until capture actually starts.
+- Selecting text offers a Comment quick action instead of immediately opening and focusing the editor, preserving native copying on desktop and mobile.
+- Dictation stays discoverable in desktop and mobile composers, terminal drafts and comment editors; unavailable microphones explain why instead of disappearing.
+- Dictation starts on pointer-down rather than release and explicitly shows when the microphone is still starting.
+- Replace cloud/browser voice input with direct, self-hosted English dictation in desktop and mobile chat, terminal lines, reply comments and file comments. Settings now applies a speech URL/model explicitly; interrupted takes are cancelled and changed drafts require review before insertion. Direct speech origins require an administrator CSP allowlist. Live streaming is not enabled yet. ([#1](https://github.com/dle-labs/herdr-web-ui/pull/1) by @polaroidkidd)
+- The anonymous install and update counts also name the appearance settings changed from their
+  defaults (theme, density, colors, sidebar rows, Agents order, workspace cards, pin agents and the
+  two plan settings): the names only, never a value, and never a setting you type. The notice is
+  shown once more before anything is sent, and the same switch and environment variables turn it off.
+  ([Anonymous usage counts](docs/guide.md#anonymous-usage-counts), [#820](https://github.com/devswha/herdr-web-ui/pull/820))
+- On a phone the app moves and responds like an iPhone app rather than a web page. Menus,
+  dialogs, the palette and Settings slide up from the bottom, follow your finger when you drag
+  them down, and slide away however they close; the workspace drawer follows your finger too.
+  Over the chat the header is frosted glass that the conversation scrolls under, and the message
+  box floats over the conversation's end. A tapped button dims at once instead of drawing an amber
+  box, a list row fills when pressed, a long press on the app's buttons and rows no longer selects
+  their text.
+  ([#683](https://github.com/devswha/herdr-web-ui/pull/683) by @jiunshinn)
+
 - Chat updates follow native transcript changes pushed through the existing WebSocket.
   Only visible Chat views subscribe; Terminal views and hidden tabs release conversation
   monitoring. Continuous pushes coalesce into at most one newest-page refresh every 2 seconds,
@@ -62,21 +95,25 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   A remote PC gets pushes once its bridge runs a bundle with this change. Approval-card polling
   remains independent.
   ([#689](https://github.com/devswha/herdr-web-ui/pull/689) by @zerodice0, [#757](https://github.com/devswha/herdr-web-ui/pull/757))
-- The sidebar's Agents list puts each workspace's agents in a card under the workspace's name,
-  so agents working in the same workspace read as one group. The rows no longer repeat the
-  workspace on their second line; their tooltips still name it. A list in Activity order stays
-  as it was, since it mixes workspaces.
-  ([#673](https://github.com/devswha/herdr-web-ui/pull/673) by @WOULDU-pres)
-- Send directly while dictating in chat or the terminal input line: finish capture, wait for the final transcript and submit once, without a separate Stop tap. Cancellation, errors or changed drafts prevent the send.
-- Route dictation and model discovery through the WebUI backend to the existing Speaches service. Add opt-in live previews with backend audio segmentation, bounded per-take buffering and no direct browser-to-speech connection. Configure `HERDR_WEB_DICTATION_BASE_URL`, reload and explicitly re-apply Dictation settings after migrating; the old browser-origin allowlist is retired.
-- The recording input is taller, with a single continuous full-width waveform followed by the recording label, seconds and close button.
-- Recording and transcription replace the visible message field without discarding its draft; live bars sit to the left of the recording label, with no bars or recording indicator until capture actually starts.
-- Selecting text offers a Comment quick action instead of immediately opening and focusing the editor, preserving native copying on desktop and mobile.
-- Dictation stays discoverable in desktop and mobile composers, terminal drafts and comment editors; unavailable microphones explain why instead of disappearing.
-- Dictation starts on pointer-down rather than release and explicitly shows when the microphone is still starting.
-- Replace cloud/browser voice input with direct, self-hosted English dictation in desktop and mobile chat, terminal lines, reply comments and file comments. Settings now applies a speech URL/model explicitly; interrupted takes are cancelled and changed drafts require review before insertion. Direct speech origins require an administrator CSP allowlist. Live streaming is not enabled yet. ([#1](https://github.com/dle-labs/herdr-web-ui/pull/1) by @polaroidkidd)
+- **Settings → Appearance → Workspace cards** (off by default) puts each workspace's agents in
+  the sidebar's Agents list in a card under the workspace's name, so agents working in the same
+  workspace read as one group. Rows in a card do not repeat the workspace on their second line;
+  their tooltips still name it. A list in Activity order draws no cards, since it mixes workspaces.
+  ([#673](https://github.com/devswha/herdr-web-ui/pull/673) by @WOULDU-pres, [#820](https://github.com/devswha/herdr-web-ui/pull/820))
 
 ### Fixed
+- Terminal Find keeps its query and match count when the dictation input line is visible, instead of losing state through duplicate React keys. ([#2](https://github.com/dle-labs/herdr-web-ui/pull/2) by @polaroidkidd)
+- Comment editors no longer stop at 2,000 characters; the combined message is still checked against the send limit.
+- Chat selection comments keep list bullets, numbering and task checkbox markers in their quotes.
+- Comments sent from chat or file selections stay outside the quoted text in terminal Markdown renderers.
+- This fork uses `dle-labs.herdr-web-ui` for its plugin identity, phone setup actions and config-directory lookup.
+- A phone shows a split tab one pane at a time again, at the screen's whole width, instead of
+  every pane squeezed into herdr's grid (since 0.4.6). The tab's menu lists the tab's panes to
+  switch between them. Wider screens keep the split, and herdr's own layout is not changed.
+  ([#819](https://github.com/devswha/herdr-web-ui/pull/819))
+- Chat hides a rejected conversation immediately, even when reading its terminal fallback
+  is slow or fails, so removed history does not remain on screen.
+  ([#789](https://github.com/devswha/herdr-web-ui/pull/789) by @infowolfe)
 - When a chat message is not sent because Claude Code's input box in the terminal is not empty,
   the note now says what the box holds, and a one-line draft there can be cleared from the chat
   with Clear it and send. The chat did not show that text, so Send seemed to do nothing until the
@@ -140,10 +177,6 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   takes the unused height, and an empty one follows the folded section directly. The Agents height
   cap, independent scrolling and fixed footer stay unchanged.
   ([#780](https://github.com/devswha/herdr-web-ui/pull/780) by @vibewriter-hand)
-- Comment editors no longer stop at 2,000 characters; the combined message is still checked against the send limit.
-- Chat selection comments keep list bullets, numbering and task checkbox markers in their quotes.
-- Comments sent from chat or file selections stay outside the quoted text in terminal Markdown renderers.
-- This fork uses `dle-labs.herdr-web-ui` for its plugin identity, phone setup actions and config-directory lookup.
 
 ## [0.4.6] - 2026-10-11
 

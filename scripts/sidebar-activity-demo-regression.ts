@@ -82,6 +82,43 @@ try {
     const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
     try {
       // Workspace menus no longer mix in pane operations; header More keeps pane movement.
+      // off by default: herdr's order in a flat list, each row naming its own workspace
+      await withPage(browser, {}, async (page) => {
+        assert.deepEqual(await agentTitles(page), AGENTS_HERDR_ORDER);
+        assert.equal(await page.locator(".agents-sidebar .agent-group").count(), 0, "no workspace cards unless Settings turns them on");
+        assert.equal(await page.locator(".agents-sidebar .agent-pin-toggle").count(), 0, "no pin stars unless Settings turns them on");
+        assert.match(await agent(page, API).locator(".agent-context").textContent() ?? "", /checkout-api/, "a row outside a card names its workspace");
+      });
+      console.log("PASS by default the Agents list is flat, in herdr's order, with no pin stars");
+
+      // a pane's plan: the header's count and the flow stand unless Settings turns them off
+      const planned = async (page: Page): Promise<void> => {
+        await page.goto(`${url}?pane=${encodeURIComponent(panes.api)}`);
+        await page.locator(".conn-live").waitFor({ state: "attached" });
+        await agents(page).first().waitFor({ state: "attached" });
+      };
+      for (const mobile of [false, true]) {
+        await withPage(browser, {}, async (page) => {
+          await planned(page);
+          await page.locator(".plan-button").click();
+          const plan = page.getByRole("dialog", { name: /^Plan/ });
+          await plan.locator(".plan-node").first().waitFor();
+          assert.equal(await plan.locator(".plan-view-switch").count(), 1, "by default the plan opens as a flow, with its switch to the list");
+        }, undefined, mobile);
+        await withPage(browser, { planFlow: false }, async (page) => {
+          await planned(page);
+          await page.locator(".plan-button").click();
+          const plan = page.getByRole("dialog", { name: /^Plan/ });
+          await plan.locator(".plan-step").first().waitFor();
+          assert.equal(await plan.locator(".plan-view-switch, .plan-node").count(), 0, "Plan flow off: the list alone, with no switch");
+        }, undefined, mobile);
+        await withPage(browser, { planButton: false }, async (page) => {
+          await planned(page);
+          assert.equal(await page.locator(".plan-button").count(), 0, "Plan count in the header off: no plan button");
+        }, undefined, mobile);
+      }
+      console.log("PASS the plan's flow and its header count stand by default, on a desktop and a phone, and each goes with its setting");
+
       await withPage(browser, {}, async (page) => {
         await runMoreItem(page, "Move pane to…");
         const move = page.getByRole("menu", { name: /^Move .* to$/ });
@@ -111,7 +148,7 @@ try {
       console.log("PASS header More moves the selected pane and closes stale targets");
 
       // Default: herdr's order before and after a finish, and an opened DONE keeps herdr's dot
-      await withPage(browser, {}, async (page) => {
+      await withPage(browser, { agentCards: true, agentPins: true }, async (page) => {
         const selected = await page.evaluate(() => sessionStorage.getItem("herdr-web-ui:selection"));
         await page.locator(".header-more-button").focus();
         const workspace = page.locator(`.workspace-select[data-pane="${panes.api}"]`);
@@ -193,9 +230,9 @@ try {
         assert.equal(await page.locator(".row-menu, .row-sheet").count(), 0, "selecting the agent does not open a menu");
         assert.equal(await agentStatus(page, API), "done", "herdr's DONE stands until herdr itself shows the pane");
       });
-      console.log("PASS by default the Agents list keeps herdr's order in workspace cards, and an opened DONE keeps its dot");
+      console.log("PASS with Workspace cards on the Agents list keeps herdr's order in workspace cards, and an opened DONE keeps its dot");
 
-      await withPage(browser, {}, async (page) => {
+      await withPage(browser, { agentPins: true }, async (page) => {
         const drawerToggle = page.locator('button[aria-controls="workspace-drawer"]');
         await drawerToggle.tap();
         const agentToggle = page.locator(".agents-sidebar .agent-section-toggle");

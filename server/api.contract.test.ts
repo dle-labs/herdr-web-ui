@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { appendFileSync, chmodSync, copyFileSync, mkdirSync, mkdtempSync, existsSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { ConversationMonitor } from "./conversation-monitor.ts";
 import { createServer } from "./index.ts";
 import type { DictationConfigResponse, AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
@@ -110,6 +111,75 @@ describe("Grok conversation API", () => {
   }, 20_000);
 });
 
+describe("Agy conversation API", () => {
+  it.skipIf(process.platform !== "linux")("binds the selected held lock, honors saved rewinds and recovers from an unwritten store", async () => {
+    const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-agy-contract-"));
+    const id = "00000000-0000-4000-8000-000000000031";
+    const path = join(root, "brain", id, ".system_generated", "logs", "transcript_full.jsonl");
+    mkdirSync(join(path, ".."), { recursive: true });
+    mkdirSync(join(root, "conversations")); mkdirSync(join(root, "presence"));
+    const lock = join(root, "presence", `${id}.lock`);
+    writeFileSync(lock, "");
+    // Another unheld lock in the same store must never select a conversation.
+    writeFileSync(join(root, "presence", "00000000-0000-4000-8000-000000000032.lock"), "");
+    const executable = join(root, "agy");
+    copyFileSync("/bin/sleep", executable); chmodSync(executable, 0o755);
+    const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-agy-api" });
+    let app: ReturnType<typeof createServer> | undefined, db: Database | undefined;
+    let monitor: ConversationMonitor | undefined;
+    try {
+      const paneId = created.root_pane.pane_id;
+      await herdrRpc("pane.send_text", { pane_id: paneId, text: `${executable} 600 3<${lock}\n` });
+      for (const deadline = Date.now() + 10_000;;) {
+        if ((await sessionSnapshot()).panes.find((pane) => pane.pane_id === paneId)?.agent === "agy") break;
+        if (Date.now() > deadline) throw new Error("fixture Agy process did not start");
+        await Bun.sleep(50);
+      }
+      app = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: join(root, "state") });
+      const url = `http://127.0.0.1:${app.port}/api/pane/conversation?pane_id=${encodeURIComponent(paneId)}`;
+      expect(await (await fetch(url)).json()).toEqual({ source: "scrollback", turns: [] });
+      db = new Database(join(root, "conversations", `${id}.db`));
+      db.exec("PRAGMA journal_mode=WAL; CREATE TABLE steps(idx INTEGER PRIMARY KEY)");
+      const empty = await (await fetch(url)).json();
+      expect(empty.source).toBe("agy-transcript"); expect(empty.turns).toEqual([]);
+      const row = (step_index: number, type: string, content: string) => JSON.stringify({ step_index, type, status: "DONE", content }) + "\n";
+      db.exec("INSERT INTO steps VALUES (0), (1)");
+      writeFileSync(path, row(0, "USER_INPUT", "fictional prompt") + row(1, "GENERIC", "x".repeat(5000)));
+      const first = await fetch(url), body = await first.json();
+      expect(body.source).toBe("agy-transcript");
+      expect(body.turns[0].parts[0].text).toBe("fictional prompt");
+      expect((await fetch(url, { headers: { "if-none-match": first.headers.get("etag")! } })).status).toBe(304);
+      const ref = body.turns[1].parts[0].output_ref;
+      const outputUrl = `http://127.0.0.1:${app.port}/api/pane/conversation/tool-output?${new URLSearchParams({ pane_id: paneId, ref })}`;
+      expect(await (await fetch(outputUrl)).text()).toBe("x".repeat(5000));
+      const changes: string[] = [];
+      monitor = new ConversationMonitor((_pane, signature) => changes.push(signature));
+      monitor.watch(paneId);
+      const changed = async (count: number) => {
+        for (const deadline = Date.now() + 5000; changes.length <= count;) {
+          if (Date.now() > deadline) throw new Error("Agy catalog change was not pushed");
+          await Bun.sleep(20);
+        }
+      };
+      await changed(0);
+      const beforeCut = changes.length;
+      db.exec("DELETE FROM steps WHERE idx >= 1");
+      await changed(beforeCut);
+      expect((await (await fetch(url)).json()).turns).toHaveLength(1);
+      expect((await fetch(`${url}&from=${encodeURIComponent(`${body.history_id}:0`)}`)).status).toBe(409);
+      expect((await fetch(outputUrl)).status).toBe(404);
+      forgetTranscriptState();
+      const local = await fetch(url.replace("/api/pane/", "/api/machines/local/pane/"));
+      expect((await local.json()).turns).toHaveLength(1);
+      db.exec("DROP TABLE steps");
+      expect(await (await fetch(url)).json()).toEqual({ source: "scrollback", turns: [] });
+    } finally {
+      monitor?.stop(); app?.stop(); db?.close(); await workspaceClose(created.workspace.workspace_id);
+      forgetTranscriptState(); rmSync(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+});
+
 describe("single-pane context lookup", () => {
   for (const route of ["commands", "files"] as const) {
     it(`rejects an unknown pane on /api/pane/${route} with the shared error envelope`, async () => {
@@ -166,6 +236,21 @@ describe("dictation policy API", () => {
       if (previous === undefined) delete process.env.HERDR_WEB_DICTATION_BASE_URL;
       else process.env.HERDR_WEB_DICTATION_BASE_URL = previous;
       rmSync(state, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("GET /api/pane/plan", () => {
+  it("requires GET and a pane id with the shared error envelope", async () => {
+    for (const [url, method, code] of [
+      [`${base()}/api/pane/plan`, "GET", "missing_pane_id"],
+      [`${base()}/api/pane/plan?pane_id=w9999:p9999`, "POST", "method_not_allowed"],
+    ] as const) {
+      const response = await fetch(url, { method });
+      expect(response.status).toBe(400);
+      const body: ApiError = await response.json();
+      expect(body.error.code).toBe(code);
+      expect(typeof body.error.message).toBe("string");
     }
   });
 });

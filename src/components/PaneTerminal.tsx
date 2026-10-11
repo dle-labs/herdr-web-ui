@@ -1856,7 +1856,7 @@ export function PaneTerminal({
     if (!term || !socket || !session || pane === null || secretRef.current !== null || heldRef.current) return null;
     // not the scope itself: a message sent right after a reconnect leaves before the snapshot that names it
     const epoch = session.epoch;
-    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), { delivery, agentOnly, clearDraft });
+    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), { delivery, agentOnly, ...(clearDraft !== undefined ? { clearDraft } : {}) });
     if (sent === null) return null;
     const releaseSubmit = submitRetention?.retain(pane);
     const submission = delivery === "queue" ? { pane, socket, epoch } : null;
@@ -2074,10 +2074,10 @@ export function PaneTerminal({
       // an older bridge is told apart by the socket, once this connection's snapshot has said what it supports.
       // The comments go inside the text: a queued message is bound to the agent session that took it,
       // and an immediate one carrying them is refused rather than typed into a shell.
-      // Only an immediate send clears the explicitly named terminal draft.
+      // A draft is cleared only by a send at once: one that waits its turn is checked when it goes.
       const delivery = composerDelivery(agent, agentStatus);
       return sendComposerText(composeWithComments(comments, text), { delivery, agentOnly: comments.length > 0,
-        clearDraft: delivery === "immediate" ? clearDraft : undefined });
+        ...(delivery === "immediate" && clearDraft !== undefined ? { clearDraft } : {}) });
     },
     [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, sendComposerText],
   );
@@ -2217,8 +2217,10 @@ export function PaneTerminal({
           </div>
         )}
       </div>
+      {/* Find and TerminalInput can be siblings for the same pane: distinct keys keep a
+          draft update or search receipt from replacing Find's state during reconciliation. */}
       {presented && findOpen && !chatView && paneId !== null && (
-        <FindBar key={paneId} paneId={paneId} viewportIntent={viewportIntent} onResult={setSearchState} activePane={active} focusRequest={findRequest} disabled={!connected || held || ended || released || !outputReady}
+        <FindBar key={`find-${paneId}`} paneId={paneId} viewportIntent={viewportIntent} onResult={setSearchState} activePane={active} focusRequest={findRequest} disabled={!connected || held || ended || released || !outputReady}
           onClose={() => { setFindOpen(false); if (activeRef.current && !coarse) termRef.current?.focus(); }} />
       )}
       <div className="terminal-surface">

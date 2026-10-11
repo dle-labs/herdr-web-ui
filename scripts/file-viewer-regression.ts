@@ -9,6 +9,7 @@ import { chromium } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { openSettingsPage } from "./settings-page.ts";
+import { sheetsSettled } from "./sheets-settled.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-web-ui-file-back-"));
 const codexHome = join(root, "codex-home");
@@ -189,6 +190,8 @@ try {
     const settings = page.getByRole("dialog", { name: "Settings", exact: true });
     await settings.waitFor();
     await page.waitForFunction(() => history.state?.["herdr-web-ui:settings"] !== undefined);
+    // a phone's Settings rises over the preview (styles.css): look where it comes to rest
+    await sheetsSettled(page);
     const settingsClose = settings.getByRole("button", { name: "Close settings", exact: true });
     assert.equal(await settingsClose.evaluate((button) => {
       const rect = button.getBoundingClientRect();

@@ -23,6 +23,7 @@ import { languageForPath } from "../lib/highlight.ts";
 import { useT } from "../lib/i18n.ts";
 import { MAX_INLINE_IMAGE_BYTES, markdownImagePreview } from "../lib/markdownImages.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
+import { useSheetSwipe } from "../lib/sheets.ts";
 import { previewHosts, type MarkdownBlock } from "../lib/markdown.ts";
 import { knownPreview, parsePreviewOffThread } from "../lib/markdownPreview.ts";
 import { hasPreview, readTextStart, TEXT_START_HEADERS, type LoadedText, type TextViewMode } from "../lib/textPreview.ts";
@@ -104,7 +105,7 @@ function CopyFileButton({ text, sourceRef, onShowSource }: { text: string; sourc
 
 /**
  * A file an agent wrote, opened in the browser: images, video and audio (streamed, so they
- * play and seek at once), PDFs, and the start of a text file (markdown images read through the
+ * play and seek at once), PDFs, and the start of a text file (Markdown images read through the
  * file endpoint). Each opens whole in a new tab (a text file raw), and anything can be downloaded:
  * an installed app on a phone opens a new tab in an in-app view, which does not always offer to save it.
  */
@@ -121,6 +122,7 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
   const [candidates, setCandidates] = useState<string[] | null>(null);
   // Escape closes it, Tab stays in it, and the focus goes back to the row that opened it
   const surface = useFocusTrap<HTMLElement>(true);
+  useSheetSwipe(surface, onClose);
   // Settings → Chat width, Default: the Preview is as wide as the chat of the pane that opened it
   useOpeningPaneLane(surface, paneId === null ? null : paneStorageId(machineId, paneId));
   // a kind, not a message: it is said in the language of the moment it shows
@@ -163,6 +165,7 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
       if ("candidates" in next) { setCandidates(next.candidates); return; }
       setInfo(next);
       if (next.kind !== "text") return;
+      // only the first part of a text file travels; the deadline covers fetch and its body
       deadline = setTimeout(() => download.abort(), 5_000);
       try {
         const response = await fetch(fileUrl(next.path, paneId), { headers: TEXT_START_HEADERS, signal: download.signal });

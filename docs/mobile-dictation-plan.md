@@ -1,5 +1,7 @@
 # Mobile dictation implementation plan
 
+> Historical plan: replacement-only settings and compatibility-only upstream voice routes below have been superseded. Settings now preserves upstream voice preferences and offers exclusive OpenAI, self-hosted Speaches and browser provider choices, without automatic fallback. See [Voice input](guide.md#voice-input).
+
 Architecture follow-up: [Backend-coordinated dictation implementation plan](dictation-coordinator-plan.md) proposes replacing direct browser-to-Speaches traffic with a thin WebUI backend coordinator. This document records the original direct implementation; the follow-up is a plan, not a deployed change.
 
 Status: milestone 1 implemented after two rounds of independent plan reviews and an implementation review. Automated validation is recorded below; real-device/deployment validation remains outstanding. Milestone 2 is not enabled.

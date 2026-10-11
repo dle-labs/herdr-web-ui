@@ -78,12 +78,11 @@ export function hasPreview(language: string | null): boolean {
 export async function readTextStart(response: Response, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<LoadedText> {
   const range = response.headers.get("content-range");
   const empty = response.status === 416 && answeredFileSize(response.status, range, 0) === 0;
-  if (!response.ok || empty) {
-    // An empty 416 may itself have an error body: never read it as file text.
-    void response.body?.cancel().catch(() => {});
-    if (empty) return loadedText("", 0, TEXT_LOAD_LIMIT);
-    throw new Error(`the file answered ${response.status}`);
-  }
+  const discard = () => { void response.body?.cancel().catch(() => {}); };
+  if (!response.ok && !empty) { discard(); throw new Error(`the file answered ${response.status}`); }
+  if (options.signal?.aborted) { discard(); throw new Error("File preview aborted."); }
+  // An empty 416 may itself have an error body: never read it as file text.
+  if (empty) { discard(); return loadedText("", 0, TEXT_LOAD_LIMIT); }
   let received = 0;
   const reader = response.body?.getReader();
   const body = reader && new ReadableStream<Uint8Array>({

@@ -200,7 +200,9 @@ describe("WebSocket submit", () => {
       try {
         await nameDraft(socket, "named draft");
         socket.send({ type: "submit", id: 820, pane_id: agent.pane, text: "keep composer text", payload: "keep composer text", clear_draft: "named draft" });
-        expect(await socket.result(820)).toMatchObject({ ok: false, code: "submit_partial" });
+        const partial = await socket.result(820);
+        expect(partial).toMatchObject({ ok: false, code: "submit_partial" });
+        expect(partial.typed).toBeUndefined();
         expect(keys).toHaveBeenCalledTimes(1);
         expect(text).not.toHaveBeenCalled();
         if (failure !== "send") expect(prompt).not.toHaveBeenCalled();

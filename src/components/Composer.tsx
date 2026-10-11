@@ -80,12 +80,11 @@ export interface ComposerProps {
   restored?: string | null;
   /** an empty chat's greeting: it stands over the composer's column and takes no row of its own */
   greeting?: ReactNode;
-  /** true: sent, clear the box; a string: keep the text and say why; a promise settles to either.
-   * `text` is only what was typed. `comments` are the pane's comments this send takes: reply
-   * comments quoting the agent's reply and file comments quoting lines of a file the viewer showed,
-   * so with them it goes to an agent only, queued or not, never typed into a shell. The receiver
-   * composes them with the text (composeWithComments) */
-  /** A DraftRefusal keeps the message and offers an explicit send with its named clearDraft. */
+  /** true: sent, clear the box; a string: keep the text and say why; a DraftRefusal: the same, and the
+   * note offers to send again with `clearDraft`, which clears that draft from the terminal first.
+   * `text` is only what was typed. `comments` quote replies or files, so with them it goes to an
+   * agent only, queued or not, never typed into a shell. The receiver composes them with the text
+   * (composeWithComments). A promise settles to any of these results. */
   onSend: (text: string, options?: { comments?: readonly PaneComment[]; clearDraft?: string }) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
   onAbort: () => void;
   onUploadImage: (file: File) => Promise<string>;
@@ -735,6 +734,7 @@ export function Composer({
     active,
     connected,
     owner: draftKey,
+    keywords: () => [...(agent ? [agentLabel] : []), ...commands.map((command) => command.name)],
     box: textareaRef,
     read: () => textRef.current,
     // a dictation that does not fit is refused whole: cutting would drop the draft after the caret
@@ -855,7 +855,7 @@ export function Composer({
   }, []);
 
   const sendRef = useRef<(clearDraft?: string) => void>(() => {});
-  /** `clearDraft`: only the terminal draft the user explicitly asked to clear and send over. */
+  /** The exact terminal draft named by a refusal, cleared only by the user's explicit send over it. */
   const send = useCallback((clearDraft?: string) => {
     if (composingRef.current || !connected || uploading || sending) return;
     if (dictation.voice.state === "recording") {
@@ -895,7 +895,7 @@ export function Composer({
     // Send contains only visible text and invalidates every pending dictation result first.
     dictation.cancel();
     try {
-      const result = onSend(sent, { comments: sentComments, clearDraft });
+      const result = onSend(sent, { comments: sentComments, ...(clearDraft !== undefined ? { clearDraft } : {}) });
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return; }
       void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey));
     } catch {
@@ -1319,12 +1319,13 @@ export function Composer({
         </div>
       </div>
       {typeof shownNote === "string" && <div className="composer-note" role="alert">{shownNote}</div>}
-      {note !== null && typeof note === "object" && (
+      {shownNote !== null && typeof shownNote === "object" && (
         <div className="composer-note composer-note-offer" role="alert">
-          <span>{note.note}</span>
+          <span>{shownNote.note}</span>
           {/* the draft named above, never what has replaced it since: the server checks */}
-          <button type="button" className="composer-note-action" disabled={!connected || uploading || sending || !outgoing.sendable}
-            onClick={() => send(note.draft)}>{t("Clear it and send")}</button>
+          <button type="button" className="composer-note-action"
+            disabled={!connected || uploading || sending || (dictation.voice.state !== "recording" && (!outgoing.sendable || dictation.voice.state !== "idle"))}
+            onClick={() => send(shownNote.draft)}>{t("Clear it and send")}</button>
         </div>
       )}
       {/* outside the surface: it takes drops, and a file dropped on the portalled editor would

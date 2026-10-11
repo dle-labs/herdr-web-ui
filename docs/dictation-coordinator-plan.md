@@ -1,5 +1,7 @@
 # Backend-coordinated dictation implementation plan
 
+> Provider-selection update: the replacement-only policy below is historical. Settings now merges upstream OpenAI/browser voice support with self-hosted Speaches. Users explicitly select one provider; there is no automatic fallback and Speaches never uses OpenAI credentials or polishing. See [Voice input](guide.md#voice-input) for current behavior.
+
 Status: implemented and replay-tested on `next`; deployment authorized separately. Actual mobile capture and battery assessment remain with the user.
 
 This implementation supersedes the direct browser-to-Speaches architecture in `mobile-dictation-plan.md`. Existing installations require the backend URL configuration and refreshed client consent when upgrading. It applies to desktop and mobile, not only phones.

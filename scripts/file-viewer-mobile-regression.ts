@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
+import { sheetsSettled } from "./sheets-settled.ts";
 
 /** The viewer alone with its source CSS, at phone sizes: the dialog fits, a long name is cut in its stem, no control is covered. */
 async function checkLayout(): Promise<void> {
@@ -103,6 +104,8 @@ async function checkLayout(): Promise<void> {
             const image = document.querySelector<HTMLImageElement>(".file-viewer-media");
             return image?.complete && image.naturalWidth > 0;
           });
+          // a phone's viewer rises into place (styles.css): measure where it comes to rest
+          await sheetsSettled(page);
           const geometry = await page.evaluate(() => {
             const rect = (element: Element) => {
               const { x, y, width, height, right, bottom } = element.getBoundingClientRect();
@@ -174,6 +177,7 @@ async function checkLayout(): Promise<void> {
       await page.goto(`http://127.0.0.1:${server.port}/?kind=text`);
       await page.locator(".file-viewer-text").waitFor();
       await page.getByRole("button", { name: "Copy file", exact: true }).waitFor();
+      await sheetsSettled(page);
       const dialog = await page.locator(".file-viewer").boundingBox();
       assert.ok(dialog, "text: dialog is laid out");
       const buttons = page.locator(".file-viewer-actions .icon-button");
