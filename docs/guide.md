@@ -209,6 +209,33 @@ or **Discard**. A message is never pasted over text typed in Claude Code's own i
 that box holds a draft the message stays in the list with the reason, and **Send now** delivers it
 once the draft is sent or cleared in the terminal.
 
+## Pi extension visibility
+
+The chat lens can show recorded delegation evidence from
+`npm:@tintinweb/pi-subagents`: agent/tool results, completion notifications and
+available persisted workflow summaries. Expand a card for its recorded details;
+ordinary tool input/output remains available in the work fold. These cards are
+**not live FleetView**: an old launch does not prove a task is still running, and a
+finished parent turn does not prove its children finished. Unrecorded activity,
+including some mention-launched or nested workflow work, cannot be reconstructed.
+
+Recognizable `npm:@juicesharp/rpiv-ask-user-question` questionnaires are shown in the
+prompt area. An unpatched extension has a **terminal-only** notice: its footer does
+not reliably expose the actual keyboard bindings, so the WebUI will not guess
+answer or cancellation keys. Switch to the terminal lens to answer it. Clipped,
+localized or fully hidden overlays may not be recognizable.
+
+For RPIV **2.12.0** on Linux, the experimental [opt-in adapter](../integrations/rpiv/README.md)
+adds verified single-choice, checkbox (including empty selection), and one-line
+custom answers. It requires a separately reviewed package copy and an explicit Pi
+configuration change; the WebUI does not install it. Each action answers only the
+current question. Notes, the final multi-question review, unsupported key mappings,
+and unverified states still require the terminal. Do not answer simultaneously
+from the browser and native terminal.
+
+Support is provided by the bridge serving that PC. An official remote bridge does
+not acquire this fork's adapters just because the local browser has them.
+
 ## Subscription usage
 
 On a local desktop pane, the composer shows a compact read-only limit for the agent's provider:

@@ -90,6 +90,23 @@ it("serves a pi pane's native transcript over HTTP", async () => {
   expect(first.metadata).toEqual({ model: "pi-contract-model", reasoning_effort: null, context: { used: 35, window: null } });
 });
 
+it("serves bounded delegation metadata and standalone records through the conversation endpoint", async () => {
+  writeFileSync(transcript, page([
+    { type: "message", id: "du", parentId: null, message: { role: "user", content: "Delegate the review" } },
+    { type: "message", id: "da", parentId: "du", message: { role: "assistant", content: [{ type: "toolCall", id: "dc", name: "Agent", arguments: { prompt: "Review" } }] } },
+    { type: "message", id: "dr", parentId: "da", message: { role: "toolResult", toolCallId: "dc", content: [{ type: "text", text: "Original launch result" }], details: { displayName: "Reviewer", subagentType: "review", agentId: "agent-one", status: "background", outputFile: "/not-forwarded" } } },
+    { type: "custom", id: "dd", parentId: "dr", customType: "subagents:record", data: { id: "agent-one", type: "review", status: "stopped", result: "Partial review", startedAt: 100, completedAt: 150 } },
+  ]));
+  try {
+    const result = await read();
+    expect(result.source).toBe("pi-transcript");
+    const parts = result.turns.flatMap((turn) => turn.parts);
+    expect(parts.find((part) => part.kind === "tool")).toMatchObject({ output: "Original launch result", delegation: { id: "agent-one", evidence: "tool", status: "background" } });
+    expect(parts.find((part) => part.kind === "delegation")).toMatchObject({ tasks: [{ status: "stopped", result: "Partial review", duration_ms: 50 }] });
+    expect(JSON.stringify(result)).not.toContain("not-forwarded");
+  } finally { writeFileSync(transcript, turns("Check chat", "Answer one")); }
+});
+
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 it("offers a tool's own picture over the image endpoint", async () => {

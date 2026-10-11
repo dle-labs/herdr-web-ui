@@ -6,6 +6,9 @@ import { HerdrError, paneRead, paneSendKeys, paneSendText, sessionSnapshot } fro
 import { omoTranscriptForPane } from "./omo.ts";
 import { OmoAskReader, omoAsksAfter, type OmoAskCall, type OmoAsks } from "./omo-ask.ts";
 import { badRequest, errorResponse, jsonResponse } from "./http.ts";
+import { parseRpivQuestionnaire } from "./rpiv-questionnaire.ts";
+import { answerRpiv, readRpivState, rpivActionable, rpivPreview, rpivScreenMatches, rpivIO, RpivAnswerError } from "./rpiv-bridge.ts";
+import type { BridgeSnapshot } from "./rpiv-runtime.ts";
 
 const ANSI_RE = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 const SELECTED_RE = /^[❯›>]\s*/;
@@ -111,6 +114,8 @@ type Responder =
   | "omo-review"
   | "omo-typing"
   | "omo-pending"
+  | "rpiv-terminal"
+  | "rpiv-live"
   | "pi-question"
   | "pi-confirm"
   | "pi-input"
@@ -121,6 +126,7 @@ type Responder =
 
 type ParsedPrompt = InteractivePrompt & {
   responder: Responder;
+  rpivSnapshot?: BridgeSnapshot;
   /** Stable question identity across the folded widget and the expanded form. */
   omoQuestion?: { call: string; index: number };
   menuLabels: string[];
@@ -282,9 +288,12 @@ function publicPrompt(parsed: ParsedPrompt): InteractivePrompt {
     options: parsed.options,
     multi_select: parsed.multi_select,
     custom_option_index: parsed.custom_option_index,
+    ...(parsed.checked_option_indices ? { checked_option_indices: parsed.checked_option_indices } : {}),
+    ...(parsed.allow_empty_selection ? { allow_empty_selection: true as const } : {}),
     ...(parsed.queued ? { queued: parsed.queued } : {}),
     ...(parsed.steps ? { steps: parsed.steps } : {}),
     ...(parsed.fallback ? { fallback: true as const } : {}),
+    ...(parsed.terminal_only ? { terminal_only: true as const } : {}),
   };
   parsedByPublicPrompt.set(prompt, parsed);
   return prompt;
@@ -1674,9 +1683,11 @@ function parseCodexModel(screen: string): ParsedPrompt | null {
 /**
  * Whether a model list of Claude Code's or Codex's holds the end of the screen, read or not. Enter
  * there saves a default, so nothing that ends in Enter is typed while one is open.
+ * Also quarantines recognizable RPIV questionnaires: their static footer does not
+ * verify live keys. This shared pending-input guard must cover unsupported forms.
  */
 export function modelListWaits(agent: string, screen: string): boolean {
-  return claudeModelListWaits(screen) || claudeModelListWaits(screen, CLAUDE_EFFORT_GUARD_RE) || (agent === "codex" && codexModelListWaits(screen));
+  return (agent === "pi" && parseRpivQuestionnaire(screen) !== null) || claudeModelListWaits(screen) || claudeModelListWaits(screen, CLAUDE_EFFORT_GUARD_RE) || (agent === "codex" && codexModelListWaits(screen));
 }
 
 /**
@@ -2167,6 +2178,16 @@ function parsePiDialog(screen: string, moved = false): ParsedPrompt | null {
 }
 
 function parsePrompt(agent: string, screen: string, omoAsk: OmoAsk | null = null, omoTrusted = true, omoOpen: OmoAsk[] = [], sent: string | null = null, working = false): ParsedPrompt | null {
+  // RPIV's static footer is not Pi's native dialog keymap. Even a complete
+  // form stays read-only until live bindings and tab/input ownership are known.
+  const rpiv = agent === "pi" ? parseRpivQuestionnaire(screen) : null;
+  if (rpiv) return finishPrompt("pi", {
+    kind: "question", title: "RPIV", question: "", body: rpiv.body,
+    options: [], multi_select: false, custom_option_index: null, terminal_only: true,
+  }, {
+    responder: "rpiv-terminal", menuLabels: [], selectedIndex: -1,
+    checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null,
+  });
   const omo = () => {
     const forms = (ask: OmoAsk | null, trusted: boolean) => [parseOmoQuestion(screen, ask, trusted), parseOmoTyping(screen, ask, trusted), parseOmoReview(screen, ask, trusted)];
     const matched = omoOpen.flatMap((ask) => forms(ask, false)).filter((form) => form !== null);
@@ -2239,6 +2260,7 @@ function keySteps(keys: string[]): AnswerStep[] {
 export function answerKeys(prompt: InteractivePrompt, answer: Pick<PromptAnswer, "option_index" | "option_indices" | "custom_text">): AnswerStep[] {
   const parsed = parsedByPublicPrompt.get(prompt);
   if (!parsed) throw new InvalidAnswer("The prompt was not produced by parseInteractivePrompt.");
+  if (parsed.terminal_only) throw new InvalidAnswer("This questionnaire must be answered in the terminal; its live keybindings are not verified.");
   const supplied = [answer.option_index !== undefined, answer.option_indices !== undefined, answer.custom_text !== undefined].filter(Boolean).length;
   if (supplied !== 1) throw new InvalidAnswer("Exactly one answer is required.");
 
@@ -2892,6 +2914,26 @@ async function readKnownPrompt(
 ): Promise<{ prompt: InteractivePrompt | null; screen?: string }> {
   if (!["claude", "omp", "codex", "omo", "pi", "gjc", ""].includes(agent)) return { prompt: null };
   const screen = await liveScreen(paneId);
+  if (agent === "pi") {
+    const { snapshot, present } = await readRpivState(paneId).catch(() => ({ snapshot: null, present: false }));
+    if (snapshot && rpivActionable(snapshot) && rpivScreenMatches(snapshot, screen)) {
+      const v = snapshot.view!;
+      return { screen, prompt: publicPrompt(finishPrompt("pi", {
+        kind: "question", title: `RPIV · ${v.tab + 1}/${v.count}`, question: v.question, body: rpivPreview(v) || null,
+        options: [...v.options.map(({ label, description }) => ({ label, description })), { label: v.rows[v.options.length]!.label, description: null }],
+        multi_select: v.multi, custom_option_index: v.options.length, checked_option_indices: v.checked,
+        ...(v.multi ? { allow_empty_selection: true as const } : {}),
+      }, {
+        responder: "rpiv-live", rpivSnapshot: snapshot, menuLabels: v.rows.map(r => r.label), selectedIndex: v.cursor,
+        checkedOptionIndices: v.checked, customMenuIndex: v.options.length, rejectWithEscapeIndex: null,
+      }, { call: `${snapshot.request}:${v.tab}` })) };
+    }
+    // Unsupported opt-in modes cannot fall through to a generic native Enter.
+    if (present) return { screen, prompt: publicPrompt(finishPrompt("pi", {
+      kind: "question", title: "RPIV", question: "", body: parseRpivQuestionnaire(screen)?.body ?? null,
+      options: [], multi_select: false, custom_option_index: null, terminal_only: true,
+    }, { responder: "rpiv-terminal", menuLabels: [], selectedIndex: -1, checkedOptionIndices: [], customMenuIndex: null, rejectWithEscapeIndex: null })) };
+  }
   // omo's form reads its text from the session's call, the screen showing where the form stands
   const omoAsks = ["omo", "pi", "claude", ""].includes(agent) && pane.cwd && OMO_FORM_RE.test(screen)
     ? await omoAsksFor(paneId, pane.cwd, panes) : [];
@@ -3066,6 +3108,26 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       if (request.signal.aborted) return promptChanged();
       const { prompt, agent, pane, panes } = await readPrompt(body.pane_id, options.codexHome);
       if (!prompt || prompt.id !== body.prompt_id) return promptChanged();
+      const rpiv = parsedByPublicPrompt.get(prompt)?.rpivSnapshot;
+      if (rpiv) {
+        const asking = askings.get(body.pane_id)!;
+        let sent = false;
+        answersUnderWay.add(body.pane_id);
+        answerTurns.set(body.pane_id, (answerTurns.get(body.pane_id) ?? 0) + 1);
+        try {
+          const ok = await answerRpiv(rpiv, body, rpivIO(body.pane_id,
+            () => !request.signal.aborted && askings.get(body.pane_id) === asking && asking.content !== null,
+            () => { sent = true; }));
+          return ok ? jsonResponse({ ok: true }) : promptChanged();
+        } catch (error) {
+          if (error instanceof RpivAnswerError) return badRequest("invalid_answer", error.message);
+          throw error;
+        } finally {
+          answersUnderWay.delete(body.pane_id);
+          answerTurns.set(body.pane_id, (answerTurns.get(body.pane_id) ?? 0) + 1);
+          if (sent) askingEnded(body.pane_id);
+        }
+      }
       // checked against the card before anything is sent: an invalid answer never opens the queue
       let steps: AnswerStep[];
       try {

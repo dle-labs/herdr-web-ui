@@ -3,6 +3,7 @@ import type { ConversationPart, ConversationTurn, OmoTaskResult } from "../share
 import type { SubagentDetail, TaskNotification } from "./claude-subagents.ts";
 import { skillInvocationPrompt } from "./skill-activity.ts";
 import { trimOutput } from "./tool-output.ts";
+import { freshPiDelegations, piDelegationFallback, piDelegationRecords, piToolDelegation } from "./pi-delegation.ts";
 
 type Row = Record<string, unknown>;
 export const record = (value: unknown): Row => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
@@ -42,13 +43,13 @@ export function piMessage(value: unknown): Row | null {
  * user-pasted image is. `index` counts the images of that one result, which is what the
  * page's ref quotes, so a fetch never has to agree with the parse about anything else.
  */
-export function piResults(message: Row): { id: string; text: string; error: boolean; images: string[] }[] {
+export function piResults(message: Row): { id: string; text: string; error: boolean; images: string[]; details: unknown }[] {
   const blocks = message.role === "toolResult" ? [message] : Array.isArray(message.content) ? message.content.filter((block) => record(block).type === "toolResult") : [];
   return blocks.flatMap((value) => {
     const block = record(value);
     if (typeof block.toolCallId !== "string") return [];
     const images = (Array.isArray(block.content) ? block.content : []).map(piImageOf).filter((image): image is { media_type: string; data: string } => image !== null).map((image) => image.media_type);
-    return [{ id: block.toolCallId, text: resultText(block.content), error: block.isError === true, images }];
+    return [{ id: block.toolCallId, text: resultText(block.content), error: block.isError === true, images, details: block.details }];
   });
 }
 
@@ -196,7 +197,7 @@ export function toolSummary(name: string, input: Record<string, unknown>): strin
  * was woken by something nobody typed, such as omo's hidden monitor or background-task
  * notification. Merging across it folded the answer before it into the next turn's work block.
  */
-export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: { toolImages?: boolean; taskTitles?: Map<string, string> } = {}): ConversationTurn[] {
+export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: { toolImages?: boolean; taskTitles?: Map<string, string>; noticed?: Set<string> } = {}): ConversationTurn[] {
   const turns: ConversationTurn[] = [];
   /** tool parts still waiting for their result, by toolCall id */
   const pending = new Map<string, Extract<ConversationPart, { kind: "tool" }>>();
@@ -204,6 +205,7 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
   const taskTitles = options.taskTitles ?? new Map<string, string>();
   /** the last assistant message stopped for good: the next one starts a turn of its own */
   let settled = false;
+  const noticed = options.noticed ?? new Set<string>();
 
   const assistantTurn = (ts?: string): ConversationTurn => {
     const last = turns[turns.length - 1];
@@ -225,9 +227,19 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
       continue; // a torn tail line while omp is mid-append
     }
     if (entry === null || typeof entry !== "object") continue;
-    if (isContextClear(entry, "omp-transcript")) { turns.length = 0; pending.clear(); continue; }
+    if (isContextClear(entry, "omp-transcript")) { turns.length = 0; pending.clear(); noticed.clear(); continue; }
     const timestamp = (entry as { timestamp?: string }).timestamp;
-    const notice = piNotice(entry);
+    const delegation = piDelegationRecords(entry);
+    if (delegation !== null) {
+      const tasks = freshPiDelegations(entry, delegation, noticed);
+      // A completion is a boundary even when its duplicate card is omitted.
+      settled = true;
+      if (tasks.length) turns.push({ role: "user", ts: timestamp ?? null, parts: [{ kind: "delegation", tasks,
+        ...(typeof record(entry).content === "string" ? { text: (record(entry).content as string).slice(0, 16_000) } : {}),
+      }] });
+      continue;
+    }
+    const notice = piNotice(entry) ?? piDelegationFallback(entry);
     if (notice !== null) {
       turns.push({ role: "user", ts: timestamp ?? null, parts: [notice] });
       continue;
@@ -257,6 +269,13 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
         pending.delete(result.id);
         trimOutput(tool, result.text, result.id);
         if (result.error) tool.error = true;
+        const delegation = piToolDelegation(tool.name, result.details, result.text);
+        if (delegation) tool.delegation = delegation;
+        // A handle/prefix resume resolves to its real identity in the launch result.
+        // Never clear another agent's delayed completion, or a newly settled result.
+        if (tool.name === "Agent" && delegation?.id && ["background", "running", "queued"].includes(delegation.status ?? "")) {
+          for (const key of noticed) if (key.startsWith(`pi-preview:${delegation.id}:`)) noticed.delete(key);
+        }
         if (options.toolImages === true && result.images.length > 0) {
           // addressed by the call it answers: a nested result shares its entry with other
           // blocks, so the entry id alone could not say which one an image came from
@@ -306,6 +325,9 @@ export function parseOmpTranscript(text: string, maxTurns = MAX_TURNS, options: 
             output: "",
           };
           turn.parts.push(part);
+          if (b.name === "Agent" && typeof input.resume === "string") {
+            for (const key of noticed) if (key.startsWith(`pi-preview:${input.resume}:`)) noticed.delete(key);
+          }
           if (typeof b.id === "string") pending.set(b.id, part);
         }
         // unsupported transcript parts are intentionally ignored

@@ -6,6 +6,13 @@
  * braces keep their English names.
  */
 export const KO: Record<string, string> = {
+  "Delegation evidence": "위임 기록",
+  "Recorded: {status}": "기록된 상태: {status}",
+  "Unknown": "알 수 없음",
+  "Last recorded evidence, not live status. A parent turn ending does not mean this task ended.": "실시간 상태가 아닌 마지막 기록입니다. 상위 턴이 끝나도 이 작업이 끝난 것은 아닙니다.",
+  "Recorded duration: {ms} ms": "기록된 소요 시간: {ms} ms",
+  "Original notification": "원본 알림",
+  "Answer this questionnaire in the terminal. Its live keybindings cannot be verified here.": "이 질문 양식은 터미널에서 답해 주세요. 현재 키 설정을 여기서 확인할 수 없습니다.",
   "Find in terminal": "터미널에서 찾기",
   "Previous match": "이전 결과",
   "Next match": "다음 결과",

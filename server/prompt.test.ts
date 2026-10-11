@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InteractivePrompt } from "../shared/protocol.ts";
+import { companionPath, processIdentity, type BridgeSnapshot } from "./rpiv-runtime.ts";
 
 import { answerKeys, claudeInputDraft, viewportShowsLive, removedInvisible, noteSubmitted, codexQuestionsCollapsed, codexQueuedPrompt, handlePromptRequest, modelListWaits, openOmoAsks, parseClaudeSuggestion, parseFallbackPrompt, parseInteractivePrompt, pendingOmoAsk, promptWaitEnded } from "./prompt.ts";
 
@@ -2833,6 +2834,7 @@ describe("an answer and the menu it was made for", () => {
     nextSnapshotDelay?: number;
     root: string;
     omo?: { pid: number; path: string; live: boolean };
+    rpiv?: { pid: number };
   }
 
   async function withPane(agent: string, status: string, screen: string, run: (pane: Pane) => Promise<void>): Promise<void> {
@@ -2860,7 +2862,7 @@ describe("an answer and the menu it was made for", () => {
           if (once) return void setTimeout(() => answer({ read: { text: once.text } }), once.delay);
           return void setTimeout(() => answer({ read: { text: request.params.format === "ansi" ? pane.viewport ?? pane.screen : pane.screen } }), pane.readDelay ?? 0);
         }
-        if (request.method === "pane.process_info") return answer({ process_info: { foreground_processes: pane.omo?.live ? [{ pid: pane.omo.pid, argv: ["omo"] }] : [] } });
+        if (request.method === "pane.process_info") return answer({ process_info: { foreground_processes: pane.rpiv ? [{ pid: pane.rpiv.pid, argv: ["pi"] }] : pane.omo?.live ? [{ pid: pane.omo.pid, argv: ["omo"] }] : [] } });
         if (request.method === "agent.get" && pane.agentUnanswered) return;
         if (request.method === "agent.get") return answer({ agent: pane.rollout ? { agent_session: { kind: "path", value: pane.rollout } } : {} });
         if (request.method !== "pane.send_keys" && request.method !== "pane.send_text") throw new Error(`unexpected fixture RPC: ${request.method}`);
@@ -2897,6 +2899,82 @@ describe("an answer and the menu it was made for", () => {
     const body = await response.json() as { error?: { code: string } };
     return { status: response.status, code: body.error?.code };
   }
+
+  test.skipIf(process.platform !== "linux")("RPIV companion contract answers moved single/multi/custom choices and rejects closed/stale asks", async () => {
+    for (const mode of ["single", "multi", "custom"]) await withPane("pi", "blocked", "", async pane => {
+      const previousStore = process.env["PI_CODING_AGENT_SESSION_DIR"];
+      process.env["PI_CODING_AGENT_SESSION_DIR"] = pane.root;
+      pane.rollout = join(pane.root, "fictional.jsonl"); writeFileSync(pane.rollout, "{}\n");
+      pane.rpiv = { pid: process.pid };
+      const rows = [{ kind: "option", label: "Memory" }, { kind: "option", label: "Redis" }, { kind: "other", label: "Type something." }, ...(mode === "multi" ? [{ kind: "next", label: "Submit" }] : [])];
+      const s: BridgeSnapshot = { schema: 1, version: "2.12.0", session: pane.rollout, pid: process.pid, process: processIdentity(process.pid)!, request: `11111111-1111-1111-1111-${mode.padEnd(12, "0")}`, toolCall: "fixture", updated: Date.now(), revision: 1, closed: false,
+        view: { mounted: true, focused: true, hidden: false, externalEditor: false, tab: 0, count: 1, cursor: 0, inputMode: false, notes: false, collapsed: false, question: "Which store?", header: "Store", multi: mode === "multi", options: [{ label: "Memory", description: "Local" }, { label: "Redis", description: "Remote" }], rows, checked: [], input: "", actions: {} } };
+      mkdirSync(join(pane.root, ".herdr-rpiv"), { mode: 0o700 });
+      const publish = () => {
+        const v = s.view!; s.updated = Date.now();
+        v.actions = { up: { kind: "nav", nextIndex: (v.cursor + rows.length - 1) % rows.length }, down: { kind: "nav", nextIndex: (v.cursor + 1) % rows.length }, enter: { kind: v.inputMode || !v.multi ? "confirm" : rows[v.cursor]?.kind === "next" ? "multi_confirm" : "toggle" }, space: { kind: "toggle" }, "ctrl+u": { kind: "input_clear" } };
+        pane.screen = ["─".repeat(100), "Which store?", ...rows.map((r,i) => `${i === v.cursor ? "❯ " : "  "}${i+1}. ${v.multi && i < v.options.length ? `[${v.checked.includes(i) ? "✔" : " "}] ` : ""}${r.label}`), "─".repeat(100), "Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel"].join("\n");
+        writeFileSync(companionPath(pane.rollout!), JSON.stringify(s), { mode: 0o600 });
+      };
+      pane.onSent = key => {
+        const v = s.view!;
+        if (key === "up" || key === "down") { v.cursor = v.actions[key]!.nextIndex!; v.inputMode = rows[v.cursor]!.kind === "other"; }
+        if (key === "space") v.checked = v.checked.includes(v.cursor) ? v.checked.filter(n => n !== v.cursor) : [...v.checked, v.cursor];
+        if (key.startsWith("text:")) v.input += key.slice(5);
+        if (key === "enter") s.closed = true;
+        s.revision++; publish();
+      };
+      try {
+        promptWaitEnded("p_1"); publish(); const first = (await card())!;
+        expect(first.terminal_only).toBeUndefined(); expect(first.options[1]!.label).toBe("Redis");
+        if (mode === "multi") { expect(first.checked_option_indices).toEqual([]); expect(first.allow_empty_selection).toBe(true); }
+        const result = await answer(first.id, mode === "multi" ? { option_indices: [1] } : mode === "custom" ? { custom_text: "New store" } : { option_index: 1 });
+        expect(result.status).toBe(200);
+        expect(pane.sent).toEqual(mode === "multi" ? ["down", "space", "down", "down", "enter"] : mode === "custom" ? ["down", "down", "text:New store", "enter"] : ["down", "enter"]);
+        expect((await card())!.terminal_only).toBe(true);
+        const count = pane.sent.length; expect((await answer(first.id, { option_index: 0 })).status).toBe(409); expect(pane.sent).toHaveLength(count);
+        s.closed = false; s.view!.notes = true; publish(); pane.screen = "ordinary Pi text with no questionnaire footer";
+        expect((await card())!.terminal_only).toBe(true); // no generic Enter for unsupported active modes
+        s.view!.notes = false; publish();
+        s.process = "previous-process-start"; publish(); expect((await card())!.terminal_only).toBe(true);
+        const companion = companionPath(pane.rollout!);
+        writeFileSync(companion, "x".repeat(64_001)); expect((await card())!.terminal_only).toBe(true);
+        rmSync(companion); symlinkSync(pane.rollout!, companion); expect((await card())!.terminal_only).toBe(true);
+        expect(pane.sent).toHaveLength(count);
+      } finally {
+        if (previousStore === undefined) delete process.env["PI_CODING_AGENT_SESSION_DIR"]; else process.env["PI_CODING_AGENT_SESSION_DIR"] = previousStore;
+      }
+    });
+  });
+
+  test("RPIV terminal-only contract refuses duplicate, custom, multi and stale answers without keys", async () => {
+    const screen = (cursor = 0) => ["─".repeat(100), "", "Which store?", "",
+      `${cursor === 0 ? "❯ " : "  "}1. [✔] Memory`,
+      `${cursor === 1 ? "❯ " : "  "}2. [ ] Redis`,
+      "  3. [ ] Type something.", "  Submit", "", "─".repeat(100), "",
+      "Enter to select · ↑/↓ to navigate · Space to toggle · n to add notes · Esc to cancel",
+    ].join("\n");
+    await withPane("pi", "blocked", screen(), async (pane) => {
+      const first = (await card())!;
+      expect(first).toMatchObject({ agent: "pi", terminal_only: true, options: [], custom_option_index: null });
+      expect(first.fallback).toBeUndefined();
+      for (const choice of [{ option_index: 0 }, { option_index: 0 }, { option_indices: [0] }, { custom_text: "custom" }]) {
+        expect(await answer(first.id, choice)).toEqual({ status: 400, code: "invalid_answer" });
+      }
+      const abort = new AbortController(); abort.abort();
+      expect(await answer(first.id, { option_index: 0 }, { signal: abort.signal })).toEqual({ status: 409, code: "prompt_changed" });
+      pane.screen = screen(1);
+      expect((await card())?.terminal_only).toBe(true);
+      expect(await answer(first.id, { option_index: 1 })).toEqual({ status: 409, code: "prompt_changed" });
+      pane.screen = "The questionnaire ended.\n> "; pane.status = "idle";
+      expect(await card()).toBeNull();
+      pane.screen = screen(); pane.status = "blocked";
+      const second = (await card())!;
+      expect(second.id).not.toBe(first.id);
+      expect(await answer(first.id, { custom_text: "old" })).toEqual({ status: 409, code: "prompt_changed" });
+      expect(pane.sent).toEqual([]);
+    });
+  });
 
   const omoRule = "─".repeat(100);
   const omoWidget = (box = "❯") => `? Question pending (1 unanswered) · 30m

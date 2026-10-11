@@ -4,6 +4,7 @@
  * here comes from a real machine. It imports no server code, so the browser bundle can take it.
  */
 import type { ConversationTurn, InteractivePrompt } from "../../shared/protocol.ts";
+import { PI_DELEGATION_TURNS } from "./delegation-fixture.ts";
 
 export interface DemoSpec {
   key: string;
@@ -113,8 +114,24 @@ export const CHATS: Record<string, { turns: ConversationTurn[]; metadata: { mode
         tool("edit", "src/config.ts", { path: "src/config.ts" }, "Updated src/config.ts"),
         { kind: "text" as const, text: "`RELEASE_RETRIES` sets the default, and `--retries` still wins over it. The README's environment table lists it." },
       ] },
+      ...PI_DELEGATION_TURNS,
     ],
   },
+};
+
+/** A recognized RPIV overlay is read-only until the bridge can verify live bindings. */
+export const RPIV_PROMPT: InteractivePrompt = {
+  id: "demo-rpiv-terminal", agent: "pi", kind: "question", title: "RPIV", question: "",
+  body: "Which store should hold the counters?\n\n❯ 1. [✔] Memory\n  2. [ ] Redis\n  3. [ ] Type something.\n  Submit",
+  options: [], multi_select: false, custom_option_index: null, terminal_only: true,
+};
+
+/** Fictional opt-in companion state; the demo never installs or contacts an extension. */
+export const RPIV_LIVE_PROMPT: InteractivePrompt = {
+  id: "demo-rpiv-live", agent: "pi", kind: "question", title: "RPIV · 1/1",
+  question: "Which store should hold the counters?", body: null,
+  options: [{ label: "Memory", description: "Local counters" }, { label: "Redis", description: "Shared counters" }, { label: "Type something.", description: null }],
+  multi_select: true, custom_option_index: 2, checked_option_indices: [0], allow_empty_selection: true,
 };
 
 export const PROMPT: InteractivePrompt = {

@@ -373,6 +373,20 @@ export interface SkillActivity {
   path?: string;
 }
 
+/** Bounded pi-subagents transcript evidence. Never a live runtime status. */
+export interface DelegationEvidence {
+  id: string | null;
+  type: "agent" | "workflow";
+  name: string;
+  agent: string | null;
+  model: string | null;
+  status: string | null;
+  evidence: "tool" | "notification" | "record" | "workflow";
+  duration_ms: number | null;
+  result: string;
+  result_cut?: boolean;
+}
+
 export type ConversationPart =
   | { kind: "text"; text: string; phase?: "commentary" | "final_answer" }
   /** the agent's reasoning block; the client folds it and shows it only on request */
@@ -382,6 +396,7 @@ export type ConversationPart =
   | {
     kind: "tool"; name: string; summary: string; input: string; output: string; error?: boolean;
     skill?: SkillActivity;
+    delegation?: DelegationEvidence;
     /** set when `output` was cut: the call's id, for GET /api/pane/conversation/tool-output, and the whole output's length */
     output_ref?: string; output_size?: number;
     /** images the call returned (pi reads a picture into the result); same fetch as a user image */
@@ -395,7 +410,9 @@ export type ConversationPart =
    * `source`: the runtime's name for it (pi's customType, e.g. "async-result", "irc:incoming", "omo-model-profile:unavailable") */
   | { kind: "notice"; text: string; source?: string }
   /** OmO's background tasks that ended, as OmO reported them back to the agent, or a Claude Code subagent that ended (its task notification): it starts a turn, nobody typed it */
-  | { kind: "task_result"; tasks: OmoTaskResult[] };
+  | { kind: "task_result"; tasks: OmoTaskResult[] }
+  /** Persisted extension evidence, including mention/flag launches with no parent tool call. */
+  | { kind: "delegation"; tasks: DelegationEvidence[]; text?: string };
 
 /** One OmO background task that ended (the `senpi-task.completion` OmO wakes its agent with). */
 export interface OmoTaskResult {
@@ -835,8 +852,10 @@ export interface SlashCommand {
 
 /**
  * GET /api/pane/prompt: an agent's interactive TUI menu currently on the pane's screen
- * (Claude/omp/codex question, approval or plan prompts), parsed server-side from the
- * visible text. `id` names what the prompt says and which asking of it this is: an answer
+ * (Claude/omp/codex/Pi question, approval or plan prompts), parsed server-side from the
+ * visible text. Opt-in RPIV cards additionally require a fresh pane-owned process/session
+ * companion; unverified modes expose `terminal_only`, never guessed default key actions.
+ * `id` names what the prompt says and which asking of it this is: an answer
  * names it, and one whose prompt changed between the read and the click is refused (409
  * prompt_changed) instead of misfired. The same question asked again has another id only where
  * the server saw the first asking end (a read without it, an answer through this route, the
@@ -854,6 +873,10 @@ export interface InteractivePrompt {
   multi_select: boolean;
   /** index of the "type your own answer" option, when the menu has one */
   custom_option_index: number | null;
+  /** Live RPIV checkbox state; omitted when the responder cannot attest to it. */
+  checked_option_indices?: number[];
+  /** RPIV's explicit Next also permits an empty checkbox answer. */
+  allow_empty_selection?: true;
   /** a question in Codex's queue while Codex keeps working: only the card answers it. Collapsed,
    * a message typed in the chat still goes to Codex; open in the terminal, the queue holds the
    * input, so the chat sends nothing until it is answered or closed */
@@ -861,6 +884,9 @@ export interface InteractivePrompt {
   /** the questions of a form that asks several at once (omo), in order: which are answered and
    * which one the card asks now (none while the answers are reviewed). Absent for one question */
   steps?: InteractivePromptStep[];
+  /** Recognized questionnaire without verified live keybindings. Display only: no answer
+   * action, including custom text or cancellation, may be sent through the answer endpoint. */
+  terminal_only?: true;
   /** the last-resort card for a blocked pane no reader knows: answered with its own buttons only,
    * so a message typed in the chat still goes to the agent as typed */
   fallback?: true;

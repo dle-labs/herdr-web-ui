@@ -10,6 +10,13 @@
  * Placeholders in braces keep their English names.
  */
 export const ZH: Record<string, string> = {
+  "Delegation evidence": "委派记录",
+  "Recorded: {status}": "已记录状态：{status}",
+  "Unknown": "未知",
+  "Last recorded evidence, not live status. A parent turn ending does not mean this task ended.": "这是最后记录，并非实时状态。父级轮次结束不代表此任务已结束。",
+  "Recorded duration: {ms} ms": "已记录耗时：{ms} ms",
+  "Original notification": "原始通知",
+  "Answer this questionnaire in the terminal. Its live keybindings cannot be verified here.": "请在终端中回答此问卷。此处无法验证当前的按键绑定。",
   "Find in terminal": "在终端中查找",
   "Previous match": "上一个匹配",
   "Next match": "下一个匹配",
