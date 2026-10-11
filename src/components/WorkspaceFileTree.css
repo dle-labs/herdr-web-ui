@@ -5,6 +5,22 @@
 .workspace-tree-row:hover { background: var(--bg-hover); }
 .workspace-tree-row[aria-current="true"] { background: var(--bg-elevated); outline: var(--hairline) solid var(--accent); }
 .workspace-tree-row svg { width: var(--space-4); height: var(--space-4); flex-shrink: 0; color: var(--text-dim); }
+/* Syntax palette tokens stay legible across themes without coloring caret controls. */
+.workspace-tree-icon[data-file-type="code"],
+.workspace-tree-icon[data-file-type="database"] { color: var(--syntax-type); }
+.workspace-tree-icon[data-file-type="json"],
+.workspace-tree-icon[data-file-type="lock"] { color: var(--syntax-variable); }
+.workspace-tree-icon[data-file-type="config"],
+.workspace-tree-icon[data-file-type="audio"],
+.workspace-tree-icon[data-file-type="font"] { color: var(--syntax-number); }
+.workspace-tree-icon[data-file-type="markdown"],
+.workspace-tree-icon[data-file-type="video"] { color: var(--syntax-meta); }
+.workspace-tree-icon[data-file-type="image"] { color: var(--syntax-string); }
+.workspace-tree-icon[data-file-type="shell"] { color: var(--syntax-inserted); }
+.workspace-tree-icon[data-file-type="pdf"] { color: var(--syntax-deleted); }
+.workspace-tree-icon[data-file-type="archive"],
+.workspace-tree-icon[data-file-type="folder"] { color: var(--syntax-function); }
+.workspace-tree-icon[data-file-type="git"] { color: var(--syntax-keyword); }
 .workspace-tree-caret { width: var(--space-4); flex-shrink: 0; }
 .workspace-tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .workspace-tree-row[data-ignored="true"] { color: var(--text-dim); }

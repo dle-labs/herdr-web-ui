@@ -30,7 +30,9 @@ async function selectComment(dialog: Locator, side: "old" | "new", first = 2, la
   const start = number(section(dialog), side, first);
   if (first === last) await start.click();
   else {
-    await start.scrollIntoViewIfNeeded();
+    // Annotation updates can replace gutter nodes while Playwright waits for
+    // scroll stability. Resolve the live locator and scroll in the same task.
+    await start.evaluate((node) => node.scrollIntoView({ block: "nearest" }));
     const from = await start.boundingBox();
     const to = await number(section(dialog), side, last).boundingBox();
     assert.ok(from && to, "both range endpoints are rendered");
@@ -156,6 +158,8 @@ try {
         assert.ok(heights.length > 0 && heights.every((height) => height > 0 && height <= 32), "tree rows are compact, at most 32px");
         const icons = await Promise.all(["unchanged.ts", "notes.md", "picture.png"].map((path) => treeFile(dialog, path).locator("svg").evaluate((svg) => svg.outerHTML)));
         assert.equal(new Set(icons).size, 3, "code, Markdown and image files have different file-type icons");
+        const iconColors = await Promise.all(["unchanged.ts", "notes.md", "picture.png"].map((path) => treeFile(dialog, path).locator(".workspace-tree-icon").evaluate((icon) => getComputedStyle(icon).color)));
+        assert.equal(new Set(iconColors).size, 3, "code, Markdown and image icons have distinct theme-aware colors");
         const ignored = treeFile(dialog, "ignored");
         assert.equal(await ignored.getAttribute("data-ignored"), "true");
         await ignored.click();
@@ -166,6 +170,16 @@ try {
         assert.equal(await inherited.getAttribute("data-ignored"), "true", "ignored state propagates through expanded directories");
         assert.equal(await inherited.evaluate((row) => getComputedStyle(row).color), await ignored.evaluate((row) => getComputedStyle(row).color), "ignored descendants retain dim styling");
         assert.notEqual(await ignored.evaluate((row) => getComputedStyle(row).color), await treeFile(dialog, "unchanged.ts").evaluate((row) => getComputedStyle(row).color), "ignored folders are dimmer than ordinary rows");
+        const ignoredColor = await ignored.evaluate((row) => getComputedStyle(row).color);
+        assert.equal(await ignored.locator(".workspace-tree-icon").evaluate((icon) => getComputedStyle(icon).color), ignoredColor, "ignored folder icons remain gray");
+        assert.equal(await inherited.locator(".workspace-tree-icon").evaluate((icon) => getComputedStyle(icon).color), ignoredColor, "ignored file icons remain gray");
+        assert.notEqual(await treeFile(dialog, "src").locator(".workspace-tree-icon").evaluate((icon) => getComputedStyle(icon).color), ignoredColor, "ordinary folder icons are colored");
+        for (const theme of ["light", "dark"]) {
+          await page.evaluate((value) => { document.documentElement.dataset.theme = value; }, theme);
+          const colors = await Promise.all(["unchanged.ts", "notes.md", "picture.png"].map((path) => treeFile(dialog, path).locator(".workspace-tree-icon").evaluate((icon) => getComputedStyle(icon).color)));
+          assert.equal(new Set(colors).size, 3, `${theme}: file-type colors remain distinct`);
+          assert.equal(await inherited.locator(".workspace-tree-icon").evaluate((icon) => getComputedStyle(icon).color), await inherited.evaluate((row) => getComputedStyle(row).color), `${theme}: ignored icons stay dim`);
+        }
         await treeFile(dialog, "unchanged.ts").click();
         await dialog.locator('.file-viewer-embedded [role="region"]').waitFor();
         await dialog.locator(".file-viewer-embedded").getByText("export const unchanged = true;", { exact: false }).first().waitFor();

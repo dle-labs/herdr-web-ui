@@ -71,17 +71,18 @@ function Directory({ root, paneId, files, selected, onSelect, refreshToken, rela
   const prefix = relative ? `${relative}/` : "";
   return <div className="workspace-tree-branch">
     {relative !== "" && <button type="button" className="workspace-tree-row" data-ignored={ignored || undefined} title={relative} aria-expanded={open} onClick={() => setOpen(!open)}>
-      {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}{open ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}<span className="workspace-tree-label">{relative.split("/").at(-1)}</span>
+      {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}{open ? <FolderOpen className="workspace-tree-icon" data-file-type="folder" aria-hidden="true" /> : <Folder className="workspace-tree-icon" data-file-type="folder" aria-hidden="true" />}<span className="workspace-tree-label">{relative.split("/").at(-1)}</span>
     </button>}
     {open && <div className={relative ? "workspace-tree-children" : undefined}>
       {listing === null && !failed && <p role="status">{t("Loading…")}</p>}
       {failed && <p role="alert">{t("Folders could not be loaded.")} <button className="btn" type="button" onClick={() => setAttempt((n) => n + 1)}>{t("Retry")}</button></p>}
       {entries.map(([name, entry]) => {
         const path = `${prefix}${name}`;
-        const Icon = FILE_ICONS[fileIconCategory(name)];
+        const category = fileIconCategory(name);
+        const Icon = FILE_ICONS[category];
         return entry.directory ? <Directory key={name} root={resolvedRoot} paneId={paneId} files={files} selected={selected} onSelect={onSelect} refreshToken={refreshToken} relative={path} ignored={entry.ignored} />
           : <button key={name} type="button" className="workspace-tree-row" data-status={entry.status} data-ignored={entry.ignored || undefined} aria-current={selected === join(resolvedRoot, path) ? "true" : undefined} title={path} onClick={() => onSelect(join(resolvedRoot, path))}>
-            <span className="workspace-tree-caret" aria-hidden="true" /><Icon aria-hidden="true" /><span className="workspace-tree-label">{name}</span>{entry.status && <small aria-label={entry.status}>{entry.status === "deleted" ? "D" : entry.status === "added" || entry.status === "untracked" ? "A" : entry.status === "renamed" ? "R" : "M"}</small>}
+            <span className="workspace-tree-caret" aria-hidden="true" /><Icon className="workspace-tree-icon" data-file-type={category} aria-hidden="true" /><span className="workspace-tree-label">{name}</span>{entry.status && <small aria-label={entry.status}>{entry.status === "deleted" ? "D" : entry.status === "added" || entry.status === "untracked" ? "A" : entry.status === "renamed" ? "R" : "M"}</small>}
           </button>;
       })}
       {listing?.truncated && <p role="status">{t("This folder listing is incomplete.")}</p>}
