@@ -20,7 +20,18 @@ export interface FileSelection {
   end: [index: number, column: number];
 }
 
+/** Immutable comparison coordinates; `path` uses canonical repository-relative Git separators. */
+export interface DiffCommentTarget {
+  side: "old" | "new";
+  mode: "all" | "unstaged" | "staged";
+  revision: string;
+  repository: string;
+  path: string;
+}
+
 export interface FileTarget {
+  /** Absent for ordinary working-file comments; diff lines belong only to this comparison. */
+  diff?: DiffCommentTarget;
   /** absolute, as the viewer resolved it (`FileInfo.path`) */
   path: string;
   /** how the quote names it (`pathLabel`) */
@@ -68,7 +79,8 @@ export function fileLines(text: string): string[] {
 export function fileAnchor(target: FileTarget): string {
   const { selection: s } = target;
   const at = s === undefined ? "" : `@${s.start[0]}.${s.start[1]}-${s.end[0]}.${s.end[1]}`;
-  return `file:${target.path}:${target.view}:${target.lines[0]}-${target.lines[1]}${at}`;
+  const comparison = target.diff === undefined ? "" : `diff:${diffIdentity(target.diff)}:`;
+  return `${comparison}file:${target.path}:${target.view}:${target.lines[0]}-${target.lines[1]}${at}`;
 }
 
 /**
@@ -81,7 +93,7 @@ export function fileAnchor(target: FileTarget): string {
  * with its text nor take its place.
  */
 export function fileCommentAt<C extends FileComment>(comments: readonly C[], target: FileTarget): C | undefined {
-  if (target.anchor !== undefined) return comments.find((c) => c.anchor === target.anchor);
+  if (target.anchor !== undefined) return comments.find((c) => c.anchor === target.anchor && diffIdentity(c.diff) === diffIdentity(target.diff));
   const place = fileAnchor(target);
   return comments.find((c) => fileAnchor(c) === place && sameAt(c.source, target.source, 0) && c.source.length === target.source.length);
 }
@@ -112,7 +124,9 @@ function sameAt(source: readonly string[], lines: readonly string[], at: number)
  * `truncated` file (cut at the load limit) a comment is never moved: a second copy of its lines
  * may lie past the cut, so "the one other place" cannot be told, and the spec says never to guess.
  */
-export function placeFileComment(comment: Pick<FileTarget, "lines" | "source">, lines: readonly string[], loaded: number, truncated = false): LineRange | null {
+export function placeFileComment(comment: Pick<FileTarget, "lines" | "source" | "diff">, lines: readonly string[], loaded: number, truncated = false): LineRange | null {
+  // Working-file content must never place or reattach immutable comparison coordinates.
+  if (comment.diff !== undefined) return null;
   const { source } = comment;
   const count = source.length;
   if (count === 0 || comment.lines[1] > loaded) return null;
@@ -164,8 +178,11 @@ function quoteLine(line: string, selected: [from: number, to: number] | null): s
  * the selection, any other at its start), `QUOTE_LINES_MAX` lines and `SELECTION_QUOTE_MAX`
  * characters after the header; the lines dropped are counted in a last `> … (+N lines)`.
  */
-export function fileQuote(comment: Pick<FileTarget, "label" | "lines" | "quoteLines" | "selection">): string {
-  const { quoteLines, selection } = comment;
+export function fileQuote(comment: Pick<FileTarget, "label" | "lines" | "quoteLines" | "selection" | "diff">): string {
+  const { selection, diff } = comment;
+  // Raw source supplied by a diff surface has no +/- prefix. Prefix even embedded line breaks,
+  // so stored text cannot escape its blockquote (including Markdown fences).
+  const quoteLines = diff === undefined ? comment.quoteLines : comment.quoteLines.flatMap(fileLines);
   const quoted = quoteLines.map((line, i) => {
     let selected: [number, number] | null = null;
     if (selection !== undefined && i >= selection.start[0] && i <= selection.end[0]) {
@@ -174,7 +191,7 @@ export function fileQuote(comment: Pick<FileTarget, "label" | "lines" | "quoteLi
       selected = [Math.min(i === selection.start[0] ? pointAt(line, selection.start[1]) : 0, to), to];
     }
     const text = quoteLine(line, selected);
-    return text === "" ? ">" : `> ${text}`;
+    return diff !== undefined ? `> ${diff.side === "old" ? "-" : "+"}${text}` : text === "" ? ">" : `> ${text}`;
   });
   const body = (kept: number): string => {
     const dropped = quoteLines.length - kept;
@@ -182,7 +199,9 @@ export function fileQuote(comment: Pick<FileTarget, "label" | "lines" | "quoteLi
   };
   let kept = Math.min(quoted.length, QUOTE_LINES_MAX);
   while (kept > 0 && Array.from(body(kept)).length > SELECTION_QUOTE_MAX) kept--;
-  return `> ${comment.label}:${linesText(comment.lines)}\n${body(kept)}`.replace(/\n$/, "");
+  const location = diff === undefined ? `${comment.label}:${linesText(comment.lines)}`
+    : `${/[\u0000-\u001f\u007f\\]/.test(diff.path) ? JSON.stringify(diff.path) : diff.path}:${linesText(comment.lines)} (${diff.side};${diff.mode};${diff.revision})`;
+  return `> ${location}\n${body(kept)}`.replace(/\n$/, "");
 }
 
 function startOf(comment: FileComment): [number, number] {
@@ -201,6 +220,22 @@ export function sortFileComments(comments: readonly FileComment[]): FileComment[
     const [sa, sb] = [startOf(a), startOf(b)];
     return a.lines[0] - b.lines[0] || sa[0] - sb[0] || sa[1] - sb[1] || a.created - b.created;
   });
+}
+
+function diffIdentity(diff: DiffCommentTarget | undefined): string {
+  return diff === undefined ? "" : JSON.stringify([diff.repository, diff.path, diff.side, diff.mode, diff.revision]);
+}
+
+/** Reject ambiguous/noncanonical Git paths and header-breaking metadata, without rewriting saved coordinates. */
+export function isDiffCommentTarget(value: unknown): value is DiffCommentTarget {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const d = value as Record<string, unknown>;
+  const text = (v: unknown): v is string => typeof v === "string" && v.trim() !== "" && !/[\u0000-\u001f\u007f]/.test(v);
+  if (d.side !== "old" && d.side !== "new" || d.mode !== "all" && d.mode !== "unstaged" && d.mode !== "staged") return false;
+  if (!text(d.revision) || typeof d.repository !== "string" || !d.repository || d.repository.includes("\0") || typeof d.path !== "string" || !d.path || d.path.includes("\0")) return false;
+  // Git separators are '/', but a backslash or newline can be a literal Unix filename character.
+  // Quotes escape those characters rather than silently losing the saved comment on reload.
+  return !/^[A-Za-z]:/.test(d.path) && d.path.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 }
 
 const isStrings = (value: unknown): value is string[] => Array.isArray(value) && value.every((v) => typeof v === "string");
@@ -229,6 +264,7 @@ export function isFileComment(value: unknown): value is FileComment {
   if (typeof value !== "object" || value === null) return false;
   const c = value as Record<string, unknown>;
   if (c.kind !== "file" || c.view !== "code" && c.view !== "preview") return false;
+  if (c.diff !== undefined && !isDiffCommentTarget(c.diff)) return false;
   if ("point" in c && !isCommentPoint(c.point)) delete c.point;
   if (typeof c.id !== "string" || typeof c.anchor !== "string" || typeof c.path !== "string" || typeof c.label !== "string" || typeof c.comment !== "string") return false;
   if (typeof c.created !== "number" || !Number.isFinite(c.created)) return false;

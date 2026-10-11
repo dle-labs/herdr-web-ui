@@ -32,6 +32,7 @@ export default defineConfig({
     },
   },
   build: { outDir: "dist" },
+  worker: { format: "es" },
   // The Bun patch targets xterm's readable source, not its minified distribution. Build that
   // source so dev, production and the website use the same reviewed IME backport.
   resolve: { alias: [

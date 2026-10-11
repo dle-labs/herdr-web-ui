@@ -9,6 +9,9 @@ import type {
   DirectoryListing,
   FileInfo,
   FocusPaneRequest,
+  GitDiffMode,
+  GitChangesResponse,
+  GitFileDiffResponse,
   HealthAuth,
   IntegrationsResponse,
   InteractivePrompt,
@@ -538,6 +541,16 @@ export async function fetchIntegrations(machineId = "local"): Promise<Integratio
 export async function fetchDirectories(path: string, hidden: boolean, machineId = "local", files = false, paneId: string | null = null): Promise<DirectoryListing> {
   const query = new URLSearchParams({ path, ...(hidden ? { hidden: "1" } : {}), ...(files ? { files: "1" } : {}), ...(paneId ? { pane_id: paneId } : {}) });
   return getJson<DirectoryListing>(machinePath(machineId, `workspace/directories?${query.toString()}`));
+}
+
+export function fetchGitChanges(paneId: string, mode: GitDiffMode, machineId = "local"): Promise<GitChangesResponse> {
+  const query = new URLSearchParams({ pane_id: paneId, mode });
+  return getJson<GitChangesResponse>(machinePath(machineId, `workspace/changes?${query.toString()}`));
+}
+
+export function fetchGitDiff(paneId: string, mode: GitDiffMode, path: string, machineId = "local"): Promise<GitFileDiffResponse> {
+  const query = new URLSearchParams({ pane_id: paneId, mode, path });
+  return getJson<GitFileDiffResponse>(machinePath(machineId, `workspace/diff?${query.toString()}`));
 }
 
 function fileQuery(path: string, paneId: string | null): string {

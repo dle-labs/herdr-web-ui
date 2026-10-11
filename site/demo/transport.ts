@@ -21,6 +21,7 @@ import { DICTATION_DEFAULT_MODEL, DICTATION_MAX_BYTES, DICTATION_MAX_SECONDS } f
 import { rollupStatus } from "../../src/lib/status.ts";
 import { CHATS, PROMPT, SPECS } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
+import { demoGitChanges, demoGitDiff } from "./gitDiff.ts";
 import machinesFixture from "./fixtures/machines.json";
 import agentsFixture from "./fixtures/agents.json";
 import commandsFixture from "./fixtures/commands.json";
@@ -1022,6 +1023,16 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     snap.workspaces.forEach((w, i) => { w.number = i + 1; });
     structureChanged();
     return json({ ok: true });
+  }
+  if (path === "/api/workspace/changes" || path === "/api/workspace/diff") {
+    const pane = snapshot().panes.find((pane) => pane.pane_id === query.get("pane_id"));
+    if (!pane) return error("pane_not_found", "no such demo pane", 404);
+    const mode = query.get("mode") ?? "all";
+    if (mode !== "all" && mode !== "unstaged" && mode !== "staged") return error("invalid_mode", "unknown comparison", 400);
+    const root = pane.foreground_cwd ?? pane.cwd ?? "/home/demo/project";
+    if (path === "/api/workspace/changes") return json(demoGitChanges(root, mode));
+    const diff = demoGitDiff(root, mode, query.get("path") ?? "");
+    return diff === null ? error("git_path_not_changed", "no such changed demo file", 404) : json(diff);
   }
   if (path === "/api/workspace/directories") {
     const dir = query.get("path") || "/home/demo";

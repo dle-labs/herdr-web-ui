@@ -44,7 +44,7 @@ const rows = (text: string) => [...text.matchAll(/^(scripts\/\S+)\s+(\d+)\s+(\d+
 describe("parallel browser selection", () => {
   it("reads the complete serial regression list, including fork scripts", () => {
     const scripts = serialBrowserScripts();
-    expect(scripts).toHaveLength(36);
+    expect(scripts).toHaveLength(37);
     expect(new Set(scripts).size).toBe(scripts.length);
     expect(scripts).toContain("scripts/grok-chat-browser-qa.ts");
     expect(scripts).toContain("scripts/dictation-regression.ts");
@@ -87,7 +87,7 @@ describe("browser lane", () => {
   it("summarizes every script and exits zero on success without enabling local evidence", async () => {
     const { text, code, evidence } = await lane();
     expect(code).toBe(0);
-    expect(rows(text)).toHaveLength(37);
+    expect(rows(text)).toHaveLength(38);
     expect(rows(text).map((row) => row.script)).toContain("scripts/grok-chat-browser-qa.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/pending-pane-switch-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/chat-fallback-browser-qa.ts");
@@ -97,6 +97,7 @@ describe("browser lane", () => {
     expect(rows(text).map((row) => row.script)).toContain("scripts/dictation-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/pi-delegation-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/file-viewer-comments-regression.ts");
+    expect(rows(text).map((row) => row.script)).toContain("scripts/git-diff-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/block-comments-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/restored-draft-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/workspace-rows-regression.ts");

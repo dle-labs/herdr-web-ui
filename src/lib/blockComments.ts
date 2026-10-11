@@ -593,7 +593,7 @@ export class BlockCommentStore {
     this.refresh(owner);
     const comments = this.stored(owner);
     const moved = comments.find((c): c is FileComment => !isReplyComment(c) && c.id === id);
-    if (moved === undefined || (moved.lines[0] === lines[0] && moved.lines[1] === lines[1])) return;
+    if (moved === undefined || moved.diff !== undefined || (moved.lines[0] === lines[0] && moved.lines[1] === lines[1])) return;
     const anchor = fileAnchor({ ...moved, lines });
     const taken = comments.some((c) => c.id !== id && c.anchor === anchor);
     const next: FileComment = { ...moved, lines, anchor: taken ? moved.anchor : anchor };

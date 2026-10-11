@@ -9,6 +9,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 ### Added
 - Show recorded Pi subagent and workflow evidence outside folded chat work, with expandable results and explicit last-recorded status rather than inferred live progress.
+- Browse Git changes in Files with a changed-file tree, staged/unstaged/all comparisons and split/unified diffs. Add old/new line-range comments to the next chat message, including filenames and comparison context.
 - Undo the last inserted dictation segment without clearing earlier takes or unrelated draft text.
 - Native conversation transcripts for Hermes Agent: turns, thinking blocks, and tool calls are read directly from its SQLite session store. ([#604](https://github.com/devswha/herdr-web-ui/pull/604) by @RikiSanjayaa)
   This server change needs a `REMOTE_BUNDLE_VERSION` bump at release so remote PCs can read Hermes transcripts.
