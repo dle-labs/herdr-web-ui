@@ -74,6 +74,9 @@ export interface ComposerProps {
   metadata?: ConversationMetadata | null;
   /** replaces the placeholder: how a message answers the agent's waiting prompt */
   answerHint?: string | null;
+  /** The prompt can only be answered in the terminal; the box remains an editable future draft. */
+  terminalPromptHint?: string | null;
+  onShowTerminal?: () => void;
   /** what the agent suggests typing next (Claude's grey input text): the placeholder, taken with Tab */
   suggestion?: string | null;
   /** a cancelled send the agent put back in its input box: the empty box takes it again, for editing and resending */
@@ -239,6 +242,8 @@ export function Composer({
   backgroundWait = false,
   metadata,
   answerHint = null,
+  terminalPromptHint = null,
+  onShowTerminal,
   suggestion = null,
   restored = null,
   greeting = null,
@@ -285,7 +290,7 @@ export function Composer({
   const comments = useBlockComments(commentOwner);
   // an open question reads the text as its answer, and without an agent the text is typed into
   // whatever runs in the pane (a shell, perhaps): the comments wait for a message to the agent
-  const outgoing = outgoingMessage(comments, text, { answering: answerHint !== null, agent: agent !== null });
+  const outgoing = outgoingMessage(comments, text, { answering: answerHint !== null || terminalPromptHint !== null, agent: agent !== null });
   // a comment the walk reached whose text is not in the chat, as it was opened, and what its field holds: a send
   // acknowledged meanwhile must not close the popover on a change being typed
   const [editedComment, setEditedComment] = useState<BlockComment | null>(null);
@@ -468,10 +473,10 @@ export function Composer({
   };
   const agentLabel = agentDisplayLabel(agent);
   // the agent's suggestion stands in the empty box as it does in its own input, until anything is typed
-  const offered = connected && answerHint === null && suggestion !== null ? suggestion : null;
+  const offered = connected && terminalPromptHint === null && answerHint === null && suggestion !== null ? suggestion : null;
   const placeholder = !connected
     ? t("Reconnecting… message held here, never queued")
-    : answerHint ?? offered ?? t("Message {agent}…", { agent: agentLabel });
+    : terminalPromptHint !== null ? t("Draft for later…") : answerHint ?? offered ?? t("Message {agent}…", { agent: agentLabel });
 
   // A cancelled send the agent put back in its input box fills an empty box again — without
   // focus, which would raise a phone's keyboard. When it is gone, only the untouched fill is
@@ -857,7 +862,7 @@ export function Composer({
   const sendRef = useRef<(clearDraft?: string) => void>(() => {});
   /** `clearDraft`: only the terminal draft the user explicitly asked to clear and send over. */
   const send = useCallback((clearDraft?: string) => {
-    if (composingRef.current || !connected || uploading || sending) return;
+    if (terminalPromptHint !== null || composingRef.current || !connected || uploading || sending) return;
     if (dictation.voice.state === "recording") {
       dictation.finishAndSubmit(() => sendRef.current(clearDraft));
       return;
@@ -902,12 +907,12 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [attachments, commentOwner, connected, dictation.cancel, dictation.finishAndSubmit, dictation.voice.state, draftKey, onSend, outgoing, sending, text, uploading]);
+  }, [terminalPromptHint, attachments, commentOwner, connected, dictation.cancel, dictation.finishAndSubmit, dictation.voice.state, draftKey, onSend, outgoing, sending, text, uploading]);
   sendRef.current = send;
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
-    if (!connected || sending) return;
+    if (terminalPromptHint !== null || !connected || sending) return;
     setNote(null);
     // a quick reply is not the box's text, so its note offers no send over a draft
     const settle = (result: boolean | string | DraftRefusal): void => {
@@ -923,7 +928,7 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [connected, dictation.cancel, draftKey, onSend, sending]);
+  }, [terminalPromptHint, connected, dictation.cancel, draftKey, onSend, sending]);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -953,7 +958,7 @@ export function Composer({
         return;
       }
       // a draft puts Send where Stop was: Escape is then the Stop the agent's own input has
-      if (event.key === "Escape" && connected && agentStatus === "working" && textRef.current.trim().length > 0) {
+      if (event.key === "Escape" && terminalPromptHint === null && connected && agentStatus === "working" && textRef.current.trim().length > 0) {
         event.preventDefault();
         onAbort();
         return;
@@ -972,7 +977,7 @@ export function Composer({
       event.preventDefault();
       send();
     },
-    [agentStatus, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, setTextAndCaret, settings.enterSends, trigger],
+    [terminalPromptHint, agentStatus, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, setTextAndCaret, settings.enterSends, trigger],
   );
 
   const onPaste = useCallback(
@@ -1002,7 +1007,7 @@ export function Composer({
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
   // comments alone are a message too: Send takes them for the agent's next turn while it works
-  const sendShown = dictation.voice.state !== "idle" || composerSendShown({ working: isWorking, text }) || (isWorking && goingComments > 0);
+  const sendShown = terminalPromptHint !== null || dictation.voice.state !== "idle" || composerSendShown({ working: isWorking, text }) || (isWorking && goingComments > 0);
   const hint = composerStatusHint({ uploading, connected, text });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
@@ -1039,7 +1044,7 @@ export function Composer({
               type="button"
               className="composer-quick-reply"
               title={t("Send “{reply}”", { reply })}
-              disabled={!connected || sending}
+              disabled={terminalPromptHint !== null || !connected || sending}
               onClick={() => sendQuick(reply)}
             >
               {reply}
@@ -1310,7 +1315,7 @@ export function Composer({
               className="composer-action composer-send"
               aria-label={withComments(t("Send message"))}
               title={withComments(t("Send message"))}
-              disabled={!connected || uploading || sending || (dictation.voice.state !== "recording" && (!outgoing.sendable || dictation.voice.state !== "idle"))}
+              disabled={terminalPromptHint !== null || !connected || uploading || sending || (dictation.voice.state !== "recording" && (!outgoing.sendable || dictation.voice.state !== "idle"))}
               onClick={() => send()}
             >
               <ArrowUp aria-hidden="true" />
@@ -1318,6 +1323,10 @@ export function Composer({
           )}
         </div>
       </div>
+      {terminalPromptHint !== null && <div className="composer-hint" role="status">
+        {terminalPromptHint}{" "}
+        {onShowTerminal && <button type="button" className="btn" onClick={onShowTerminal}>{t("Answer in terminal")}</button>}
+      </div>}
       {typeof shownNote === "string" && <div className="composer-note" role="alert">{shownNote}</div>}
       {note !== null && typeof note === "object" && (
         <div className="composer-note composer-note-offer" role="alert">
@@ -1356,7 +1365,7 @@ export function Composer({
       {/* said while typing, before the send: after it the browser is already open and the reader is
           already in the state the words describe. Not a block — the text still goes, and pi runs the
           command in the terminal the way its own palette would */}
-      {!shownNote && terminalOnly !== null && (
+      {!shownNote && terminalPromptHint === null && terminalOnly !== null && (
         <div className="composer-hint" role="status">{t("{command} opens a tree the chat cannot show. It runs in the terminal — tap the terminal button at the top of the screen to choose a branch.", { command: `/${terminalOnly}` })}</div>
       )}
     </div>
