@@ -703,6 +703,7 @@ export function Composer({
     active,
     connected,
     owner: draftKey,
+    keywords: () => [...(agent ? [agentLabel] : []), ...commands.map((command) => command.name)],
     box: textareaRef,
     read: () => textRef.current,
     // a dictation that does not fit is refused whole: cutting would drop the draft after the caret

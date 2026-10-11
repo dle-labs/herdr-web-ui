@@ -36,6 +36,15 @@ export const CHAT_WIDTHS: readonly ChatWidth[] = ["narrow", "default", "wide", "
 /** Auto and On show draft controls with an unavailable reason; Off hides them. */
 export type VoiceButton = "auto" | "on" | "off";
 export const VOICE_BUTTONS: readonly VoiceButton[] = ["auto", "on", "off"];
+export type VoiceProvider = "openai" | "speaches" | "browser";
+export const VOICE_PROVIDERS: readonly VoiceProvider[] = ["openai", "speaches", "browser"];
+/** BCP 47 tags understood by browser recognition; OpenAI uses the primary language subtag. */
+export const DICTATION_LANGUAGES = [
+  "ar-SA", "cs-CZ", "da-DK", "de-DE", "el-GR", "en-GB", "en-US", "es-ES", "fi-FI", "fr-FR", "he-IL", "hi-IN",
+  "hu-HU", "id-ID", "it-IT", "ja-JP", "ko-KR", "nb-NO", "nl-NL", "pl-PL", "pt-BR", "pt-PT", "ro-RO", "ru-RU",
+  "sk-SK", "sv-SE", "th-TH", "tr-TR", "uk-UA", "vi-VN", "zh-CN", "zh-TW",
+] as const;
+export type DictationLanguage = "auto" | (typeof DICTATION_LANGUAGES)[number];
 /** the lens a pane opens in until it is switched there: auto is chat for an agent on a touch screen, else terminal */
 export type DefaultView = "auto" | "chat" | "terminal";
 
@@ -117,6 +126,12 @@ export interface Settings {
   usageHidden: string[];
   /** the microphone button in the composer and the terminal input line; nothing is recorded until it is pressed */
   voiceInput: VoiceButton;
+  /** Exactly one route, never an automatic fallback to another provider. */
+  voiceProvider: VoiceProvider;
+  voiceLanguage: DictationLanguage;
+  voicePolishChat: boolean;
+  /** Commands stay as transcribed unless explicitly enabled. */
+  voicePolishTerminal: boolean;
   /** Non-secret backend dictation configuration; presets require explicit Apply before use. */
   dictation: DictationConfig;
   /** the file viewer wraps long lines instead of scrolling sideways */
@@ -169,6 +184,10 @@ export const DEFAULT_SETTINGS: Settings = {
   usageOrder: [],
   usageHidden: [],
   voiceInput: "auto",
+  voiceProvider: "openai",
+  voiceLanguage: "auto",
+  voicePolishChat: true,
+  voicePolishTerminal: false,
   dictation: { ...DEFAULT_DICTATION_CONFIG },
   wrapCode: false,
   highlightCode: true,
@@ -202,7 +221,7 @@ export function wantsVoiceInput(setting: VoiceButton, _mode: "chat" | "terminal"
 
 export const DICTATION_MODEL_MAX_CHARS = 512;
 
-/** Pure migration: stale polish/key fields are ignored and malformed records cannot activate a preset. */
+/** Pure migration: secret fields are ignored and malformed records cannot activate a preset. */
 export function sanitizeDictation(value: unknown): DictationConfig {
   const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
   const rawModel = record["model"];
@@ -345,6 +364,12 @@ export function sanitizeSettings(raw: unknown): Settings {
     usageOrder: usageKeys(record["usageOrder"]),
     usageHidden: usageKeys(record["usageHidden"]),
     voiceInput: voiceButton(record["voiceInput"]),
+    voiceProvider: VOICE_PROVIDERS.includes(record["voiceProvider"] as VoiceProvider)
+      ? record["voiceProvider"] as VoiceProvider
+      : !Object.hasOwn(record, "voiceProvider") && sanitizeDictation(record["dictation"]).activated ? "speaches" : DEFAULT_SETTINGS.voiceProvider,
+    voiceLanguage: DICTATION_LANGUAGES.includes(record["voiceLanguage"] as (typeof DICTATION_LANGUAGES)[number]) ? record["voiceLanguage"] as DictationLanguage : DEFAULT_SETTINGS.voiceLanguage,
+    voicePolishChat: typeof record["voicePolishChat"] === "boolean" ? record["voicePolishChat"] : DEFAULT_SETTINGS.voicePolishChat,
+    voicePolishTerminal: typeof record["voicePolishTerminal"] === "boolean" ? record["voicePolishTerminal"] : DEFAULT_SETTINGS.voicePolishTerminal,
     dictation: sanitizeDictation(record["dictation"]),
     wrapCode: typeof record["wrapCode"] === "boolean" ? record["wrapCode"] : DEFAULT_SETTINGS.wrapCode,
     highlightCode: typeof record["highlightCode"] === "boolean" ? record["highlightCode"] : DEFAULT_SETTINGS.highlightCode,
@@ -453,7 +478,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   });
   useLayoutEffect(() => blockComments.setEnabled(settings.comments), [settings.comments]);
   // Invalidate committed snapshots too, including mode changes and future non-setter updates.
-  useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated]);
+  useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.voiceProvider, settings.voiceLanguage, settings.voicePolishChat, settings.voicePolishTerminal, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated]);
   const [systemDark, setSystemDark] = useState(() => resolveTheme("system") === "dark");
 
   useEffect(() => {
@@ -482,7 +507,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const update = useCallback((patch: Partial<Settings>) => {
     // Event-time invalidation, never a React updater side effect: late takes lose authority immediately.
-    if (Object.hasOwn(patch, "dictation") || Object.hasOwn(patch, "voiceInput")) invalidateDictation();
+    if (["dictation", "voiceInput", "voiceProvider", "voiceLanguage", "voicePolishChat", "voicePolishTerminal"].some((key) => Object.hasOwn(patch, key))) invalidateDictation();
     setSettings((current) => {
       const next = sanitizeSettings({ ...current, ...patch });
       saveSettings(next);

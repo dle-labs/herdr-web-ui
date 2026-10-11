@@ -57,8 +57,23 @@ import type { PaneScrollInfo } from "../../shared/herdr-api.generated.ts";
 import { readInstalledNotes, readUpdateNotes, type HerdrUpdateStatus, type InstalledNotes, type UpdateCommand, type UpdateNotes, type UpdateStatus } from "../../shared/update.ts";
 import type { AlertPrefs } from "../../shared/notify-policy.ts";
 import type { TelemetryStatus } from "../../shared/telemetry.ts";
+import type { VoiceConfigUpdate, VoiceStatus } from "../../shared/voice.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { t } from "./i18n.ts";
+
+/** GET /api/voice: only status comes back, never the server-held secret. */
+export async function fetchVoiceStatus(signal?: AbortSignal): Promise<VoiceStatus> {
+  const response = await fetch("/api/voice", { cache: "no-store", signal });
+  if (!response.ok) throw await errorFrom("/api/voice", response);
+  return (await response.json()) as VoiceStatus;
+}
+
+/** An environment key is read-only; the server rejects changes with key_from_env. */
+export async function saveVoiceConfig(update: VoiceConfigUpdate): Promise<VoiceStatus> {
+  const response = await fetch("/api/voice/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(update) });
+  if (!response.ok) throw await errorFrom("/api/voice/config", response);
+  return (await response.json()) as VoiceStatus;
+}
 
 /** Settings → Phone: what Tailscale on the server's PC already serves, or the command to run. */
 export function fetchRemoteAccess(): Promise<RemoteAccess> {

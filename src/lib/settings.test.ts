@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_DICTATION_CONFIG } from "./voiceTransport.ts";
-import { DICTATION_MODEL_MAX_CHARS, sanitizeDictation, voiceButton } from "./settings.ts";
+import { DICTATION_LANGUAGES, DICTATION_MODEL_MAX_CHARS, VOICE_PROVIDERS, sanitizeDictation, voiceButton } from "./settings.ts";
 import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
 import { alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
@@ -339,16 +339,50 @@ describe("microphone button", () => {
 });
 
 describe("dictation settings", () => {
-  it("migrates legacy visibility explicitly and never activates a legacy record", () => {
+  it("migrates legacy visibility additively, retaining upstream preferences without activating Speaches", () => {
     for (const [old, expected] of [["off", "off"], ["on", "on"], ["auto", "auto"], [true, "on"], [false, "auto"], [undefined, "auto"], [null, "auto"], ["bad", "auto"]] as const) {
       expect(voiceButton(old)).toBe(expected);
       const migrated = sanitizeSettings({ voiceInput: old, voiceLanguage: "ja-JP", voicePolishChat: true, voicePolishTerminal: true, api_key: "secret" });
       expect(migrated.dictation).toEqual(DEFAULT_DICTATION_CONFIG);
       expect(migrated.dictation.activated).toBe(false);
-      expect(migrated).not.toHaveProperty("voiceLanguage");
-      expect(migrated).not.toHaveProperty("voicePolishChat");
-      expect(migrated).not.toHaveProperty("voicePolishTerminal");
+      expect(migrated.voiceProvider).toBe("openai");
+      expect(migrated.voiceLanguage).toBe("ja-JP");
+      expect(migrated.voicePolishChat).toBe(true);
+      expect(migrated.voicePolishTerminal).toBe(true);
       expect(migrated).not.toHaveProperty("api_key");
+    }
+  });
+
+  it("defaults upstream records to OpenAI and keeps all upstream languages and polish choices", () => {
+    const defaults = sanitizeSettings({});
+    expect(defaults.voiceProvider).toBe("openai");
+    expect(defaults.voiceLanguage).toBe("auto");
+    expect(defaults.voicePolishChat).toBe(true);
+    expect(defaults.voicePolishTerminal).toBe(false);
+    for (const voiceLanguage of ["auto", ...DICTATION_LANGUAGES] as const) {
+      const saved = sanitizeSettings({ voiceLanguage, voicePolishChat: false, voicePolishTerminal: true });
+      const loaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
+      expect(loaded.voiceLanguage).toBe(voiceLanguage);
+      expect(loaded.voicePolishChat).toBe(false);
+      expect(loaded.voicePolishTerminal).toBe(true);
+    }
+    expect(sanitizeSettings({ voiceLanguage: "bad", voicePolishChat: "false", voicePolishTerminal: "true" })).toMatchObject({ voiceLanguage: "auto", voicePolishChat: true, voicePolishTerminal: false });
+  });
+
+  it("migrates only valid activated v2 Speaches records when no provider is present", () => {
+    const dictation = { version: 2, mode: "recording", model: "custom/model", activated: true };
+    expect(sanitizeSettings({ dictation }).voiceProvider).toBe("speaches");
+    for (const invalid of [{ ...dictation, version: 1 }, { ...dictation, mode: "bad" }, { ...dictation, model: "bad model" }, { ...dictation, activated: false }]) {
+      expect(sanitizeSettings({ dictation: invalid }).voiceProvider).toBe("openai");
+    }
+    for (const voiceProvider of VOICE_PROVIDERS) {
+      const saved = sanitizeSettings({ dictation, voiceProvider, voiceLanguage: "ko-KR", voicePolishChat: false, voicePolishTerminal: true });
+      expect(saved.voiceProvider).toBe(voiceProvider);
+      const loaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
+      expect(sanitizeSettings({ ...loaded, theme: "light" })).toMatchObject({ voiceProvider, voiceLanguage: "ko-KR", voicePolishChat: false, voicePolishTerminal: true, dictation });
+    }
+    for (const voiceProvider of [null, false, "unknown", ["openai", "speaches"], 7]) {
+      expect(sanitizeSettings({ dictation, voiceProvider }).voiceProvider).toBe("openai");
     }
   });
 
@@ -383,8 +417,8 @@ describe("dictation settings", () => {
     const handler = source.slice(source.indexOf("const update = useCallback"), source.indexOf("const value = useMemo"));
     expect(handler.indexOf("invalidateDictation()")).toBeGreaterThan(0);
     expect(handler.indexOf("invalidateDictation()")).toBeLessThan(handler.indexOf("setSettings((current)"));
-    expect(handler).toContain('Object.hasOwn(patch, "dictation")');
-    expect(handler).toContain('Object.hasOwn(patch, "voiceInput")');
+    for (const field of ["dictation", "voiceInput", "voiceProvider", "voiceLanguage", "voicePolishChat", "voicePolishTerminal"]) expect(handler).toContain(`"${field}"`);
+    expect(handler).toContain("Object.hasOwn(patch, key)");
   });
 
   it("renders transient preview once outside the waveform row without editing the draft", () => {
@@ -401,7 +435,7 @@ describe("dictation settings", () => {
 
   it("invalidates committed snapshots for every persisted configuration field", () => {
     const source = readFileSync(join(import.meta.dir, "settings.ts"), "utf8");
-    expect(source).toContain("useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated])");
+    expect(source).toContain("useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.voiceProvider, settings.voiceLanguage, settings.voicePolishChat, settings.voicePolishTerminal, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated])");
   });
 
   it("keeps speech-service requests explicit and never acquires a microphone in settings", () => {
@@ -409,9 +443,7 @@ describe("dictation settings", () => {
     const dialog = readFileSync(join(import.meta.dir, "..", "components", "SettingsDialog.tsx"), "utf8");
     for (const source of [page, dialog]) {
       expect(source).not.toContain("getUserMedia");
-      expect(source).not.toContain("fetchVoiceStatus");
-      expect(source).not.toContain("saveVoiceConfig");
-      expect(source).not.toContain("voicePolish");
+      expect(source).not.toContain("localStorage");
     }
     expect(page).toContain("discoverDictationModels({ ...applied }, controller.signal)");
     expect(page).toContain("generation !== request.current.generation");
@@ -420,6 +452,37 @@ describe("dictation settings", () => {
     expect(page).toContain("mode !== applied.mode");
     expect(page).toContain("setMode(applied.mode)");
     expect(dialog).toContain('case "voice": return <DictationSettings />');
+  });
+
+  it("uses exclusive provider selection with hidden preferences preserved and no automatic fallback", () => {
+    const page = readFileSync(join(import.meta.dir, "..", "components", "DictationSettings.tsx"), "utf8");
+    expect(page).toContain("value={settings.voiceProvider}");
+    expect(page).toContain('id="voice-provider"');
+    expect(page).toContain("update({ voiceProvider: event.target.value as VoiceProvider })");
+    expect(page).toContain('settings.voiceProvider === "openai"');
+    expect(page).toContain('settings.voiceProvider === "browser"');
+    expect(page).toContain('settings.voiceProvider === "speaches"');
+    expect(page).toContain("There is no automatic fallback");
+    expect(page).toContain("Browser speech recognition may send audio to the browser vendor");
+    expect(page).not.toContain('update({ voiceLanguage: "auto"');
+    expect(page).not.toContain('update({ dictation: DEFAULT');
+  });
+
+  it("keeps key edits explicit, env keys read-only and secrets out of React state and error text", () => {
+    const page = readFileSync(join(import.meta.dir, "..", "components", "DictationSettings.tsx"), "utf8");
+    expect(page).toContain('status.source !== "env"');
+    expect(page).toContain('status.source === "env") return');
+    expect(page).toContain('type="password"');
+    expect(page).toContain('input.current.value = ""');
+    expect(page).not.toContain("setVoiceKey");
+    expect(page).not.toContain("error.message");
+    expect(page).toContain('window.addEventListener("pagehide", clear)');
+    expect(page).toContain('document.addEventListener("visibilitychange", onHidden)');
+    expect(page).toContain("saveVoiceConfig({ api_key })");
+    expect(page).toContain('new Event("herdr-voice-status-changed")');
+    const api = readFileSync(join(import.meta.dir, "api.ts"), "utf8");
+    expect(api).toContain('fetch("/api/voice", { cache: "no-store", signal })');
+    expect(api).toContain('fetch("/api/voice/config", { method: "PUT"');
   });
 });
 

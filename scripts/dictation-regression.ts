@@ -214,7 +214,7 @@ try {
       assert.equal(auth.ok(), true, "browser is authenticated to WebUI");
       const errors: string[] = [];
       await context.addInitScript(({ pane, baseUrl, model }) => {
-        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false, voiceInput: "auto", terminalInputMode: "line", dictation: { baseUrl, model, activated: true } }));
+        if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", alertsOn: false, voiceInput: "auto", voiceProvider: "speaches", terminalInputMode: "line", dictation: { baseUrl, model, activated: true } }));
         localStorage.setItem(`herdr-web-ui:view:${pane}`, "chat");
         const Recorder = window.MediaRecorder;
         window.MediaRecorder = class extends Recorder {
@@ -301,7 +301,7 @@ try {
       assert.equal(await composer.locator(".voice-mic").isDisabled(), true, "unconfigured dictation stays visible with a setup reason on both layouts");
       await settings(page);
       assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true);
-      assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "no legacy API key editor");
+      assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "self-hosted provider hides the OpenAI key editor");
       assert.equal(await page.locator("#dictation-base-url").count(), 0, "backend service is not a browser-editable URL");
       await page.locator("#dictation-model").fill(model);
       await frames(page);
@@ -763,7 +763,7 @@ try {
       await page.reload();
       await page.locator(".conn-live").waitFor();
       assert.equal(await composer.locator(".voice-mic").count(), 0, "Off survives reload");
-      assert.deepEqual(legacy, [], "replacement client never requests /api/voice");
+      assert.deepEqual(legacy, [], "self-hosted provider never requests /api/voice");
       assert.deepEqual(errors, []);
       assert.deepEqual(crossOriginSpeech, [], "browser makes zero direct speech-service requests");
       console.log(`PASS ${mobile ? "phone" : "desktop"}: backend HTTPS dictation, same-origin CSP, explicit settings, draft recovery, cancellation, IME, comments and terminal`);
@@ -775,7 +775,7 @@ try {
   try {
     const origin = `http://127.0.0.1:${disabled.port}`;
     assert.equal((await disabledContext.request.post(`${origin}/api/auth`, { data: { token: "dictation-disabled-test-token" } })).ok(), true);
-    await disabledContext.addInitScript(({ model }) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: "on", dictation: { version: 2, model, activated: true, mode: "recording" } })), { model });
+    await disabledContext.addInitScript(({ model }) => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceInput: "on", voiceProvider: "speaches", dictation: { version: 2, model, activated: true, mode: "recording" } })), { model });
     const page = await disabledContext.newPage();
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
     await page.locator(".conn-live").waitFor();

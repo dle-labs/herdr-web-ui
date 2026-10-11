@@ -3,10 +3,16 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { configAllowed, DICTATION_MAX_BYTES, DictationTransportError, recorderExtension, transcribeDictation, useDictationPolicy, type DictationConfig, type DictationTransportCode } from "./voiceTransport.ts";
 
 export type VoiceState = "idle" | "starting" | "recording" | "transcribing";
-export type VoiceError = DictationTransportCode | "insecure" | "permission" | "no_mic" | "busy";
+import { dictationLocale, OpenAIVoiceError, speechErrorReason, speechRecognitionCtor, transcribeOpenAI, type OpenAIVoiceOptions, type SpeechRecognitionLike } from "./voiceProviders.ts";
+import { useSettings } from "./settings.ts";
+import type { VoiceStatus } from "../../shared/voice.ts";
+export { dictationLocale, transcribeLanguage, voiceKeywords, readVoiceEvents, voiceErrorFromCode, speechErrorReason } from "./voiceProviders.ts";
+export const VOICE_CONFIG_EVENT = "herdr-voice-status-changed";
+export type VoiceProvider = "openai" | "speaches" | "browser";
+export type VoiceError = DictationTransportCode | "insecure" | "permission" | "no_mic" | "busy" | "provider_auth";
 export type VoiceUnavailable = "disabled" | "insecure" | "not_configured" | "unsupported" | "policy";
 export interface VoiceText { text: string; take: number; phase: "raw" }
-export interface VoiceInputOptions { enabled: boolean; config: DictationConfig; onText(result: VoiceText): void; onPartial?(text: string): void }
+export interface VoiceInputOptions { enabled: boolean; config: DictationConfig; provider?: VoiceProvider; language?: string; polish?: boolean; mode?: "chat" | "terminal"; keywords?: string[]; onText(result: VoiceText): void; onPartial?(text: string): void }
 export interface VoiceInput {
   available: boolean; unavailableReason: VoiceUnavailable | null; state: VoiceState;
   elapsedMs: number; silent: boolean; error: VoiceError | null; preview: string;
@@ -70,6 +76,8 @@ export interface VoiceEngineIO {
 }
 export interface VoiceEngineDependencies {
   prepareLive?(): LiveDictation;
+  speech?(): SpeechRecognitionLike | null;
+  openai?(options: OpenAIVoiceOptions, blob: Blob, signal: AbortSignal, preview: (text: string) => void): Promise<string>;
   permission(): Promise<MediaStream>;
   recorder(stream: MediaStream, mime: string): MediaRecorder;
   mime(): { mimeType: string; extension: string } | null;
@@ -83,6 +91,8 @@ export interface VoiceEngineDependencies {
 function browserDependencies(): VoiceEngineDependencies {
   return {
     prepareLive: prepareLiveDictation,
+    speech: () => { const Speech = speechRecognitionCtor(); return Speech ? new Speech() : null; },
+    openai: transcribeOpenAI,
     permission: () => navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }),
     recorder: (stream, mimeType) => new MediaRecorder(stream, { mimeType }),
     mime: () => typeof MediaRecorder === "undefined" ? null : pickRecorderMime((type) => MediaRecorder.isTypeSupported(type)),
@@ -93,7 +103,8 @@ function browserDependencies(): VoiceEngineDependencies {
   };
 }
 interface Take {
-  id: number; config: DictationConfig; onText: VoiceInputOptions["onText"];
+  id: number; config: DictationConfig; provider: VoiceProvider; language: string; polish: boolean; mode: "chat" | "terminal"; keywords: string[]; onText: VoiceInputOptions["onText"];
+  recognition?: SpeechRecognitionLike; finalText?: string;
   controller: AbortController; stream: MediaStream | null; recorder: MediaRecorder | null;
   chunks: Blob[]; bytes: number; timers: Set<ReturnType<typeof setTimeout>>;
   unlock?: () => void; stopMeter?: () => void; live?: LiveDictation; onPartial?: (text: string) => void;
@@ -112,6 +123,12 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
   };
   function dispose(current: Take): void {
     current.controller.abort();
+    if (current.recognition) {
+      const recognition = current.recognition;
+      recognition.onaudiostart = recognition.onresult = recognition.onerror = recognition.onend = null;
+      try { recognition.abort(); } catch { /* already ended */ }
+      current.recognition = undefined;
+    }
     current.live?.cancel(); current.live = undefined;
     io.setPreview?.("");
     for (const timer of current.timers) deps.clearTimer(timer);
@@ -129,7 +146,7 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
   }
   function cancel(): void {
     if (take) dispose(take);
-    io.setPreview?.(""); setPhase("idle"); io.setSilent(false);
+    io.setPreview?.(""); io.setError(null); setPhase("idle"); io.setSilent(false);
   }
   function fail(current: Take, code: VoiceError): void {
     if (!valid(current)) return;
@@ -180,12 +197,14 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
     const blob = new Blob(current.chunks, { type }); current.chunks.length = 0;
     if (!blob.size) { fail(current, "no_speech"); return; }
     try {
-      const text = await deps.transcribe(current.config, blob, current.controller.signal);
+      const text = current.provider === "openai"
+        ? await (deps.openai ?? transcribeOpenAI)(current, blob, current.controller.signal, (text) => { if (valid(current)) { io.setPreview?.(text); current.onPartial?.(text); } })
+        : await deps.transcribe(current.config, blob, current.controller.signal);
       if (!valid(current)) return;
       const result: VoiceText = { text, take: current.id, phase: "raw" };
       dispose(current); setPhase("idle"); current.onText(result);
     } catch (error) {
-      if (valid(current)) fail(current, error instanceof DictationTransportError ? error.code : "network");
+      if (valid(current)) fail(current, error instanceof DictationTransportError || error instanceof OpenAIVoiceError ? error.code : "network");
     }
   }
   function finish(): void {
@@ -195,6 +214,11 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
     setPhase("transcribing");
     for (const timer of current.timers) deps.clearTimer(timer);
     current.timers.clear();
+    if (current.recognition) {
+      schedule(current, () => fail(current, "timeout"), 65_000);
+      try { current.recognition.stop(); } catch { fail(current, "provider"); }
+      return;
+    }
     if (current.live) {
       stopTracks(current);
       schedule(current, () => fail(current, "timeout"), 65_000);
@@ -258,10 +282,43 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
   function captureReady(current: Take): void {
     for (const timer of current.timers) deps.clearTimer(timer);
     current.timers.clear();
-    setPhase("recording"); startMeter(current);
+    setPhase("recording"); if (current.stream) startMeter(current);
     const started = deps.now();
     const tick = () => { io.setElapsed(Math.min(120_000, deps.now() - started)); schedule(current, tick, 250); };
     schedule(current, tick, 250); schedule(current, finish, 120_000);
+  }
+  function beginBrowser(current: Take): void {
+    try {
+      const recognition = deps.speech?.();
+      if (!recognition) { fail(current, "provider"); return; }
+      current.recognition = recognition;
+      recognition.lang = current.language; recognition.continuous = true; recognition.interimResults = true;
+      recognition.onaudiostart = () => { if (valid(current) && phase === "starting") captureReady(current); };
+      recognition.onresult = (event) => {
+        if (!valid(current)) return;
+        const final: string[] = [], interim: string[] = [];
+        for (let index = 0; index < event.results.length; index++) {
+          const result = event.results[index], text = result?.[0]?.transcript ?? "";
+          if (result?.isFinal) final.push(text); else interim.push(text);
+        }
+        current.finalText = final.join(" ");
+        const preview = [...final, ...interim].join(" ").replace(/\s+/g, " ").trim();
+        io.setPreview?.(preview); current.onPartial?.(preview);
+      };
+      recognition.onerror = (event) => {
+        if (!valid(current)) return;
+        const reason = speechErrorReason(event.error);
+        if (reason) fail(current, reason);
+      };
+      recognition.onend = () => {
+        if (!valid(current)) return;
+        const text = current.finalText?.replace(/\s+/g, " ").trim() ?? "";
+        if (!text) { fail(current, "no_speech"); return; }
+        const result: VoiceText = { text, take: current.id, phase: "raw" };
+        dispose(current); setPhase("idle"); current.onText(result);
+      };
+      recognition.start();
+    } catch { fail(current, "provider"); }
   }
   function press(): void {
     if (phase === "starting" || phase === "recording") { finish(); return; }
@@ -269,16 +326,18 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
     if (!io.available() || !io.options().enabled) return;
     if (owner) { io.setError("busy"); return; }
     const options = io.options();
-    const mime = options.config.mode === "live" ? { mimeType: "", extension: "" } : deps.mime();
-    if (!mime || (options.config.mode === "live" && !deps.prepareLive)) { io.setError("format"); return; }
-    const current: Take = { id: ++nextTake, config: { ...options.config }, onText: options.onText, onPartial: options.onPartial, controller: new AbortController(), stream: null, recorder: null, chunks: [], bytes: 0, timers: new Set() };
+    const provider = options.provider ?? "speaches";
+    const live = provider === "speaches" && options.config.mode === "live";
+    const mime = live || provider === "browser" ? { mimeType: "", extension: "" } : deps.mime();
+    if (!mime || (live && !deps.prepareLive)) { io.setError("format"); return; }
+    const current: Take = { id: ++nextTake, config: { ...options.config }, provider, language: options.language ?? "en-US", polish: options.polish ?? false, mode: options.mode ?? "chat", keywords: [...options.keywords ?? []], onText: options.onText, onPartial: options.onPartial, controller: new AbortController(), stream: null, recorder: null, chunks: [], bytes: 0, timers: new Set() };
     take = current; owner = engine;
     io.setPreview?.(""); io.setError(null); io.setElapsed(0); io.setSilent(false); setPhase("starting");
-    if (options.config.mode === "live") {
+    if (live) {
       try { current.live = deps.prepareLive!(); } catch { fail(current, "format"); return; }
     }
     schedule(current, () => fail(current, "timeout"), 30_000);
-    const begin = () => acquire(current, mime.mimeType);
+    const begin = () => provider === "browser" ? beginBrowser(current) : acquire(current, mime.mimeType);
     if (deps.lock) {
       void deps.lock(async (acquired) => {
         if (!valid(current)) return;
@@ -297,20 +356,44 @@ export function createVoiceEngine(io: VoiceEngineIO, deps: VoiceEngineDependenci
   };
   return engine;
 }
+export function refreshVoiceStatus(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(VOICE_CONFIG_EVENT));
+}
+function useVoiceStatus(enabled: boolean): VoiceStatus | null | undefined {
+  const [status, setStatus] = useState<VoiceStatus | null | undefined>();
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true, revision = 0;
+    const refresh = () => {
+      const request = ++revision;
+      void fetch("/api/voice", { credentials: "same-origin", cache: "no-store" })
+        .then(async (response) => response.ok ? await response.json() as VoiceStatus : null)
+        .catch(() => null).then((value) => { if (live && request === revision) setStatus(value); });
+    };
+    refresh(); window.addEventListener(VOICE_CONFIG_EVENT, refresh);
+    return () => { live = false; window.removeEventListener(VOICE_CONFIG_EVENT, refresh); };
+  }, [enabled]);
+  return status;
+}
 export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
+  const { settings, resolvedLanguage } = useSettings();
+  const language = dictationLocale(options.language ?? "auto", settings.language, resolvedLanguage, typeof navigator !== "undefined" ? navigator.languages : []);
+  const resolvedOptions = { ...options, language };
+  const provider = options.provider ?? "speaches";
+  const status = useVoiceStatus(options.enabled && provider === "openai");
   const policy = useDictationPolicy();
   const secure = typeof window !== "undefined" && window.isSecureContext;
-  const supported = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && (options.config.mode === "live" ? typeof AudioWorkletNode !== "undefined" && typeof AudioContext !== "undefined" : typeof MediaRecorder !== "undefined" && !!pickRecorderMime((type) => MediaRecorder.isTypeSupported(type)));
-  const unavailableReason: VoiceUnavailable | null = !options.enabled ? "disabled" : !secure ? "insecure" : !supported ? "unsupported" : !options.config.activated ? "not_configured" : !configAllowed(options.config, policy) ? "policy" : null;
-  const available = unavailableReason === null;
+  const supported = provider === "browser" ? !!speechRecognitionCtor() : typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && (provider === "speaches" && options.config.mode === "live" ? typeof AudioWorkletNode !== "undefined" && typeof AudioContext !== "undefined" : typeof MediaRecorder !== "undefined" && !!pickRecorderMime((type) => MediaRecorder.isTypeSupported(type)));
+  const unavailableReason: VoiceUnavailable | null = !options.enabled ? "disabled" : !secure ? "insecure" : !supported ? "unsupported" : provider === "browser" ? policy?.generation === "demo" ? "policy" : null : provider === "openai" ? status === undefined ? null : !status?.configured ? "not_configured" : null : !options.config.activated ? "not_configured" : !configAllowed(options.config, policy) ? "policy" : null;
+  const available = unavailableReason === null && (provider !== "openai" || !!status?.configured) && (provider !== "browser" || !!policy);
   const [state, setState] = useState<VoiceState>("idle");
   const [error, setError] = useState<VoiceError | null>(null);
   const [elapsedMs, setElapsed] = useState(0);
   const [silent, setSilent] = useState(false);
   const [preview, setPreview] = useState("");
-  const latest = useRef({ options, available }); latest.current = { options, available };
+  const latest = useRef({ options: resolvedOptions, available }); latest.current = { options: resolvedOptions, available };
   const [voice] = useState(() => createVoiceEngine({ options: () => latest.current.options, available: () => latest.current.available, setState, setError, setElapsed, setSilent, setPreview }));
-  useLayoutEffect(() => () => voice.cancel(), [voice, available, options.config.version, options.config.mode, options.config.model, options.config.activated]);
+  useLayoutEffect(() => () => voice.cancel(), [voice, available, provider, language, options.polish, options.mode, options.config.version, options.config.mode, options.config.model, options.config.activated]);
   useEffect(() => {
     const hidden = () => { if (document.hidden) voice.cancel(); };
     document.addEventListener("visibilitychange", hidden);

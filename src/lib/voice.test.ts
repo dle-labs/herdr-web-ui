@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { barScales, createVoiceEngine, insertAtCaret, invalidateDictation, levelFromRms, micErrorReason, pickRecorderMime, smoothLevel, subscribeDictationInvalidation, type VoiceEngineDependencies, type VoiceError, type VoiceText } from "./voice.ts";
+import { barScales, createVoiceEngine, insertAtCaret, invalidateDictation, levelFromRms, micErrorReason, pickRecorderMime, smoothLevel, subscribeDictationInvalidation, type VoiceEngineDependencies, type VoiceError, type VoiceText, type VoiceInputOptions } from "./voice.ts";
 import { DEFAULT_DICTATION_CONFIG, DICTATION_MAX_BYTES } from "./voiceTransport.ts";
 const drain = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 class Stream {
@@ -38,9 +38,10 @@ function harness(lock?: VoiceEngineDependencies["lock"], prepareLive?: VoiceEngi
     timer: (callback, ms) => { timers.set(++timerId, { callback, ms }); return timerId as unknown as ReturnType<typeof setTimeout>; },
     clearTimer: (id) => { timers.delete(id as unknown as number); },
   };
-  const voice = createVoiceEngine({ options: () => ({ enabled: true, config, onText: (text) => texts.push(text) }), available: () => true, setState: (state) => states.push(state), setError: (error) => errors.push(error), setElapsed: () => {}, setSilent: () => {}, setPreview: (text) => previews.push(text) }, deps);
+  const options: VoiceInputOptions = { enabled: true, config, onText: (text) => texts.push(text) };
+  const voice = createVoiceEngine({ options: () => options, available: () => true, setState: (state) => states.push(state), setError: (error) => errors.push(error), setElapsed: () => {}, setSilent: () => {}, setPreview: (text) => previews.push(text) }, deps);
   const grant = async () => { const stream = new Stream(); permissions.at(-1)!(stream as unknown as MediaStream); await drain(); return stream; };
-  return { voice, grant, recorder, permissions, uploads, texts, errors, states, timers, config, previews };
+  return { voice, grant, recorder, permissions, uploads, texts, errors, states, timers, config, previews, options, deps };
 }
 afterEach(invalidateDictation);
 describe("dictation coordinator", () => {
@@ -146,6 +147,56 @@ describe("dictation coordinator", () => {
     a.uploads[0]!.resolve("create the file"); await drain();
     expect(a.texts.map((result) => result.text)).toEqual(["create the file"]);
     a.voice.press(); expect(a.permissions).toHaveLength(2);
+  });
+});
+describe("explicit providers", () => {
+  it("lifecycle cancellation clears an old provider failure even after the take was disposed", async () => {
+    const a = harness(); a.options.provider = "openai";
+    a.deps.openai = async () => { throw new Error("failed"); };
+    a.voice.press(); await a.grant(); a.voice.finish(); await drain();
+    expect(a.errors.at(-1)).toBe("network");
+    a.options.provider = "browser"; a.voice.cancel();
+    expect(a.errors.at(-1)).toBeNull(); expect(a.states.at(-1)).toBe("idle");
+    a.voice.cancel(); expect(a.errors.at(-1)).toBeNull();
+  });
+  it("snapshots OpenAI settings at press and never prepares Speaches live or uploads there", async () => {
+    const a = harness(undefined, () => { throw new Error("must not prepare live"); });
+    a.options.provider = "openai"; a.config.mode = "live";
+    a.options.language = "ko-KR"; a.options.polish = true; a.options.mode = "terminal"; a.options.keywords = ["git"];
+    let captured: unknown;
+    a.deps.openai = async (options) => { captured = { language: options.language, polish: options.polish, mode: options.mode, keywords: options.keywords }; return "git status"; };
+    a.voice.press(); await a.grant();
+    a.options.provider = "speaches"; a.options.language = "ja"; a.options.polish = false; a.options.mode = "chat"; a.options.keywords.push("changed");
+    a.voice.finish(); await drain();
+    expect(captured).toEqual({ language: "ko-KR", polish: true, mode: "terminal", keywords: ["git"] });
+    expect(a.uploads).toHaveLength(0); expect(a.texts.map((text) => text.text)).toEqual(["git status"]);
+  });
+  it("OpenAI failure has no fallback; cancellation suppresses late results", async () => {
+    const a = harness(); a.options.provider = "openai";
+    a.deps.openai = async () => { throw new Error("failed"); };
+    a.voice.press(); await a.grant(); a.voice.finish(); await drain();
+    expect(a.uploads).toHaveLength(0); expect(a.texts).toHaveLength(0);
+    let resolve!: (text: string) => void;
+    a.deps.openai = () => new Promise((done) => { resolve = done; });
+    a.voice.press(); await a.grant(); a.voice.finish(); await drain(); a.voice.cancel(); resolve("late"); await drain();
+    expect(a.texts).toHaveLength(0);
+  });
+  it("browser keeps ownership through stop, uses its language snapshot, and suppresses late callbacks", async () => {
+    const a = harness(), b = harness(); a.options.provider = "browser"; a.options.language = "fr-FR";
+    const speech = { lang: "", continuous: false, interimResults: false, onaudiostart: null, onresult: null, onerror: null, onend: null, start() {}, stop() {}, abort() {} } as import("./voiceProviders.ts").SpeechRecognitionLike;
+    a.deps.speech = () => speech;
+    a.voice.press(); expect(speech.lang).toBe("fr-FR"); expect(a.permissions).toHaveLength(0);
+    speech.onaudiostart?.();
+    speech.onresult?.({ results: { length: 1, 0: { isFinal: true, 0: { transcript: "bonjour" } } } });
+    a.voice.finish(); b.voice.press(); expect(b.errors.at(-1)).toBe("busy");
+    const lateResult = speech.onresult, lateEnd = speech.onend, lateError = speech.onerror;
+    a.voice.cancel(); lateResult?.({ results: { length: 0 } }); lateEnd?.(); lateError?.({ error: "network" });
+    expect(a.texts).toHaveLength(0); expect(a.errors.at(-1)).toBeNull(); expect(a.uploads).toHaveLength(0); expect(a.timers.size).toBe(0);
+    a.voice.press(); speech.onaudiostart?.();
+    speech.onresult?.({ results: { length: 3, 0: { isFinal: true, 0: { transcript: "bonjour" } }, 1: { isFinal: true, 0: { transcript: "le monde" } }, 2: { isFinal: false, 0: { transcript: "interim" } } } });
+    expect(a.previews.at(-1)).toBe("bonjour le monde interim");
+    speech.onend?.();
+    expect(a.texts.map((text) => text.text)).toEqual(["bonjour le monde"]);
   });
 });
 describe("live capture ownership", () => {

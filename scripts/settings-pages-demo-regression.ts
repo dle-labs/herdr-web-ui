@@ -8,6 +8,7 @@ import { openSettingsPage } from "./settings-page.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
 import { JA } from "../src/lib/i18n.ja.ts";
 import { ZH } from "../src/lib/i18n.zh.ts";
+import { sanitizeSettings } from "../src/lib/settings.ts";
 
 // Settings on the unmodified app over the demo's fixture transport: every page fits a phone, and
 // the browser's Back button steps out of the dialog instead of out of the app. All files and
@@ -16,7 +17,7 @@ const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
 const PAGES = ["Appearance", "Chat", "Terminal", "File viewer", "Alerts", "Dictation", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "Agent integrations", "About"];
 // Persisted activation must never enable private speech traffic in the public demo.
 const PRIVATE_SPEECH = "https://dictation-private.invalid";
-const SETTINGS = { language: "en", showUsage: true, voiceInput: "on", showQuickReplies: true, dictation: { baseUrl: `${PRIVATE_SPEECH}/v1`, model: "test/installed-english", activated: true } };
+const SETTINGS = { language: "en", showUsage: true, voiceInput: "on", showQuickReplies: true, voiceProvider: "speaches", voiceLanguage: "ko-KR", voicePolishChat: false, voicePolishTerminal: true, dictation: { baseUrl: `${PRIVATE_SPEECH}/v1`, model: "test/installed-english", activated: true } };
 
 const dialogOf = (page: Page) => page.getByRole("dialog", { name: "Settings", exact: true });
 const openSettings = async (page: Page): Promise<void> => {
@@ -69,6 +70,14 @@ try {
         try {
           await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(url).origin });
           await context.addInitScript((settings) => { if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", settings); }, JSON.stringify({ ...SETTINGS, language }));
+          await context.addInitScript(() => {
+            (window as any).__recognitionStarts = 0;
+            (window as any).SpeechRecognition = class {
+              start() { (window as any).__recognitionStarts++; throw new Error("Demo must not start browser recognition"); }
+              stop() {}
+              abort() {}
+            };
+          });
           const privateRequests: string[] = [];
           await context.route(`${PRIVATE_SPEECH}/**`, (route) => {
             privateRequests.push(route.request().url());
@@ -110,6 +119,29 @@ try {
               assert.equal(await page.getByRole("button", { name: label("Apply"), exact: true }).isDisabled(), true, "disabled backend cannot be activated");
               assert.equal(await page.getByRole("button", { name: label("Refresh models"), exact: true }).isDisabled(), true);
               assert.equal(await page.getByRole("button", { name: label("Check"), exact: true }).isDisabled(), true);
+              const provider = page.locator("#voice-provider");
+              assert.equal(await provider.inputValue(), "speaches", "saved self-hosted selection is retained");
+              const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!));
+              const before = sanitizeSettings(await stored());
+              await provider.selectOption("openai");
+              await page.locator('.settings-dialog input[type="password"]').waitFor();
+              assert.equal(await page.locator("#dictation-model").count(), 0, "OpenAI hides self-hosted controls");
+              assert.deepEqual(await cutOff(page), [], `OpenAI settings fit ${width}px (${language})`);
+              await provider.selectOption("browser");
+              assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "browser recognition hides the OpenAI key");
+              assert.equal(await page.locator("#dictation-model").count(), 0, "browser recognition hides Speaches controls");
+              assert.deepEqual(await cutOff(page), [], `Browser settings fit ${width}px (${language})`);
+              assert.equal(await page.locator(".composer .voice-mic").isDisabled(), true, "demo disables even supported browser recognition");
+              assert.equal(await page.evaluate(() => (window as any).__recognitionStarts), 0, "demo never starts browser-vendor recognition");
+              await provider.selectOption("speaches");
+              await page.locator("#dictation-model").waitFor();
+              assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "Speaches hides the OpenAI key");
+              const after = await stored();
+              assert.deepEqual(after.dictation, before.dictation, "switching providers preserves self-hosted configuration");
+              for (const key of ["voiceLanguage", "voicePolishChat", "voicePolishTerminal"]) assert.equal(after[key], before[key], `provider switching preserves ${key}`);
+              if (process.env.UI_EVIDENCE_DIR && language === "en" && width === 390) {
+                await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "dictation-provider-settings.png") });
+              }
             }
             if (name === "Agent integrations") {
               // the demo's fixture, in herdr's order with the agents found on the PC first: a failed request
