@@ -228,6 +228,36 @@ export type { DictationConfigResponse, DictationModelsResponse, DictationTranscr
  *  warning says so). Refusals answer 401 `unauthorized` (403 `other_user` for another Tailscale
  *  login, when no token is configured); the upgrade is refused. Static files are always public.
  */
+/** GET /api/workspace/changes?pane_id=&mode=all|unstaged|staged -> GitChangesResponse.
+ * GET /api/workspace/diff?pane_id=&mode=&path= -> GitFileDiffResponse.
+ * Paths are repository-relative inventory paths; conflicts answer 409 git_conflict.
+ * Full text sides are bounded to 2 MiB each; binary sides retain names with empty contents.
+ * null means the side does not exist. Submodules answer 415 git_submodule.
+ * revision is an opaque snapshot fingerprint, not a commit ID; responses are no-store.
+ */
+export type GitDiffMode = "all" | "unstaged" | "staged";
+export interface GitChangedFile {
+  path: string;
+  old_path?: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "untracked" | "conflicted";
+  binary?: boolean;
+}
+export interface GitChangesResponse {
+  root: string;
+  revision: string;
+  files: GitChangedFile[];
+}
+export interface GitFileDiffResponse {
+  root: string;
+  revision: string;
+  path: string;
+  old_path?: string;
+  patch: string;
+  binary: boolean;
+  old_file: { name: string; contents: string } | null;
+  new_file: { name: string; contents: string } | null;
+}
+
 export interface ApiError {
   error: { code: string; message: string };
 }

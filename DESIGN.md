@@ -182,6 +182,20 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   `--text-dim`, except in Catppuccin, whose `--text-dim` (subtext1) is nearly `--text`: Mocha
   overlay2 `#9399b2` (5.8:1), Latte `#64677d` (subtext0 darkened to 4.9:1 on `--bg`).
 
+### Git Changes view
+
+- Files / Changes switches inside the Files dialog; the workspace/agent sidebar remains unchanged.
+  A wide dialog puts the changed-path tree beside the selected diff. At 768px and below, the tree
+  and the unified diff are separate steps, with a Changed files back button.
+- Pierre's shadow-root variables map to existing surfaces, text, fonts and focus tokens. Added
+  lines use `--status-done`, deleted lines `--status-blocked`, and renamed paths `--notice`;
+  Git letters and +/- indicators convey the same meaning without color. Tree icons use Lucide.
+- Comments open in the flow below the selected old/new line, using the shared comment field and
+  save/delete behavior. Saved cards always name the file, line range and side. Changed comparison
+  revisions move cards into Outdated comments, never onto unrelated source lines.
+- Saving adds a pending chat comment; it neither changes source files nor sends a message.
+  Dirty fields block close, comparison switches and refresh until saved or explicitly cleared.
+
 ### Rules
 - Amber is the one chrome color. Accent (selected, focused, informational) and primary (the user's
   action: Send, primary buttons) are both amber; in light, accent is the darker text-safe ochre and

@@ -1,0 +1,17 @@
+.files-dialog-changes {
+  width: min(96vw, 1280px);
+  max-height: calc(var(--app-height, 100dvh) - var(--space-8));
+}
+.files-dialog-changes .modal-body {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+.files-dialog .segmented {
+  margin-inline-start: auto;
+}
+@media (max-width: 768px) {
+  .files-dialog-changes {
+    width: 100%;
+  }
+}

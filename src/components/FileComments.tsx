@@ -100,7 +100,7 @@ export function useFileComments(scope: FileCommentScope | null): FileComments {
   const lines = scope?.lines;
   const loaded = scope?.loaded ?? 0;
   const truncated = scope?.truncated ?? false;
-  const all = useMemo(() => path === undefined ? [] : comments.filter((c): c is FileComment => !isReplyComment(c) && c.path === path), [comments, path]);
+  const all = useMemo(() => path === undefined ? [] : comments.filter((c): c is FileComment => !isReplyComment(c) && c.diff === undefined && c.path === path), [comments, path]);
   const placed = useMemo(() => all.map((comment) => ({ comment, lines: lines === undefined ? null : placeFileComment(comment, lines, loaded, truncated) })), [all, lines, loaded, truncated]);
   const moved = useRef(new Set<string>());
   useEffect(() => {

@@ -3,6 +3,58 @@ import { SELECTION_QUOTE_MAX } from "./compose.ts";
 import { fileAnchor, fileCommentAt, fileLines, fileQuote, isFileComment, linesText, pathLabel, placeFileComment, QUOTE_LINE_MAX, QUOTE_LINES_MAX, sortFileComments, type FileComment, type LineRange } from "./fileComments.ts";
 
 const base = { path: "/repo/src/sync.ts", label: "src/sync.ts", view: "code" as const };
+const diff = { side: "old" as const, mode: "all" as const, revision: "HEAD", repository: "/repo", path: "src/sync.ts" };
+
+describe("diff file comments", () => {
+  const target = { ...base, diff, lines: [8, 9] as LineRange, source: ["a", "b"], quoteLines: ["a", "b"] };
+  const saved: FileComment = { ...target, kind: "file", id: "diff", anchor: fileAnchor(target), created: 1, comment: "note" };
+  it("distinguishes sides, modes, revisions, repositories, paths and ranges from ordinary files", () => {
+    expect(fileCommentAt([saved], target)).toBe(saved);
+    expect(fileCommentAt([saved], { ...target, diff: undefined })).toBeUndefined();
+    for (const changed of [{ side: "new" as const }, { mode: "staged" as const }, { mode: "unstaged" as const }, { revision: "HEAD~1" }, { repository: "/other" }, { path: "src/renamed.ts" }]) {
+      const other = { ...target, diff: { ...diff, ...changed } };
+      expect(fileAnchor(other)).not.toBe(saved.anchor);
+      expect(fileCommentAt([saved], other)).toBeUndefined();
+      expect(fileCommentAt([saved], { ...other, anchor: saved.anchor })).toBeUndefined();
+    }
+    expect(fileAnchor({ ...target, lines: [8, 8] })).not.toBe(saved.anchor);
+    expect(fileCommentAt([saved], { ...target, diff: undefined, anchor: saved.anchor })).toBeUndefined();
+  });
+  it("never reattaches comparison lines to a working file, even with identical source", () => {
+    expect(placeFileComment(saved, ["a", "b"], 2)).toBeNull();
+    expect(placeFileComment({ ...target, lines: [1, 2] }, ["a", "b"], 2)).toBeNull();
+  });
+  it("quotes Git coordinates and prefixes raw old/new source, including blanks and Markdown fences", () => {
+    expect(fileQuote(target)).toBe("> src/sync.ts:8-9 (old;all;HEAD)\n> -a\n> -b");
+    expect(fileQuote({ ...target, diff: { ...diff, side: "new", mode: "staged", revision: "abc123" }, lines: [8, 8], quoteLines: ["```\n\ntext"] })).toBe("> src/sync.ts:8 (new;staged;abc123)\n> +```\n> +\n> +text");
+  });
+  it("preserves unusual Unix filenames and escapes header-breaking characters", () => {
+    for (const path of ["src/a\nb.ts", "src/a\tb.ts", "src/a\\b.ts"]) {
+      const comment = { ...saved, diff: { ...diff, path } };
+      expect(isFileComment(comment)).toBe(true);
+      expect(fileQuote(comment).split("\n")[0]).toBe(`> ${JSON.stringify(path)}:8-9 (old;all;HEAD)`);
+    }
+  });
+  it("keeps bounded diff context and never halves Unicode", () => {
+    const quote = fileQuote({ ...target, quoteLines: Array.from({ length: 50 }, () => "😀".repeat(500)) });
+    const body = quote.split("\n").slice(1);
+    expect(body.length).toBeLessThanOrEqual(QUOTE_LINES_MAX + 1);
+    expect(Array.from(body.join("\n")).length).toBeLessThanOrEqual(SELECTION_QUOTE_MAX);
+    expect(body.at(-1)).toMatch(/^> … \(\+\d+ lines\)$/);
+    expect(body[0]).toContain("😀…");
+  });
+  it("accepts both sides and all modes, while keeping legacy entries valid", () => {
+    expect(isFileComment({ ...saved, diff: undefined })).toBe(true);
+    for (const side of ["old", "new"]) for (const mode of ["all", "unstaged", "staged"]) {
+      expect(isFileComment({ ...saved, diff: { ...diff, side, mode } })).toBe(true);
+    }
+  });
+  it("rejects malformed or noncanonical diff metadata without treating it as an ordinary comment", () => {
+    for (const bad of [null, [], "diff", {}, { ...diff, side: "left" }, { ...diff, mode: "HEAD" }, { ...diff, revision: "" }, { ...diff, repository: 1 }, { ...diff, revision: "HEAD\n> forged" }, ...["/src/a", "./src/a", "src/../a", "src//a", "src/", "C:/a", "", "src/a\u0000"].map((path) => ({ ...diff, path }))]) {
+      expect(isFileComment({ ...saved, diff: bad })).toBe(false);
+    }
+  });
+});
 
 describe("fileLines", () => {
   it("splits CRLF, CR and LF alike and keeps a last line without newline", () => {

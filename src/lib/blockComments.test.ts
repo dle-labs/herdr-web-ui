@@ -1068,6 +1068,47 @@ describe("file comments in the store", () => {
   });
 });
 
+describe("diff comments in the existing pending workflow", () => {
+  const target: FileTarget = { ...fileTarget, diff: { side: "old", mode: "unstaged", revision: "HEAD", repository: "/repo", path: "src/sync.ts" } };
+  it("stores ordinary, old/new, mode and revision comments separately and reloads them", () => {
+    const { store, storage } = storeAt();
+    store.saveFile("o", fileTarget, "ordinary");
+    store.saveFile("o", target, "old");
+    store.saveFile("o", { ...target, diff: { ...target.diff!, side: "new" } }, "new");
+    store.saveFile("o", { ...target, diff: { ...target.diff!, mode: "staged" } }, "staged");
+    store.saveFile("o", { ...target, diff: { ...target.diff!, revision: "HEAD~1" } }, "revision");
+    expect(store.list("o")).toHaveLength(5);
+    expect(new BlockCommentStore(() => storage).list("o")).toEqual(store.list("o"));
+    store.saveFile("o", target, "edited");
+    expect(store.list("o")).toHaveLength(5);
+    expect(store.list("o").some((c) => c.comment === "old")).toBe(false);
+    store.saveFile("o", target, "");
+    expect(store.list("o")).toHaveLength(4);
+  });
+  it("never moves diff coordinates through the ordinary file move API", () => {
+    const { store, data } = storeAt();
+    store.saveFile("o", target, "old");
+    const before = data.get(KEY);
+    store.moveFile("o", store.list("o")[0]!.id, [10, 10]);
+    expect(data.get(KEY)).toBe(before);
+    expect(store.list("o")[0]).toMatchObject({ lines: [8, 8], diff: target.diff });
+  });
+  it("composes diff context with the note and draft only through the existing explicit outgoing workflow", () => {
+    const { store } = storeAt();
+    store.saveFile("o", target, "Check the removed condition.");
+    expect(outgoingMessage(store.list("o"), "Review").message).toBe("> src/sync.ts:8 (old;unstaged;HEAD)\n> -if (a < b) {\n\nCheck the removed condition.\n\nReview");
+    expect(outgoingMessage(store.list("o"), "", { agent: false }).sendable).toBe(false);
+    expect(outgoingMessage(store.list("o"), "1", { answering: true }).sent).toEqual([]);
+    expect(outgoingMessage(store.list("o"), "/compact").sent).toEqual([]);
+    expect(store.list("o")).toHaveLength(1);
+  });
+  it("drops malformed saved diff metadata but keeps legacy file comments", () => {
+    const { data, storage } = storeAt();
+    data.set(KEY, JSON.stringify({ version: 1, comments: [fileB, { ...fileComment(target, "broken", 3), diff: { ...target.diff, path: "../outside" } }] }));
+    expect(new BlockCommentStore(() => storage).list("o")).toEqual([fileB]);
+  });
+});
+
 describe("a file comment's point", () => {
   const point = { x: 0.4, y: 0.5 };
   it("is stored with a comment made by a click, and is no part of its anchor", () => {

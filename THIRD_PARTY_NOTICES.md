@@ -31,6 +31,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Pierre Diffs and Trees
+
+The Git Changes view uses [`@pierre/diffs`](https://diffs.com) and
+[`@pierre/trees`](https://trees.software), Copyright 2025 Pierre Computer Company,
+under the Apache License 2.0. Full license and attribution texts for these packages
+and their bundled runtime dependencies (including Shiki, jsdiff, Preact and the HTML
+utilities) ship in [`licenses/git-diff.txt`](licenses/git-diff.txt).
+
 ## LobeHub Icons
 
 The agent marks in `src/components/agentSvgMarks.ts` other than droid and maki, which the
