@@ -49,11 +49,14 @@ try {
   assert.ok(!(await page.locator("body").innerText()).includes("PRIVATE ERROR BODY"));
   await open("large"); await page.locator(".file-viewer-text").waitFor();
   assert.equal((await page.locator(".file-viewer-text").textContent())?.length, 256 * 1024);
-  await page.getByText("Only part of this file is shown. Download it to read the rest.", { exact: true }).waitFor();
+  // The rich viewer also repeats the warning for screen readers; assert its visible label.
+  const partialWarning = page.locator(".file-viewer-notice > span:not(.visually-hidden)");
+  await partialWarning.waitFor();
+  assert.equal(await partialWarning.textContent(), "Only part of this file is shown. Download it to read the rest.");
   if (process.env.UI_EVIDENCE_DIR) {
     mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByText("Only part of this file is shown. Download it to read the rest.", { exact: true }).scrollIntoViewIfNeeded();
+    await partialWarning.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "text-preview-mobile.png") });
   }
   for (const path of ["headers", "body"]) {
