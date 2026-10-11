@@ -177,6 +177,7 @@ async function checkLayout(): Promise<void> {
       await page.goto(`http://127.0.0.1:${server.port}/?kind=text`);
       await page.locator(".file-viewer-text").waitFor();
       await page.getByRole("button", { name: "Copy file", exact: true }).waitFor();
+      await sheetsSettled(page);
       const dialog = await page.locator(".file-viewer").boundingBox();
       assert.ok(dialog, "text: dialog is laid out");
       const buttons = page.locator(".file-viewer-actions .icon-button");

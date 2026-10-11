@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { chromium } from "playwright-core";
 import type {} from "./chat-history-fixture.tsx";
 import type { DictationConfigResponse } from "../shared/protocol.ts";
+import { VOICE_DEFAULTS, type VoiceStatus } from "../shared/voice.ts";
 import { parseAgyTranscript } from "../server/agy.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-history-browser-"));
@@ -22,6 +23,7 @@ try {
     if (path.endsWith("/pane/commands")) return Response.json({ commands: [] });
     if (path.endsWith("/pane/omo-tasks")) return Response.json({ tasks: [], runs: [] });
     // Capture is unavailable in this transcript-only fixture; no private speech requests.
+    if (path === "/api/voice") return Response.json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus);
     if (path === "/api/dictation/config") return Response.json({ version: 2, enabled: false, generation: "chat-history-fixture", default_model: "test/installed-english", modes: [], max_seconds: 120, max_bytes: 10 * 1024 * 1024 } satisfies DictationConfigResponse);
     return path === "/" ? new Response('<html><head><link rel="stylesheet" href="/chat-history-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-history-fixture.js"></script></body></html>', { headers: { "Content-Type": "text/html" } }) : new Response(Bun.file(join(root, path.slice(1))));
   } });
