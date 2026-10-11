@@ -18,6 +18,7 @@ import { turnSkills } from "../lib/skillActivity.ts";
 import { ApiError } from "../lib/api.ts";
 import { copyText } from "../lib/clipboard.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
+import { DelegationActivity } from "./DelegationActivity.tsx";
 import { toTranscriptMessages, type TranscriptMessage } from "../lib/transcript.ts";
 import { isLiveWorkTurn, isWaitingWorkTurn, formatWorkDuration, splitTurn, workFailed, workStartsOpen, workSummary, type ToolPart as ToolPartType } from "../lib/workBlocks.ts";
 import { phaseRows, planRows, taskRows, todoRows, type ChecklistRow } from "../lib/checklist.ts";
@@ -517,6 +518,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ind
       <div className="chat-compact-text"><Markdown>{compact.text}</Markdown></div>
     </details>;
   }
+  if (turn.parts.length > 0 && turn.parts.every((part) => part.kind === "delegation")) return <DelegationActivity parts={turn.parts} />;
   // OmO's background tasks reported back: a card of what ended, each result on request
   const ended = turn.parts.find((part): part is Extract<ConversationPart, { kind: "task_result" }> => part.kind === "task_result");
   if (ended !== undefined) {
@@ -544,6 +546,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ind
         <div className="chat-turn-meta">{time !== null && <time dateTime={turn.ts ?? undefined}>{time}</time>}{text.length > 0 && <CopyButton text={text} label={t("Copy message")} onResult={copied} />}</div>
       </div>
       {copyError}
+      <DelegationActivity parts={turn.parts} />
       {/* the skill this message invoked (omp, omo, pi): the runtime recorded its instructions with it */}
       <SkillActivityList parts={turn.parts} />
     </article>;
@@ -551,6 +554,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ind
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
   return <article className="chat-turn chat-turn-agent">
+    <DelegationActivity parts={turn.parts} />
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}
     {work.length > 0 && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, turn.parts)} showThinking={showThinking} />}

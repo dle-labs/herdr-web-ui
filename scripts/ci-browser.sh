@@ -61,6 +61,8 @@ run_script scripts/workspace-rows-regression.ts
 run_script scripts/pending-pane-switch-regression.ts
 run_script scripts/terminal-dispose-browser-qa.ts
 run_script scripts/dictation-regression.ts
+run_script scripts/rpiv-questionnaire-regression.ts
+run_script scripts/pi-delegation-regression.ts
 run_script scripts/sticky-modifiers-regression.ts
 run_script scripts/terminal-arrows-clicks-regression.ts
 run_script scripts/terminal-viewport-regression.ts

@@ -8,6 +8,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- Recognize RPIV questionnaires and provide an experimental opt-in adapter for version 2.12.0 on Linux: verified single-choice, checkbox and one-line custom answers. Unpatched or unverified states remain terminal-only; installing the adapter is a separate manual step.
+- Show recorded Pi subagent and workflow evidence outside folded chat work, with expandable results and explicit last-recorded status rather than inferred live progress.
 - Undo the last inserted dictation segment without clearing earlier takes or unrelated draft text.
 - Native conversation transcripts for Hermes Agent: turns, thinking blocks, and tool calls are read directly from its SQLite session store. ([#604](https://github.com/devswha/herdr-web-ui/pull/604) by @RikiSanjayaa)
   This server change needs a `REMOTE_BUNDLE_VERSION` bump at release so remote PCs can read Hermes transcripts.

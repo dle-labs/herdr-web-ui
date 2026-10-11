@@ -1,0 +1,148 @@
+--- a/ask-user-question.ts
++++ b/ask-user-question.ts
+@@ -1,3 +1,4 @@
++import { createBridge } from "./herdr-bridge.js";
+ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+ import { isKeyRelease, isKeyRepeat, matchesKey, type OverlayHandle, type TUI } from "@earendil-works/pi-tui";
+ import {
+@@ -192,6 +193,7 @@
+ 	canReopenWhileHidden: boolean;
+ 	sessionRef: SessionRef;
+ 	Session: SessionModule["QuestionnaireSession"];
++	bridge: ReturnType<typeof createBridge>;
+ }) {
+ 	const { ctx, typed, itemsByTab, collapseKey, canReopenWhileHidden, sessionRef, Session } = config;
+ 	return (
+@@ -228,6 +230,8 @@
+ 			canReopenWhileHidden,
+ 		});
+ 		sessionRef.current = session;
++		config.bridge.mount(() => session.bridgeSnapshot());
++		session.setBridgePublisher(config.bridge.publish);
+ 		return session.component;
+ 	};
+ }
+@@ -366,6 +370,8 @@
+ 			// otherwise collapse falls back to the visible one-line row.
+ 			const canReopenWhileHidden = removeOverlayInputListener !== undefined;
+ 
++			const bridge = createBridge(ctx.sessionManager.getSessionFile(), _toolCallId);
++			const removeBridgeShutdown = pi.on("session_shutdown", () => bridge.close());
+ 			emitAskUserBlockedEvent(pi, true);
+ 			try {
+ 				emitTerminalAttention();
+@@ -378,6 +384,7 @@
+ 						canReopenWhileHidden,
+ 						sessionRef,
+ 						Session: QuestionnaireSession,
++						bridge,
+ 					}),
+ 					{
+ 						overlay: true,
+@@ -400,6 +407,8 @@
+ 
+ 				return buildQuestionnaireResponse(result, typed);
+ 			} finally {
++				bridge.close();
++				removeBridgeShutdown();
+ 				removeOverlayInputListener?.();
+ 				emitAskUserBlockedEvent(pi, false);
+ 			}
+--- a/state/questionnaire-session.ts
++++ b/state/questionnaire-session.ts
+@@ -1,3 +1,4 @@
++import { RPIV_KEYS, type BridgeView } from "../herdr-bridge.js";
+ import type { Theme } from "@earendil-works/pi-coding-agent";
+ import type { Editor, OverlayHandle, TUI } from "@earendil-works/pi-tui";
+ import { COLLAPSE_KEY_OFF, formatKeySpecForDisplay } from "../config.js";
+@@ -62,6 +63,7 @@
+  */
+ export class QuestionnaireSession {
+ 	private state: QuestionnaireState = initialState();
++	private bridgeEnded = false;
+ 
+ 	private readonly questions: readonly QuestionData[];
+ 	private readonly isMulti: boolean;
+@@ -115,12 +117,13 @@
+ 
+ 		this.component = this.assembleComponent(built, config.theme);
+ 		this.viewAdapter.apply(this.state);
++		this.bridgePublish?.();
+ 	}
+ 
+ 	private assembleComponent(built: QuestionnaireBuilt, theme: Theme): QuestionnaireSessionComponent {
+ 		const collapsedRender = this.buildCollapsedRender(theme);
+ 		return {
+-			render: (width) => (this.state.collapsed ? collapsedRender(width) : built.render(width)),
++			render: (width) => { const lines = this.state.collapsed ? collapsedRender(width) : built.render(width); this.bridgePublish?.(); return lines; },
+ 			invalidate: built.invalidate,
+ 			handleInput: (data) => this.dispatch(data),
+ 		};
+@@ -163,6 +166,7 @@
+ 		for (const effect of result.effects) this.runEffect(effect);
+ 		this.state = this.mirrorNotesDraft(this.state);
+ 		this.viewAdapter.apply(this.state);
++		this.bridgePublish?.();
+ 	}
+ 
+ 	private mirrorNotesDraft(s: QuestionnaireState): QuestionnaireState {
+@@ -201,6 +205,7 @@
+ 				if (this.canReopenWhileHidden) this.overlayHandle?.setHidden(effect.hidden);
+ 				return;
+ 			case "done":
++				this.bridgeEnded = true;
+ 				this.done(effect.result);
+ 				return;
+ 		}
+@@ -210,6 +215,7 @@
+ 	private openInputEditorAsync(value: string): void {
+ 		if (this.inputEditorOpen) return;
+ 		this.inputEditorOpen = true;
++		this.bridgePublish?.();
+ 		void this.editInput(value).then(
+ 			(edited) => {
+ 				this.inputEditorOpen = false;
+@@ -232,6 +238,35 @@
+ 		if (!this.state.inputMode) return;
+ 		this.inlineInput.handleInput(data);
+ 		this.viewAdapter.apply(this.state);
++		this.bridgePublish?.();
++	}
++
++	private bridgePublish?: () => void;
++	setBridgePublisher(publish: () => void): void { this.bridgePublish = publish; }
++
++	/** Snapshot the same state and LIVE router manager used by dispatch; never the footer. */
++	bridgeSnapshot(): BridgeView {
++		const s = this.state;
++		const runtime = this.runtime();
++		const q = this.questions[s.currentTab];
++		const actions: BridgeView["actions"] = {};
++		for (const [key, bytes] of Object.entries(RPIV_KEYS)) {
++			const action = routeKey(bytes, s, runtime);
++			actions[key] = { kind: action.kind, ...("nextIndex" in action ? { nextIndex: action.nextIndex } : {}) };
++		}
++		return {
++			mounted: !this.bridgeEnded && this.overlayHandle !== undefined,
++			focused: this.overlayHandle?.isFocused() === true,
++			hidden: this.overlayHandle?.isHidden() !== false,
++			externalEditor: this.inputEditorOpen,
++			tab: s.currentTab, count: this.questions.length, cursor: s.optionIndex,
++			inputMode: s.inputMode, notes: s.notesVisible, collapsed: s.collapsed,
++			question: q?.question ?? "", header: q?.header ?? "", multi: q?.multiSelect === true,
++			options: q?.options.map(o => ({ label: o.label, description: o.description, ...(o.preview ? { preview: o.preview } : {}) })) ?? [],
++			rows: runtime.items.map(o => ({ kind: o.kind, label: o.label })),
++			checked: [...s.multiSelectChecked].sort((a, b) => a - b), input: runtime.inputBuffer,
++			actions,
++		};
+ 	}
+ 
+ 	private runtime(): QuestionnaireRuntime {
+@@ -269,6 +304,7 @@
+ 	 */
+ 	setOverlayHandle(handle: OverlayHandle): void {
+ 		this.overlayHandle = handle;
++		this.bridgePublish?.();
+ 	}
+ 
+ 	/**

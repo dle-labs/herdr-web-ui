@@ -9,6 +9,13 @@
  */
 export const JA: Record<string, string> = {
   "Chat read timed out.": "会話の読み込みがタイムアウトしました。",
+  "Delegation evidence": "委任の記録",
+  "Recorded: {status}": "記録された状態: {status}",
+  "Unknown": "不明",
+  "Last recorded evidence, not live status. A parent turn ending does not mean this task ended.": "ライブ状態ではなく最後の記録です。親のターンの終了は、このタスクの終了を意味しません。",
+  "Recorded duration: {ms} ms": "記録された所要時間: {ms} ms",
+  "Original notification": "元の通知",
+  "Answer this questionnaire in the terminal. Its live keybindings cannot be verified here.": "この質問にはターミナルで回答してください。現在のキーバインドをここでは確認できません。",
   "Find in terminal": "ターミナル内を検索",
   "Previous match": "前の一致",
   "Next match": "次の一致",

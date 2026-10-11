@@ -3,6 +3,11 @@ import { turnSkills } from "./skillActivity.ts";
 import { isTodoTool } from "./todos.ts";
 import { t } from "./i18n.ts";
 
+/** Selected evidence stays visible even if every generic tool row is folded. */
+export function turnDelegations(parts: readonly ConversationPart[]) {
+  return parts.flatMap((part) => part.kind === "delegation" ? part.tasks : part.kind === "tool" && part.delegation ? [part.delegation] : []);
+}
+
 export type ToolPart = Extract<ConversationPart, { kind: "tool" }>;
 export type ThinkingPart = Extract<ConversationPart, { kind: "thinking" }>;
 export type TextPart = Extract<ConversationPart, { kind: "text" }>;
@@ -21,11 +26,11 @@ export function splitTurn(parts: ConversationPart[]): SplitTurn {
   let lastAction = -1;
   for (let index = 0; index < parts.length; index += 1) {
     const part = parts[index];
-    if (part?.kind !== "text" || part.phase === "commentary") lastAction = index;
+    if (part?.kind !== "delegation" && (part?.kind !== "text" || part.phase === "commentary")) lastAction = index;
   }
   const isProse = (part: ConversationPart): part is TextPart => part.kind === "text" && part.text.trim().length > 0;
   return {
-    work: parts.filter((part, index) => part.kind !== "text" || (isProse(part) && part.phase !== "final_answer" && index <= lastAction)),
+    work: parts.filter((part, index) => part.kind !== "delegation" && (part.kind !== "text" || (isProse(part) && part.phase !== "final_answer" && index <= lastAction))),
     answer: parts.filter((part, index): part is TextPart => isProse(part) && (part.phase === "final_answer" || index > lastAction)),
   };
 }
