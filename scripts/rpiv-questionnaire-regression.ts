@@ -21,6 +21,7 @@ try {
     window.rpivAnswers = [];
     const scenario = new URLSearchParams(location.search).get("rpiv") ?? "fallback";
     let prompt = scenario === "fallback" ? ${JSON.stringify(RPIV_PROMPT)} : { ...${JSON.stringify(RPIV_LIVE_PROMPT)}, multi_select: ["multi", "empty"].includes(scenario), ...(["multi", "empty"].includes(scenario) ? {} : { checked_option_indices: [] }) };
+    window.rpivEnableLive = () => { prompt = { ...${JSON.stringify(RPIV_LIVE_PROMPT)}, multi_select: false, checked_option_indices: [] }; };
     window.fetch = (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
       if (url.pathname === "/api/pane/prompt" && url.searchParams.get("pane_id") === ${JSON.stringify(panes.web)}) {
@@ -50,7 +51,10 @@ try {
   for (const viewport of [{ width: 1280, height: 800 }, { width: 390, height: 844 }]) {
     const context = await browser.newContext({ viewport, locale: "en-US", hasTouch: viewport.width < 500, isMobile: viewport.width < 500 });
     try {
-      await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
+      await context.addInitScript((paneId) => {
+        localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", enterSends: true }));
+        localStorage.setItem(`herdr-web-ui:composer-draft:${paneId}`, "A draft for later");
+      }, panes.web);
       const page = await context.newPage();
       const capture = async (name: string) => {
         if (!process.env.UI_EVIDENCE_DIR) return;
@@ -63,7 +67,8 @@ try {
       await page.goto(base);
       const card = page.locator(".prompt-card");
       await card.getByText("Answer this questionnaire in the terminal. Its live keybindings cannot be verified here.").waitFor();
-      assert.equal(await card.locator("button, input, textarea").count(), 0, "no guessed answer or cancel actions");
+      assert.equal(await card.locator("button:not(.prompt-card-terminal), input, textarea").count(), 0, "no guessed answer or cancel actions; navigation is not an answer");
+      assert.equal(await card.getByRole("button", { name: "Answer in terminal", exact: true }).count(), 1);
       assert.match(await card.innerText(), /Which store should hold the counters/);
       assert.equal(await card.locator("pre").count(), 1, "screen text is literal, never HTML or executable previews");
       assert.ok(await card.evaluate((node) => {
@@ -71,7 +76,40 @@ try {
         return box.width > 0 && box.left >= 0 && box.right <= window.innerWidth + 1;
       }), "card fits desktop and phone width");
       assert.deepEqual(await page.evaluate(() => (window as unknown as { rpivAnswers: unknown[] }).rpivAnswers), []);
+      const composer = page.locator(".composer");
+      const draft = composer.getByRole("textbox", { name: "Message", exact: true });
+      assert.equal(await draft.inputValue(), "A draft for later", "the fallback retains the existing draft");
+      assert.equal(await draft.getAttribute("placeholder"), "Draft for later…", "no invitation to type numbers or a custom answer");
+      await composer.getByText("Answer in the terminal. Your draft stays here and will not be sent.", { exact: false }).waitFor();
+      await draft.fill("1");
+      await draft.press("Enter");
+      assert.equal(await composer.getByRole("button", { name: "Send message", exact: true }).isDisabled(), true);
+      // A disabled button's DOM click must not call Send either.
+      await composer.getByRole("button", { name: "Send message", exact: true }).evaluate((button) => (button as HTMLButtonElement).click());
+      assert.equal(await draft.inputValue(), "1", "attempted answer stays an unsent draft");
+      assert.equal(await composer.getByRole("alert").count(), 0, "no incorrect numeric-choice validation");
       await capture("fallback");
+      for (const source of [card, composer]) {
+        await source.getByRole("button", { name: "Answer in terminal", exact: true }).click();
+        await page.locator(`.terminal-stack[data-pane-owner="${panes.web}"]:not(.is-chat)`).waitFor();
+        await page.locator(".view-switch button").first().click();
+        await draft.waitFor();
+        assert.equal(await draft.inputValue(), "1", "switching lenses preserves the draft");
+        await card.getByRole("button", { name: "Answer in terminal", exact: true }).waitFor();
+      }
+      assert.deepEqual(await page.evaluate(() => (window as unknown as { rpivAnswers: unknown[] }).rpivAnswers), [], "navigation and attempted typing send zero answers");
+      // Enabling authoritative state in the same pane must release the fallback guard,
+      // preserve the draft, and accept the very same numeric reply without a reload.
+      await page.evaluate(() => (window as unknown as { rpivEnableLive(): void }).rpivEnableLive());
+      await card.getByRole("button", { name: /1\. Memory/ }).waitFor();
+      assert.equal(await draft.inputValue(), "1", "actionable state preserves the prior unsent reply");
+      assert.equal(await composer.getByRole("button", { name: "Send message", exact: true }).isEnabled(), true);
+      await draft.press("Enter");
+      await page.waitForFunction(() => (window as unknown as { rpivAnswers: unknown[] }).rpivAnswers.length === 1);
+      assert.deepEqual(await page.evaluate(() => (window as unknown as { rpivAnswers: unknown[] }).rpivAnswers), [{ pane_id: panes.web, prompt_id: RPIV_LIVE_PROMPT.id, option_index: 0 }]);
+      await page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>(".composer textarea")?.value === "");
+      assert.equal(await composer.getByRole("alert").count(), 0, "valid typed answers do not retain fallback errors");
+      await capture("typed-single");
       for (const scenario of ["single", "multi", "empty", "custom"]) {
         await page.goto(`${base}&rpiv=${scenario}`);
         await card.getByText("Which store should hold the counters?").waitFor();

@@ -2,6 +2,10 @@
 
 This is a reviewable patch for **@juicesharp/rpiv-ask-user-question 2.12.0**, not a replacement package or an automatic installer. The WebUI alone does not patch Pi. Unpatched, unsupported or unverified questionnaires remain terminal-only.
 
+## DLE Labs fork
+
+The adapter is also packaged in [dle-labs/rpiv-mono](https://github.com/dle-labs/rpiv-mono) as `@dle-labs/rpiv`; see its [installation and rollback instructions](https://github.com/dle-labs/rpiv-mono/blob/main/FORK.md). Installing that repository loads only the patched questionnaire, not the rest of the RPIV suite or RPIV Voice. Replace the upstream questionnaire package declaration rather than enabling both. Existing Pi sessions still need a reload or restart after active tool calls finish.
+
 ## Manual installation, with separate approval
 
 1. Stop the Pi sessions you intend to change. Keep the original package intact. Obtain a separate copy of exactly version 2.12.0 and check its package.json and license.
