@@ -1,5 +1,5 @@
 import { DICTATION_FRAME_HEADER_BYTES, DICTATION_FRAME_SAMPLES, DICTATION_MAX_BYTES, DICTATION_MAX_SECONDS, DICTATION_VERSION, type DictationServerMessage } from "../../shared/dictation.ts";
-import { DictationError, safeDictationError, validateDictationSelection, type DictationPolicy } from "../dictation.ts";
+import { dictationLanguage, DictationError, safeDictationError, validateDictationSelection, type DictationPolicy } from "../dictation.ts";
 import { DictationCoordinator } from "./coordinator.ts";
 import type { createDictationTransport } from "./speaches-http.ts";
 
@@ -33,8 +33,9 @@ export class DictationSocket {
         if (this.coordinator || message.version !== DICTATION_VERSION) throw new DictationError("format", "Invalid dictation start version or state");
         validateDictationSelection(this.policy, message.model, message.generation);
         const model = message.model;
+        const language = dictationLanguage(message.language);
         clearTimeout(this.timer);
-        this.coordinator = new DictationCoordinator({ transcribe: (wav, signal) => this.transport.transcribe(wav, model, signal), emit: (event) => {
+        this.coordinator = new DictationCoordinator({ transcribe: (wav, signal) => this.transport.transcribe(wav, model, signal, language), emit: (event) => {
           if (["finished", "cancelled", "error"].includes(event.type)) this.ended = true;
           this.emit(event);
         } });

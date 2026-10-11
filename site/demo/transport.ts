@@ -1080,6 +1080,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     return json({ workspace_id: id, pane_id: pane.pane_id, agent_started: agent !== null } satisfies WorkspaceCreated);
   }
   // Dictation stays disabled even with remembered consent; the demo never relays audio.
+  if (path === "/api/dictation/config" && method === "PUT") return error("not_configured", "the demo saves no speech server configuration", 409);
   if (path === "/api/dictation/config") return json({ version: 2, enabled: false, generation: "demo", default_model: DICTATION_DEFAULT_MODEL, modes: [], max_seconds: DICTATION_MAX_SECONDS, max_bytes: DICTATION_MAX_BYTES } satisfies DictationConfigResponse, 200, { "cache-control": "no-store" });
   if (path.startsWith("/api/dictation/")) return error("not_configured", "dictation is unavailable in the demo", 409);
   // Legacy compatibility only; no speech transport is available in the demo.

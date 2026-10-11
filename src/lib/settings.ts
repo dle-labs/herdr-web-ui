@@ -9,7 +9,7 @@ import { REPORTED_SETTINGS, type ReportedSetting } from "../../shared/telemetry.
 import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { blockComments } from "./blockComments.ts";
 import { invalidateDictation } from "./voice.ts";
-import { DEFAULT_DICTATION_CONFIG, validDictationModel, type DictationConfig } from "./voiceTransport.ts";
+import { DEFAULT_DICTATION_CONFIG, validDictationLanguage, validDictationModel, type DictationConfig } from "./voiceTransport.ts";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
@@ -260,7 +260,8 @@ export function sanitizeDictation(value: unknown): DictationConfig {
     version: 2,
     model: validDictationModel(model) ? model : DEFAULT_DICTATION_CONFIG.model,
     mode: current && validMode ? record["mode"] as DictationConfig["mode"] : "recording",
-    activated: current && validMode && record["activated"] === true && validDictationModel(model),
+    activated: current && validMode && record["activated"] === true && validDictationModel(model) && (record["language"] === undefined || validDictationLanguage(record["language"])),
+    ...(current && validDictationLanguage(record["language"]) ? { language: record["language"] } : {}),
   };
 }
 
@@ -519,7 +520,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   });
   useLayoutEffect(() => blockComments.setEnabled(settings.comments), [settings.comments]);
   // Invalidate committed snapshots too, including mode changes and future non-setter updates.
-  useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.voiceProvider, settings.voiceLanguage, settings.voicePolishChat, settings.voicePolishTerminal, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated]);
+  useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.voiceProvider, settings.voiceLanguage, settings.voicePolishChat, settings.voicePolishTerminal, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated, settings.dictation.language]);
   const [systemDark, setSystemDark] = useState(() => resolveTheme("system") === "dark");
 
   useEffect(() => {

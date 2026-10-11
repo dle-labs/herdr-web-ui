@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { configAllowed, DEFAULT_DICTATION_CONFIG, discoverDictationModels, transcribeDictation, validDictationModel } from "./voiceTransport.ts";
+import { configAllowed, DEFAULT_DICTATION_CONFIG, discoverDictationModels, loadDictationPolicy, saveDictationBackend, transcribeDictation, validDictationModel } from "./voiceTransport.ts";
 import type { DictationConfigResponse } from "../../shared/dictation.ts";
 const originalFetch = globalThis.fetch;
 afterAll(() => { globalThis.fetch = originalFetch; });
@@ -15,6 +15,10 @@ describe("same-origin dictation transport", () => {
   it("requires new consent, model syntax and advertised mode", async () => {
     expect(configAllowed(DEFAULT_DICTATION_CONFIG, policy)).toBe(false);
     expect(configAllowed(config, policy)).toBe(true);
+    expect(configAllowed({ ...config, language: "ja" }, policy)).toBe(false);
+    expect(configAllowed({ ...config, language: "ja" }, { ...policy, language_selection: true })).toBe(true);
+    expect(configAllowed({ ...config, language: "auto" }, { ...policy, language_selection: true })).toBe(true);
+    expect(configAllowed({ ...config, language: "en-US" }, { ...policy, language_selection: true })).toBe(false);
     expect(configAllowed({ ...config, mode: "live" }, { ...policy, modes: ["recording"] })).toBe(false);
     for (const model of ["", " model", "../model", "a?b", "a\nb", "https://host", "x".repeat(513)]) expect(validDictationModel(model)).toBe(false);
     const count = calls.length;
@@ -58,5 +62,45 @@ describe("same-origin dictation transport", () => {
     expect(calls.filter((call) => call.url === "/api/dictation/config")).toHaveLength(1);
     expect(configAllowed(config, { ...policy, enabled: false })).toBe(false);
     expect(calls.every((call) => call.url.startsWith("/api/dictation/"))).toBe(true);
+  });
+  it("refreshes cached policy only after an explicit successful backend save", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const events = new EventTarget();
+    Object.defineProperty(globalThis, "window", { value: events, configurable: true });
+    let changed = 0;
+    events.addEventListener("herdr-dictation-policy-changed", () => changed++);
+    const next = { ...policy, generation: "saved-generation", base_url: "https://speech.example/v1", source: "file" as const, language_selection: true };
+    const previous = globalThis.fetch;
+    let saved = false;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("/api/dictation/config");
+      if (init?.method === "PUT") {
+        expect(init.headers).toMatchObject({ "x-herdr-dictation": "1" });
+        expect(JSON.parse(init.body as string)).toEqual({ base_url: next.base_url });
+        if (!saved) return Response.json({ error: { code: "format" } }, { status: 400 });
+      }
+      return Response.json(next);
+    }) as typeof fetch;
+    try {
+      await expect(saveDictationBackend({ base_url: next.base_url }, new AbortController().signal)).rejects.toMatchObject({ code: "format" });
+      expect((await loadDictationPolicy())?.generation).toBe(policy.generation);
+      expect(changed).toBe(0);
+      saved = true;
+      expect(await saveDictationBackend({ base_url: next.base_url }, new AbortController().signal)).toEqual(next);
+      expect((await loadDictationPolicy())?.generation).toBe(next.generation);
+      expect(changed).toBe(1);
+      for (const language of ["ja", "auto"]) {
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+          expect(String(input)).toBe("/api/dictation/transcribe");
+          expect((init?.body as FormData).get("language")).toBe(language);
+          return Response.json({ text: "transcript" });
+        }) as typeof fetch;
+        await transcribeDictation({ ...config, language }, new Blob(["audio"], { type: "audio/webm" }), new AbortController().signal);
+      }
+    } finally {
+      globalThis.fetch = previous;
+      if (descriptor) Object.defineProperty(globalThis, "window", descriptor);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
   });
 });

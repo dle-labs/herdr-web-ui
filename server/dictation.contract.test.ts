@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "./index.ts";
@@ -14,14 +14,15 @@ async function deadline<T>(promise: Promise<T>): Promise<T> {
   try { return await Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("dictation contract deadline")), 3000); })]); }
   finally { clearTimeout(timer!); }
 }
-function fixture(transport: typeof fetch = (async () => Response.json({ text: "hello" })) as unknown as typeof fetch) {
+function fixture(transport: typeof fetch = (async () => Response.json({ text: "hello" })) as unknown as typeof fetch, editable = false) {
   const stateDir = mkdtempSync(join(tmpdir(), "herdr-dictation-contract-"));
+  if (editable) writeFileSync(join(stateDir, "dictation.json"), JSON.stringify({ base_url: "https://speech.example/v1" }), { mode: 0o600 });
   const store = new DeviceStore(stateDir);
   const drive = store.pair(store.startPairing().code, "Drive", "drive")!;
   const watch = store.pair(store.startPairing().code, "Watch", "watch")!;
-  const app = createServer({ port: 0, stateDir, token: "dictation-contract", tailscaleOwner: null, machines: false, dictationBaseUrl: "https://speech.example/v1", dictationFetch: transport });
+  const app = createServer({ port: 0, stateDir, token: "dictation-contract", tailscaleOwner: null, machines: false, dictationBaseUrl: editable ? undefined : "https://speech.example/v1", dictationFetch: transport });
   const base = `http://127.0.0.1:${app.port}`;
-  return { app, base, drive, watch, close() { app.stop(); rmSync(stateDir, { recursive: true, force: true }); } };
+  return { app, base, stateDir, drive, watch, close() { app.stop(); rmSync(stateDir, { recursive: true, force: true }); } };
 }
 async function config(base: string) { return await (await fetch(`${base}/api/dictation/config`, { headers })).json() as DictationConfigResponse; }
 function recording(generation: string, size = 10) {
@@ -46,7 +47,7 @@ describe("dictation relay HTTP and dedicated WS", () => {
   it("reuses authentication, same-origin and write permission on every route including upgrade", async () => {
     const f = fixture();
     try {
-      for (const [path, method] of [["config", "GET"], ["models", "GET"], ["transcribe", "POST"], ["ws", "GET"]]) {
+      for (const [path, method] of [["config", "GET"], ["config", "PUT"], ["models", "GET"], ["transcribe", "POST"], ["ws", "GET"]]) {
         const url = `${f.base}/api/dictation/${path}`;
         expect((await fetch(url, { method })).status).toBe(401);
         expect((await fetch(url, { method, headers: { ...headers, origin: "https://evil.example" } })).status).toBe(403);
@@ -54,6 +55,56 @@ describe("dictation relay HTTP and dedicated WS", () => {
       }
       expect((await config(f.base)).enabled).toBe(true);
     } finally { f.close(); }
+  });
+  it("guards edits, locks explicit overrides, persists changes and preserves valid settings on bad input", async () => {
+    const put = (base: string, baseUrl: unknown, custom = { ...headers, origin: base, "x-herdr-dictation": "1" }) => fetch(`${base}/api/dictation/config`, { method: "PUT", headers: custom, body: JSON.stringify({ base_url: baseUrl }) });
+    const locked = fixture();
+    try {
+      expect((await config(locked.base)).source).toBe("env");
+      const response = await put(locked.base, ""); expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: { code: "config_locked" } });
+    } finally { locked.close(); }
+    const old = process.env.HERDR_WEB_DICTATION_BASE_URL; delete process.env.HERDR_WEB_DICTATION_BASE_URL;
+    const f = fixture(undefined, true);
+    try {
+      expect((await config(f.base)).source).toBe("file");
+      expect((await put(f.base, "", { ...headers, origin: f.base, "x-herdr-dictation": "0" })).status).toBe(403);
+      for (const value of ["http://insecure.example", "https://u:p@private.example", "https://speech.example/path", null]) expect((await put(f.base, value)).status).toBe(400);
+      expect((await config(f.base)).base_url).toBe("https://speech.example/v1");
+      const changed = await put(f.base, "https://new.example"); expect(changed.status).toBe(200);
+      expect(changed.headers.get("cache-control")).toBe("no-store");
+      const settings = await changed.json() as DictationConfigResponse;
+      expect(settings).toMatchObject({ enabled: true, base_url: "https://new.example/v1", source: "file" });
+      expect(JSON.parse(readFileSync(join(f.stateDir, "dictation.json"), "utf8"))).toEqual({ base_url: settings.base_url });
+      const stale = await fetch(`${f.base}/api/dictation/transcribe`, { method: "POST", headers, body: recording("stale") }); expect(stale.status).toBe(409);
+      expect((await put(f.base, "")).status).toBe(200);
+      expect(await config(f.base)).toMatchObject({ enabled: false, base_url: "", source: "file" });
+      expect((await fetch(`${f.base}/api/dictation/models`, { headers })).status).toBe(503);
+      expect((await put(f.base, "https://speech.example")).status).toBe(200);
+      expect((await config(f.base)).enabled).toBe(true);
+    } finally { f.close(); if (old !== undefined) process.env.HERDR_WEB_DICTATION_BASE_URL = old; }
+  });
+  it("cancels requests and closes sockets before replacing the destination", async () => {
+    const old = process.env.HERDR_WEB_DICTATION_BASE_URL; delete process.env.HERDR_WEB_DICTATION_BASE_URL;
+    const entered = deferred<AbortSignal>(); const response = deferred<Response>(); const calls: string[] = [];
+    const f = fixture((async (url: unknown, init?: RequestInit) => {
+      calls.push(String(url));
+      if (String(url).startsWith("https://speech.example")) { entered.resolve(init!.signal!); return response.promise; }
+      return Response.json({ data: [{ id: "new/model" }] });
+    }) as unknown as typeof fetch, true);
+    let client: Awaited<ReturnType<typeof socket>> | undefined;
+    try {
+      client = await socket(f.base); const settings = await config(f.base);
+      client.ws.send(JSON.stringify({ type: "start", version: 2, model: "model", generation: settings.generation })); await client.next();
+      const closed = new Promise<number>((resolve) => client!.ws.addEventListener("close", (event) => resolve(event.code), { once: true }));
+      const pending = fetch(`${f.base}/api/dictation/transcribe`, { method: "POST", headers, body: recording(settings.generation) });
+      const signal = await deadline(entered.promise);
+      expect((await fetch(`${f.base}/api/dictation/config`, { method: "PUT", headers: { ...headers, origin: f.base, "x-herdr-dictation": "1" }, body: JSON.stringify({ base_url: "https://new.example" }) })).status).toBe(200);
+      expect(signal.aborted).toBe(true); expect(await deadline(closed)).toBe(1012);
+      response.resolve(Response.json({ text: "late private text" })); expect((await deadline(pending)).status).not.toBe(200);
+      expect(await (await fetch(`${f.base}/api/dictation/models`, { headers })).json()).toEqual({ models: ["new/model"] });
+      expect(calls).toEqual(["https://speech.example/v1/audio/transcriptions", "https://new.example/v1/models?task=automatic-speech-recognition"]);
+    } finally { response.resolve(Response.json({ text: "" })); client?.ws.close(); f.close(); if (old !== undefined) process.env.HERDR_WEB_DICTATION_BASE_URL = old; }
   });
   it("bounds multipart, rejects stale configuration and relays fixed paths without forwarding credentials", async () => {
     const calls: string[] = [];
@@ -70,6 +121,59 @@ describe("dictation relay HTTP and dedicated WS", () => {
       expect((await post(recording(settings.generation, 10 * 1024 * 1024 + 1))).status).toBe(413);
       expect(calls).toEqual(["https://speech.example/v1/models?task=automatic-speech-recognition", "https://speech.example/v1/audio/transcriptions"]);
     } finally { f.close(); }
+  });
+  it("keeps API keys backend-only and carries language for recorded and live transcription", async () => {
+    const key = "contract-speech-key";
+    let expectedAuth: string | null = `Bearer ${key}`;
+    const languages: Array<string | null> = [];
+    const f = fixture((async (url: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get("authorization")).toBe(expectedAuth);
+      expect(new Headers(init?.headers).get("cookie")).toBeNull();
+      if (String(url).includes("/models?")) return Response.json({ data: [] });
+      languages.push((init!.body as FormData).get("language") as string | null);
+      return Response.json({ text: "recognized" });
+    }) as typeof fetch);
+    const put = (body: unknown) => fetch(`${f.base}/api/dictation/config`, { method: "PUT", headers: { ...headers, origin: f.base, "x-herdr-dictation": "1" }, body: JSON.stringify(body) });
+    let client: Awaited<ReturnType<typeof socket>> | undefined;
+    try {
+      const before = await config(f.base);
+      expect((await put({ api_key: key })).status).toBe(200);
+      const settings = await config(f.base);
+      expect(settings).toMatchObject({ api_key_configured: true, api_key_source: "file", language_selection: true });
+      expect(JSON.stringify(settings)).not.toContain(key);
+      expect(settings.generation).not.toBe(before.generation);
+      expect((await fetch(`${f.base}/api/dictation/models`, { headers })).status).toBe(200);
+      for (const language of [undefined, "ja", "auto"]) {
+        const body = recording(settings.generation);
+        if (language) body.set("language", language);
+        expect((await fetch(`${f.base}/api/dictation/transcribe`, { method: "POST", headers, body })).status).toBe(200);
+      }
+      for (const language of ["", "en-US", "EN", "en\n"]) {
+        const body = recording(settings.generation); body.set("language", language);
+        expect((await fetch(`${f.base}/api/dictation/transcribe`, { method: "POST", headers, body })).status).toBe(400);
+      }
+      const duplicate = recording(settings.generation); duplicate.append("language", "ja"); duplicate.append("language", "ko");
+      expect((await fetch(`${f.base}/api/dictation/transcribe`, { method: "POST", headers, body: duplicate })).status).toBe(400);
+      for (const language of ["ko", "auto"]) {
+        client = await socket(f.base);
+        client.ws.send(JSON.stringify({ type: "start", version: 2, model: "model", generation: settings.generation, language }));
+        expect((await client.next()).type).toBe("ready");
+        client.ws.send(audio()); await client.next();
+        client.ws.send(JSON.stringify({ type: "finish", frames: 1, samples: 1 }));
+        expect((await client.next()).type).toBe("segment_final");
+        expect((await client.next()).type).toBe("finished");
+        client.ws.close();
+      }
+      expect(languages).toEqual(["en", "ja", null, "ko", null]);
+      client = await socket(f.base);
+      client.ws.send(JSON.stringify({ type: "start", version: 2, model: "model", generation: settings.generation, language: "en-US" }));
+      expect(await client.next()).toMatchObject({ type: "error", error: { code: "format" } });
+      expect((await put({ api_key: null })).status).toBe(200);
+      expect(await config(f.base)).toMatchObject({ api_key_configured: false, api_key_source: null });
+      expect(readFileSync(join(f.stateDir, "dictation.json"), "utf8")).not.toContain(key);
+      expectedAuth = null;
+      expect((await fetch(`${f.base}/api/dictation/models`, { headers })).status).toBe(200);
+    } finally { client?.ws.close(); f.close(); }
   });
   it("opens dictation without terminal snapshot/attach and emits ready, ack, final, finished in order", async () => {
     const f = fixture(); let client: Awaited<ReturnType<typeof socket>> | undefined;

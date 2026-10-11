@@ -8,6 +8,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+
+- Configure and save the Speaches backend URL and optional API key in Settings → Dictation, without editing server environment variables. Choose a recognition language or automatic detection for recording and live preview.
 - Show recorded Pi subagent and workflow evidence outside folded chat work, with expandable results and explicit last-recorded status rather than inferred live progress.
 - Browse Git changes in Files with a changed-file tree, staged/unstaged/all comparisons and split/unified diffs. Add old/new line-range comments to the next chat message, including filenames and comparison context.
 - Undo the last inserted dictation segment without clearing earlier takes or unrelated draft text.

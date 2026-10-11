@@ -2,17 +2,17 @@ import { expect, it } from "bun:test";
 import { DictationPreview, prepareLiveDictation } from "./dictationStream.ts";
 import { DEFAULT_DICTATION_CONFIG } from "./voiceTransport.ts";
 const tick = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
-function harness() {
+function harness(language?: string) {
   const sent: Array<string | ArrayBuffer> = [], partial: string[] = [], commands: unknown[] = [], failures: unknown[] = [];
   let closes = 0, resumed = 0, connected = 0;
   const socket = { bufferedAmount: 0, onopen: null as null | (() => void), onmessage: null as null | ((event: { data: string }) => void), onerror: null, onclose: null as null | (() => void), send: (value: string | ArrayBuffer) => sent.push(value), close: () => { closes++; } };
   const port = { onmessage: null as null | ((event: { data: unknown }) => void), postMessage: (value: unknown) => commands.push(value), close() {} };
   const context = { resume: async () => { resumed++; }, close: async () => { closes++; }, destination: {}, createMediaStreamSource: () => ({ connect: () => { connected++; }, disconnect() {} }) };
   const node = { port, connect() {}, disconnect() {} };
-  const live = prepareLiveDictation({ context: () => context as unknown as AudioContext, load: async () => {}, node: () => node as unknown as AudioWorkletNode, socket: () => socket as unknown as WebSocket, policy: async () => ({ version: 2, enabled: true, generation: "g", default_model: "m", modes: ["live"], max_seconds: 120, max_bytes: 10485760 }) });
+  const live = prepareLiveDictation({ context: () => context as unknown as AudioContext, load: async () => {}, node: () => node as unknown as AudioWorkletNode, socket: () => socket as unknown as WebSocket, policy: async () => ({ version: 2, enabled: true, language_selection: true, generation: "g", default_model: "m", modes: ["live"], max_seconds: 120, max_bytes: 10485760 }) });
   const controller = new AbortController();
   const message = (value: unknown) => socket.onmessage?.({ data: JSON.stringify(value) });
-  const start = () => live.start({ ...DEFAULT_DICTATION_CONFIG, mode: "live", activated: true }, {} as MediaStream, controller.signal, (text) => partial.push(text), (error) => failures.push(error));
+  const start = () => live.start({ ...DEFAULT_DICTATION_CONFIG, mode: "live", activated: true, ...(language ? { language } : {}) }, {} as MediaStream, controller.signal, (text) => partial.push(text), (error) => failures.push(error));
   const open = async () => {
     let started = false;
     const starting = start().then(() => { started = true; });
@@ -42,6 +42,14 @@ it("prepares in gesture, waits ready, and finishes only after counted short-fram
   h.port.onmessage!({ data: { type: "drained", samples: 3217 } });
   expect(JSON.parse(h.sent.at(-1) as string)).toEqual({ type: "finish", frames: 2, samples: 3217 });
   h.message({ type: "finished", text: "final only" }); expect(await result).toBe("final only"); expect(h.stats().closes).toBeGreaterThan(0);
+});
+it("captures the selected recognition language in the live start request", async () => {
+  for (const language of ["ja", "auto"]) {
+    const h = harness(language);
+    await h.open();
+    expect(JSON.parse(h.sent[0] as string).language).toBe(language);
+    h.controller.abort();
+  }
 });
 it("cancels congestion instead of retaining audio or retrying", async () => {
   const h = harness(); await h.open();

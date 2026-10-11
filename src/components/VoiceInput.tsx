@@ -17,7 +17,7 @@ function errorNote(t: Translate, error: string, provider: "openai" | "speaches" 
     case "permission": return t("Microphone permission was denied");
     case "no_mic": return t("No microphone found");
     case "not_configured": return provider === "speaches" ? t("Apply a model and mode in Settings > Dictation") : t("Configure an OpenAI API key in Settings > Dictation");
-    case "server_not_configured": return provider === "speaches" ? t("Configure HERDR_WEB_DICTATION_BASE_URL on the WebUI backend, restart it, then reload the app.") : t("Configure an OpenAI API key in Settings > Dictation");
+    case "server_not_configured": return provider === "speaches" ? t("Configure a speech server in Settings > Dictation") : t("Configure an OpenAI API key in Settings > Dictation");
     case "policy": return t("Dictation configuration changed. Reload the app and check Settings > Dictation.");
     case "busy": return t("Another input or tab is using dictation");
     case "timeout": return t("The speech server took too long to respond");

@@ -489,7 +489,7 @@ describe("dictation settings", () => {
 
   it("invalidates committed snapshots for every persisted configuration field", () => {
     const source = readFileSync(join(import.meta.dir, "settings.ts"), "utf8");
-    expect(source).toContain("useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.voiceProvider, settings.voiceLanguage, settings.voicePolishChat, settings.voicePolishTerminal, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated])");
+    expect(source).toContain("useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.voiceProvider, settings.voiceLanguage, settings.voicePolishChat, settings.voicePolishTerminal, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated, settings.dictation.language])");
   });
 
   it("keeps speech-service requests explicit and never acquires a microphone in settings", () => {
@@ -502,7 +502,18 @@ describe("dictation settings", () => {
     expect(page).toContain("discoverDictationModels({ ...applied }, controller.signal)");
     expect(page).toContain("generation !== request.current.generation");
     expect(page).toContain("applied.activated && policy !== null");
-    expect(page).not.toContain("baseUrl");
+    // Destination edits go to backend persistence only, never browser dictation preferences.
+    expect(page).toContain("saveDictationBackend(change, request.signal)");
+    expect(page).toContain('policy?.source === "env"');
+    expect(page).toContain("activated: false");
+    expect(readFileSync(join(import.meta.dir, "settings.ts"), "utf8")).not.toContain("base_url");
+    expect(sanitizeDictation({ version: 2, mode: "recording", model: "custom/model", activated: true, language: "ja" })).toMatchObject({ language: "ja", activated: true });
+    expect(sanitizeDictation({ version: 2, mode: "live", model: "custom/model", activated: true, language: "auto", api_key: "secret" })).toMatchObject({ language: "auto", activated: true });
+    for (const language of ["", "en-US", "EN", "en\n", "x".repeat(50), 1, null]) {
+      const clean = sanitizeDictation({ version: 2, mode: "recording", model: "custom/model", activated: true, language });
+      expect(clean.activated).toBe(false);
+      expect(clean.language).toBeUndefined();
+    }
     expect(page).toContain("mode !== applied.mode");
     expect(page).toContain("setMode(applied.mode)");
     expect(dialog).toContain('case "voice": return <DictationSettings />');
