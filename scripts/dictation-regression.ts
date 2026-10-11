@@ -685,7 +685,7 @@ try {
       await composer.getByRole("button", { name: "Discard", exact: true }).click();
       await message.fill("");
 
-      // Direct grid typing must not hide the separate dictation draft, even on desktop.
+      // Dictation must not force a second input surface in direct terminal mode.
       await page.keyboard.press("ControlOrMeta+Shift+Comma");
       await openSettingsPage(page, "Terminal");
       await page.locator("#terminal-input-mode").selectOption("direct");
@@ -693,6 +693,11 @@ try {
       // Terminal line is also a draft: speech must never emit terminal input or Enter.
       await page.locator('.view-switch button[title^="Live terminal"]').click();
       const line = page.getByRole("textbox", { name: "Terminal input line", exact: true });
+      assert.equal(await line.count(), 0, "direct terminal typing shows no extra dictation input");
+      await page.keyboard.press("ControlOrMeta+Shift+Comma");
+      await openSettingsPage(page, "Terminal");
+      await page.locator("#terminal-input-mode").selectOption("line");
+      await closeSettings(page);
       await line.fill("echo ");
       await caret(line, 5);
       const terminal = page.locator(".terminal-input");

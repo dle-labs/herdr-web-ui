@@ -382,6 +382,24 @@ try {
         }
         await page.setViewportSize({ width: 1280, height: 800 });
         console.log("PASS OpenAI key label, input and actions stack without collapse on desktop, tablet and phone");
+        await openSettingsPage(page, "Terminal");
+        await page.locator("#terminal-input-mode").selectOption("direct");
+        await page.getByRole("button", { name: "Close settings", exact: true }).click();
+        await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+        for (const width of [1280, 390]) {
+          await page.setViewportSize({ width, height: 800 });
+          assert.equal(await page.locator(".terminal-input").count(), 0, "microphone On must not force a draft box in direct terminal mode");
+        }
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await openSettings(page);
+        await openSettingsPage(page, "Terminal");
+        await page.locator("#terminal-input-mode").selectOption("line");
+        await page.getByRole("button", { name: "Close settings", exact: true }).click();
+        await page.getByRole("textbox", { name: "Terminal input line", exact: true }).waitFor();
+        await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+        assert.equal(await page.locator(".terminal-input").count(), 0, "terminal draft box stays out of chat");
+        console.log("PASS dictation does not force a terminal draft box; explicit line mode still works");
+        await openSettings(page);
         // beside the list, turning pages is one step however many are turned
         for (const name of ["Chat", "Shortcuts", "About"]) await openSettingsPage(page, name);
         await page.waitForFunction(() => (history.state as Record<string, { page: string; depth: number }> | null)?.["herdr-web-ui:settings"]?.page === "about");
