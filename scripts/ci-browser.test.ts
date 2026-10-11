@@ -44,7 +44,7 @@ const rows = (text: string) => [...text.matchAll(/^(scripts\/\S+)\s+(\d+)\s+(\d+
 describe("parallel browser selection", () => {
   it("reads the complete serial regression list, including fork scripts", () => {
     const scripts = serialBrowserScripts();
-    expect(scripts).toHaveLength(36);
+    expect(scripts).toHaveLength(37);
     expect(new Set(scripts).size).toBe(scripts.length);
     expect(scripts).toContain("scripts/grok-chat-browser-qa.ts");
     expect(scripts).toContain("scripts/dictation-regression.ts");
