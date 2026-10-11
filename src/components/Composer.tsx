@@ -62,6 +62,8 @@ export interface ComposerProps {
   /** false: appearing must not take the keyboard (App switched to this pane on its own) */
   autoFocus?: boolean;
   active?: boolean;
+  /** Keep draft and attachments mounted while a questionnaire owns the visible input. */
+  hidden?: boolean;
   agent: string | null;
   agentStatus?: AgentStatus;
   /** an OmO pane's running background tasks: the status line opens their list */
@@ -230,6 +232,7 @@ export function Composer({
   paneId,
   autoFocus = true,
   active = true,
+  hidden = false,
   agent,
   agentStatus,
   backgroundTasks = 0,
@@ -829,7 +832,7 @@ export function Composer({
 
   const sendRef = useRef<() => void>(() => {});
   const send = useCallback(() => {
-    if (terminalPromptHint !== null || composingRef.current || !connected || uploading || sending) return;
+    if (hidden || terminalPromptHint !== null || composingRef.current || !connected || uploading || sending) return;
     if (dictation.voice.state === "recording") {
       dictation.finishAndSubmit(() => sendRef.current());
       return;
@@ -874,12 +877,12 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [terminalPromptHint, attachments, commentOwner, connected, dictation.cancel, dictation.finishAndSubmit, dictation.voice.state, draftKey, onSend, outgoing, sending, text, uploading]);
+  }, [hidden, terminalPromptHint, attachments, commentOwner, connected, dictation.cancel, dictation.finishAndSubmit, dictation.voice.state, draftKey, onSend, outgoing, sending, text, uploading]);
   sendRef.current = send;
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
-    if (terminalPromptHint !== null || !connected || sending) return;
+    if (hidden || terminalPromptHint !== null || !connected || sending) return;
     setNote(null);
     const settle = (result: boolean | string): void => {
       if (mounted.current && typeof result === "string") setNote(result);
@@ -894,7 +897,7 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [terminalPromptHint, connected, dictation.cancel, draftKey, onSend, sending]);
+  }, [hidden, terminalPromptHint, connected, dictation.cancel, draftKey, onSend, sending]);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -991,7 +994,7 @@ export function Composer({
   }, [menuOpen, menuId, selectedIndex, choices]);
 
   return (
-    <div className="composer" role="group" aria-label={t("Message composer")} data-dictating={dictation.voice.state !== "idle" ? "" : undefined}>
+    <div className="composer" hidden={hidden} role="group" aria-label={t("Message composer")} data-dictating={dictation.voice.state !== "idle" ? "" : undefined}>
       {greeting}
       {/* no Tab key on a phone: the suggestion is a chip there that fills the box, unless Settings turns it off */}
       {settings.showSuggestionChip && offered !== null && text === "" && (

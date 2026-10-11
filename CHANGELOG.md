@@ -23,6 +23,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Replace cloud/browser voice input with direct, self-hosted English dictation in desktop and mobile chat, terminal lines, reply comments and file comments. Settings now applies a speech URL/model explicitly; interrupted takes are cancelled and changed drafts require review before insertion. Direct speech origins require an administrator CSP allowlist. Live streaming is not enabled yet. ([#1](https://github.com/dle-labs/herdr-web-ui/pull/1) by @polaroidkidd)
 
 ### Fixed
+- Pi questionnaires present clickable choices and hide the ordinary chat composer without losing its draft or attachments; the custom-answer field opens only after selecting Type something.
 - Terminal-only questionnaires keep chat drafts unsent and offer an explicit Answer in terminal action instead of inviting unsupported typed answers.
 - Comment editors no longer stop at 2,000 characters; the combined message is still checked against the send limit.
 - Chat selection comments keep list bullets, numbering and task checkbox markers in their quotes.

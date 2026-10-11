@@ -21,7 +21,7 @@ import { pendingMessages } from "../lib/pendingMessages.ts";
 import { heldCountShown, heldOpenAtFold, heldOpenOnFocus, heldRefocusDue, heldRowError, heldRowsFold, heldRowsHidden, heldToggleShown, SHORT_PHONE_QUERY } from "../lib/heldRows.ts";
 import { MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, agentDisplayLabel, composerDelivery, composerMessage, composerPayload, submitNote, submitNotTyped } from "../lib/compose.ts";
 import { afterRead, afterSend, afterSettled, composerLift, greetingMemory, rememberGreeting, greetingFits, greetingFolder, roomOverComposer, showsGreeting, type ChatRead } from "../lib/greeting.ts";
-import { answerFromText, answerHint, answerRefusal, needsConfirmation, promptRequiresTerminal, type TypedAnswer } from "../lib/promptAnswer.ts";
+import { answerFromText, answerHint, answerRefusal, needsConfirmation, promptOwnsInput, promptRequiresTerminal, type TypedAnswer } from "../lib/promptAnswer.ts";
 import { ApiError, assertAttachable, fetchPaneScroll, fetchPaneSelection, scrollPane } from "../lib/api.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
 import { matchHerdrWidths } from "../lib/terminalWidths.ts";
@@ -1815,6 +1815,7 @@ export function PaneTerminal({
   // a question in Codex's queue leaves the composer alone: Codex keeps working, and a
   // message ("stop, don't touch prod") must reach it, not become the answer; its card answers it
   // an actionable fallback card leaves chat free; terminal-only prompts always hold chat input
+  const questionnaireInput = chatView && chatPrompt?.pane === paneId && promptOwnsInput(chatPrompt.value);
   const terminalPrompt = chatView && chatPrompt?.pane === paneId && promptRequiresTerminal(chatPrompt.value) ? chatPrompt.value : null;
   const answering = chatView && chatPrompt !== null && chatPrompt.pane === paneId && !chatPrompt.value.queued && !chatPrompt.value.fallback ? chatPrompt.value : null;
   // ...and while it is open in the terminal it holds the input: nothing is sent into it
@@ -2207,7 +2208,7 @@ export function PaneTerminal({
           open), directly over the input card, on the same column. ChatView renders the card into
           it. It is a live region of its own, since the card is no longer inside the transcript's
           log: a prompt that arrives is announced, as it was there. */}
-      {presented && paneId !== null && chatView && <div className="prompt-dock" ref={setPromptDock} aria-live="polite" />}
+      {presented && paneId !== null && chatView && <div className={`prompt-dock${questionnaireInput ? " prompt-dock-own-input" : ""}`} ref={setPromptDock} aria-live="polite" />}
       {/* the composer belongs to the chat lens: in terminal mode the grid itself is
           the input surface (key bar included), so a second box would only duplicate it */}
       {presented && paneId !== null && secretActive && !observing && !ended && connected && outputReady && <SecretInput
@@ -2219,8 +2220,9 @@ export function PaneTerminal({
         <Composer
           key={paneId}
           paneId={paneId}
-          autoFocus={active && !autoSelected && !coarse}
-          active={active}
+          autoFocus={active && !questionnaireInput && !autoSelected && !coarse}
+          active={active && !questionnaireInput}
+          hidden={questionnaireInput}
           agent={agent}
           agentStatus={agentStatus}
           backgroundTasks={backgroundTasks}

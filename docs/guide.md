@@ -227,7 +227,12 @@ localized or fully hidden overlays may not be recognizable.
 
 For RPIV **2.12.0** on Linux, the experimental [opt-in adapter](../integrations/rpiv/README.md)
 adds verified single-choice, checkbox (including empty selection), and one-line
-custom answers. It requires a separately reviewed package copy and an explicit Pi
+custom answers. Click an option to answer; for checkboxes, select the options and
+press Submit. The custom field opens only after choosing **Type something.** The
+normal chat composer stays hidden during the questionnaire, with its draft and
+attachments preserved until the questionnaire closes.
+
+The adapter requires a separately reviewed package copy and an explicit Pi
 configuration change; the WebUI does not install it. Each action answers only the
 current question. Notes, the final multi-question review, unsupported key mappings,
 and unverified states still require the terminal. Do not answer simultaneously
