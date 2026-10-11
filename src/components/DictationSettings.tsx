@@ -4,7 +4,7 @@ import { DICTATION_LANGUAGES, DICTATION_MODEL_MAX_CHARS, useSettings, type Dicta
 import { fetchVoiceStatus, saveVoiceConfig } from "../lib/api.ts";
 import type { VoiceStatus } from "../../shared/voice.ts";
 import { invalidateDictation } from "../lib/voice.ts";
-import { configAllowed, discoverDictationModels, useDictationPolicy, validDictationModel, type DictationConfig } from "../lib/voiceTransport.ts";
+import { configAllowed, discoverDictationModels, saveDictationBackend, useDictationPolicy, validDictationModel, type DictationConfig, type DictationPolicy } from "../lib/voiceTransport.ts";
 import { Segmented, SettingsGroup, SettingsRow, Toggle } from "./SettingsControls.tsx";
 import "./DictationSettings.css";
 
@@ -16,6 +16,7 @@ export function DictationSettings() {
   const t = useT();
   const [mode, setMode] = useState(applied.mode);
   const [model, setModel] = useState(applied.model);
+  const [language, setLanguage] = useState(applied.language ?? "en");
   const [models, setModels] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,11 +30,12 @@ export function DictationSettings() {
   useLayoutEffect(() => {
     setMode(applied.mode);
     setModel(applied.model);
+    setLanguage(applied.language ?? "en");
     setModels(null);
     setBusy(false);
     setError(null);
     return invalidateRequests;
-  }, [applied.version, applied.mode, applied.model, applied.activated]);
+  }, [applied.version, applied.mode, applied.model, applied.activated, applied.language]);
   const policyKey = JSON.stringify(policy);
   useLayoutEffect(() => {
     setModels(null);
@@ -43,9 +45,9 @@ export function DictationSettings() {
   }, [policyKey, settings.voiceProvider]);
 
   const validModel = model.length <= DICTATION_MODEL_MAX_CHARS && validDictationModel(model.trim());
-  const candidate: DictationConfig = { version: 2, mode, model: model.trim(), activated: true };
+  const candidate: DictationConfig = { version: 2, mode, model: model.trim(), activated: true, ...(language !== "en" ? { language } : {}) };
   const allowed = policy !== null && configAllowed(candidate, policy);
-  const dirty = mode !== applied.mode || model !== applied.model;
+  const dirty = mode !== applied.mode || model !== applied.model || language !== (applied.language ?? "en");
   const canRead = applied.activated && policy !== null && configAllowed(applied, policy);
   const apply = () => {
     if (!validModel || !allowed) return;
@@ -63,6 +65,7 @@ export function DictationSettings() {
     setError(null);
     setMode(applied.mode);
     setModel(applied.model);
+    setLanguage(applied.language ?? "en");
   };
   const check = async () => {
     if (!canRead) return;
@@ -120,9 +123,11 @@ export function DictationSettings() {
         <span className="settings-description">{t("Browser")}</span>
       </SettingsRow>
     </SettingsGroup>}
-    {settings.voiceProvider === "speaches" && <SettingsGroup title={t("Speech server")} note={<>{t("Audio passes through the WebUI backend to self-hosted Speaches, not OpenAI or a browser speech vendor. Apply consents to this route. Nothing records until you press the microphone.")} {t("Apply activates this configuration without contacting the speech server. Edits do not change an active recording; Apply cancels it.")}</>}>
-      <SettingsRow label={t("Recognition language")}><span className="settings-description">{t("English (en)")}</span></SettingsRow>
-      <SettingsRow label={t("Speech service")} description={policy?.enabled === false ? t("Configure HERDR_WEB_DICTATION_BASE_URL on the WebUI backend, restart it, then reload the app.") : undefined} wide>
+    {settings.voiceProvider === "speaches" && <><SpeachesBackendSettings policy={policy} /><SettingsGroup title={t("Speech server")} note={<>{t("Audio passes through the WebUI backend to self-hosted Speaches, not OpenAI or a browser speech vendor. Apply consents to this route. Nothing records until you press the microphone.")} {t("Apply activates this configuration without contacting the speech server. Edits do not change an active recording; Apply cancels it.")}</>}>
+      <SettingsRow label={t("Recognition language")} htmlFor="dictation-recognition-language" description={t("Supported languages depend on the selected model. Auto lets the speech backend detect the language.")}>
+        <SttLanguageSelect value={language} onChange={setLanguage} disabled={policy?.language_selection !== true} />
+      </SettingsRow>
+      <SettingsRow label={t("Speech service")} description={policy?.enabled === false ? t("Save a speech server URL above, then Apply your dictation configuration.") : undefined} wide>
         <span className="settings-description">{t("Managed by the WebUI backend")}</span>
       </SettingsRow>
       <SettingsRow label={t("Transcription mode")} description={t("The first transcription may load the selected model. Listing a model does not verify inference.")} wide>
@@ -154,8 +159,87 @@ export function DictationSettings() {
         {models !== null && <span className="dictation-settings-endpoint">{applied.model}</span>}
       </div>
       {error !== null && <p className="settings-item dictation-settings-error" role="alert">{error}</p>}
-    </SettingsGroup>}
+    </SettingsGroup></>}
   </>;
+}
+
+function SpeachesBackendSettings({ policy }: { policy: DictationPolicy | null }) {
+  const t = useT();
+  const { settings, update } = useSettings();
+  const [baseUrl, setBaseUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+  const controller = useRef<AbortController | null>(null);
+  const keyInput = useRef<HTMLInputElement>(null);
+  useEffect(() => { setBaseUrl(policy?.base_url ?? ""); }, [policy?.base_url]);
+  useEffect(() => {
+    const clear = () => { if (keyInput.current) keyInput.current.value = ""; };
+    const hidden = () => { if (document.hidden) clear(); };
+    window.addEventListener("pagehide", clear);
+    document.addEventListener("visibilitychange", hidden);
+    return () => { controller.current?.abort(); clear(); window.removeEventListener("pagehide", clear); document.removeEventListener("visibilitychange", hidden); };
+  }, []);
+  const supported = policy?.base_url !== undefined;
+  const keySupported = policy?.api_key_configured !== undefined;
+  const keyLocked = policy?.api_key_source === "env";
+  const locked = policy?.source === "env" || keyLocked;
+  const takeKey = () => {
+    const key = keyInput.current?.value.trim() ?? "";
+    if (keyInput.current) keyInput.current.value = "";
+    return key;
+  };
+  const save = async (change: { base_url?: string; api_key?: string | null }) => {
+    if (busy || !supported) return;
+    const request = new AbortController();
+    controller.current = request;
+    invalidateDictation();
+    update({ dictation: { ...settings.dictation, activated: false } });
+    setBusy(true);
+    setError(false);
+    try {
+      const saved = await saveDictationBackend(change, request.signal);
+      if (!request.signal.aborted) setBaseUrl(saved.base_url ?? "");
+    } catch { if (!request.signal.aborted) setError(true); }
+    finally { if (!request.signal.aborted) setBusy(false); }
+  };
+  return <SettingsGroup title={t("WebUI backend")} note={t("Saved on this PC for all connected browsers. Saving cancels dictation; Apply again to consent to the new route. Saving does not contact Speaches.")}>
+    <SettingsRow label={t("Speech server URL")} htmlFor="dictation-base-url" description={policy?.source === "env" ? t("Speech server URL set by HERDR_WEB_DICTATION_BASE_URL") : keyLocked ? t("Speech API key set by HERDR_WEB_DICTATION_API_KEY") : t("HTTPS origin or /v1 API URL. Leave empty to disable self-hosted dictation.")} stacked>
+      <input id="dictation-base-url" type="url" className="input dictation-settings-key-input" value={baseUrl} placeholder="https://speaches.example.com/v1" disabled={!supported || locked || busy} maxLength={2000} spellCheck={false} autoCapitalize="off" autoCorrect="off" autoComplete="off" onChange={(event) => setBaseUrl(event.target.value)} />
+    </SettingsRow>
+    {!locked && <SettingsRow label={t("Configuration")} description={!supported ? t("Update the WebUI backend to configure Speaches here.") : undefined} wide>
+      <button type="button" className="btn" disabled={!supported || busy || baseUrl.trim() === policy?.base_url} onClick={() => { const key = takeKey(); void save({ base_url: baseUrl.trim(), ...(key ? { api_key: key } : {}) }); }}>{t("Save speech server")}</button>
+    </SettingsRow>}
+    <SettingsRow label={t("API key")} htmlFor="dictation-api-key" description={keyLocked ? t("Speech API key set by HERDR_WEB_DICTATION_API_KEY") : policy?.api_key_configured ? t("API key saved on this PC. To change the URL, re-enter its key or remove the saved key first.") : t("Optional. Stored only on the WebUI backend and never returned to the browser.")} stacked>
+      {keySupported && !keyLocked && <form className="dictation-settings-key" onSubmit={(event) => {
+        event.preventDefault();
+        const key = takeKey();
+        if (key) void save({ api_key: key, ...(!locked && baseUrl.trim() !== policy?.base_url ? { base_url: baseUrl.trim() } : {}) });
+      }}>
+        <input id="dictation-api-key" ref={keyInput} className="input dictation-settings-key-input" type="password" disabled={busy} autoComplete="off" spellCheck={false} autoCapitalize="off" autoCorrect="off" maxLength={2000} />
+        <div className="dictation-settings-actions">
+          <button type="submit" className="btn" disabled={busy}>{t("Save key")}</button>
+          <button type="button" className="btn btn-ghost" disabled={busy || !policy?.api_key_configured} onClick={() => { takeKey(); void save({ api_key: null }); }}>{t("Remove key")}</button>
+        </div>
+      </form>}
+    </SettingsRow>
+    {error && <p className="settings-item dictation-settings-error" role="alert">{t("Could not save the speech backend configuration. Check the URL, key settings and WebUI backend.")}</p>}
+  </SettingsGroup>;
+}
+
+function SttLanguageSelect({ value, onChange, disabled }: { value: string; onChange(value: string): void; disabled: boolean }) {
+  const t = useT();
+  const locale = useLocale();
+  const choices = useMemo(() => {
+    let names: Intl.DisplayNames | null = null;
+    try { names = new Intl.DisplayNames([locale], { type: "language" }); } catch { /* use language codes */ }
+    // Whisper-compatible APIs use the Norwegian macro-language code, not nb-NO.
+    return [...new Set(DICTATION_LANGUAGES.map((tag) => tag === "nb-NO" ? "no" : tag.split("-")[0]!))]
+      .map((tag) => ({ tag, name: names?.of(tag) ?? tag })).sort((a, b) => a.name.localeCompare(b.name, locale));
+  }, [locale]);
+  return <select id="dictation-recognition-language" className="select settings-select" value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+    <option value="auto">{t("Auto")}</option>
+    {choices.map(({ tag, name }) => <option key={tag} value={tag}>{tag === "en" ? t("English (en)") : `${name} (${tag})`}</option>)}
+  </select>;
 }
 
 function DictationLanguageSelect() {

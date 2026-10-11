@@ -393,7 +393,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
   const [preview, setPreview] = useState("");
   const latest = useRef({ options: resolvedOptions, available }); latest.current = { options: resolvedOptions, available };
   const [voice] = useState(() => createVoiceEngine({ options: () => latest.current.options, available: () => latest.current.available, setState, setError, setElapsed, setSilent, setPreview }));
-  useLayoutEffect(() => () => voice.cancel(), [voice, available, provider, language, options.polish, options.mode, options.config.version, options.config.mode, options.config.model, options.config.activated]);
+  useLayoutEffect(() => () => voice.cancel(), [voice, available, provider, language, options.polish, options.mode, options.config.version, options.config.mode, options.config.model, options.config.activated, options.config.language]);
   useEffect(() => {
     const hidden = () => { if (document.hidden) voice.cancel(); };
     document.addEventListener("visibilitychange", hidden);

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { DICTATION_DEFAULT_MODEL, type DictationConfigResponse, type DictationErrorCode } from "../../shared/dictation.ts";
 
-export type DictationConfig = { version: 2; model: string; activated: boolean; mode: "recording" | "live" };
+export type DictationConfig = { version: 2; model: string; activated: boolean; mode: "recording" | "live"; language?: string };
 export type DictationPolicy = DictationConfigResponse;
 export const DEFAULT_DICTATION_CONFIG: DictationConfig = {
   version: 2, model: DICTATION_DEFAULT_MODEL, activated: false, mode: "recording",
@@ -15,8 +15,12 @@ export class DictationTransportError extends Error {
 export function validDictationModel(model: unknown): model is string {
   return typeof model === "string" && model.length > 0 && model.length <= 512 && /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(model) && !model.split("/").includes("..");
 }
+export function validDictationLanguage(language: unknown): language is string {
+  return typeof language === "string" && (language === "auto" || /^[a-z]{2,3}$/.test(language));
+}
 export function configAllowed(config: DictationConfig, policy: DictationPolicy | null): boolean {
-  return !!(config.version === 2 && config.activated && validDictationModel(config.model) && policy?.version === 2 && policy.enabled && policy.modes.includes(config.mode));
+  const language = config.language ?? "en";
+  return !!(config.version === 2 && config.activated && validDictationModel(config.model) && validDictationLanguage(language) && policy?.version === 2 && policy.enabled && policy.modes.includes(config.mode) && (language === "en" || policy.language_selection === true));
 }
 
 /** Bound the entire request, including streamed bodies. Never retain service error text. */
@@ -63,7 +67,7 @@ async function jsonRequest(url: string, init: RequestInit, signal: AbortSignal, 
   }
 }
 
-// Page-lifetime policy. Failure requires an explicit page reload, never an audio retry.
+// Cached policy; only an explicit backend settings save refreshes it, never an audio retry.
 let policyRequest: Promise<DictationPolicy | null> | null = null;
 export function loadDictationPolicy(): Promise<DictationPolicy | null> {
   if (!policyRequest) {
@@ -78,12 +82,28 @@ export function loadDictationPolicy(): Promise<DictationPolicy | null> {
   }
   return policyRequest;
 }
+export async function saveDictationBackend(change: { base_url?: string; api_key?: string | null }, signal: AbortSignal): Promise<DictationPolicy> {
+  await jsonRequest("/api/dictation/config", {
+    method: "PUT", headers: { "content-type": "application/json", "x-herdr-dictation": "1" },
+    body: JSON.stringify(change),
+  }, signal, 10_000);
+  policyRequest = null;
+  const policy = await loadDictationPolicy();
+  window.dispatchEvent(new Event("herdr-dictation-policy-changed"));
+  if (!policy) throw new DictationTransportError("format");
+  return policy;
+}
 export function useDictationPolicy(): DictationPolicy | null {
   const [policy, setPolicy] = useState<DictationPolicy | null>(null);
   useEffect(() => {
-    let live = true;
-    void loadDictationPolicy().then((value) => { if (live) setPolicy(value); });
-    return () => { live = false; };
+    let live = true, generation = 0;
+    const refresh = () => {
+      const current = ++generation;
+      void loadDictationPolicy().then((value) => { if (live && current === generation) setPolicy(value); });
+    };
+    refresh();
+    window.addEventListener("herdr-dictation-policy-changed", refresh);
+    return () => { live = false; window.removeEventListener("herdr-dictation-policy-changed", refresh); };
   }, []);
   return policy;
 }
@@ -116,6 +136,7 @@ export async function transcribeDictation(config: DictationConfig, blob: Blob, s
   form.append("file", blob, `dictation.${extension}`);
   form.append("model", config.model);
   form.append("generation", policy.generation);
+  if (config.language && config.language !== "en") form.append("language", config.language);
   const body = await jsonRequest("/api/dictation/transcribe", { method: "POST", body: form }, signal);
   signal.throwIfAborted();
   if (!body || typeof (body as { text?: unknown }).text !== "string") throw new DictationTransportError("format");
@@ -125,5 +146,5 @@ export async function transcribeDictation(config: DictationConfig, blob: Blob, s
 }
 
 export function isDictationErrorCode(code: unknown): code is DictationTransportCode {
-  return typeof code === "string" && ["not_configured", "network", "provider", "missing_model", "timeout", "format", "too_large", "no_speech", "busy"].includes(code);
+  return typeof code === "string" && ["config_locked", "not_configured", "network", "provider", "missing_model", "timeout", "format", "too_large", "no_speech", "busy"].includes(code);
 }

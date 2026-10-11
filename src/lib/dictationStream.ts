@@ -90,7 +90,7 @@ export function prepareLiveDictation(deps: DictationStreamDependencies = browser
         socket = deps.socket();
         timer = setTimeout(() => fail(new DictationTransportError("timeout")), 30_000);
         socket.onopen = () => {
-          if (!ended) socket!.send(JSON.stringify({ type: "start", version: 2, model: config.model, generation: policy.generation }));
+          if (!ended) socket!.send(JSON.stringify({ type: "start", version: 2, model: config.model, generation: policy.generation, ...(config.language && config.language !== "en" ? { language: config.language } : {}) }));
         };
         socket.onerror = socket.onclose = () => fail(new DictationTransportError("network"));
         socket.onmessage = (event) => {

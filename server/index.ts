@@ -18,7 +18,7 @@ import { parseMoveRequest } from "./pane-move.ts";
 import { serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
 import { isMouseReport, sameAttachment } from "./input-guard.ts";
-import { dictationPolicy, dictationConfig, dictationErrorResponse, DictationError } from "./dictation.ts";
+import { DictationSettings, dictationErrorResponse, DictationError, boundedBody, parseDictationSettingsUpdate, type DictationPolicy } from "./dictation.ts";
 import { createDictationTransport, readRecording } from "./dictation/speaches-http.ts";
 import { DictationSocket } from "./dictation/socket.ts";
 import { startStatusCollector } from "./collector.ts";
@@ -322,6 +322,8 @@ async function agentLaunch(paneId: string, agent: AgentPayload): Promise<{ agent
 interface SocketData {
   kind?: "dictation";
   dictation?: DictationSocket;
+  dictationPolicy?: DictationPolicy;
+  dictationTransport?: ReturnType<typeof createDictationTransport>;
   deviceId?: string;
   readOnly?: boolean;
   revoked?: boolean;
@@ -441,7 +443,7 @@ export function createServer(
     usage?: UsageService;
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
     voice?: VoiceService;
-    /** Fixed HTTPS speech base URL; unset reads HERDR_WEB_DICTATION_BASE_URL; empty disables. */
+    /** Locked HTTPS speech base URL; unset falls back to HERDR_WEB_DICTATION_BASE_URL, then persisted settings. An explicit empty value disables and locks edits. */
     dictationBaseUrl?: string;
     /** Test transport; production retains fetch's TLS verification and refuses redirects. */
     dictationFetch?: typeof fetch;
@@ -477,8 +479,9 @@ export function createServer(
     sidecar?: boolean;
   } = {},
 ): ServerInstance {
-  const dictation = dictationPolicy(options.dictationBaseUrl);
-  const dictationTransport = createDictationTransport(dictation, options.dictationFetch);
+  const dictationSettings = new DictationSettings(options.stateDir ?? defaultStateDir(), options.dictationBaseUrl);
+  let dictation = dictationSettings.policy;
+  let dictationTransport = createDictationTransport(dictation, options.dictationFetch);
   const dictationClients = new Set<Client>();
   const dictationRequests = new Set<AbortController>();
   const attachments = new Map<string, PaneAttachment>();
@@ -1788,14 +1791,34 @@ export function createServer(
       if (pathname.startsWith("/api/dictation/")) {
         if (!sameOrigin(request)) return jsonResponse({ error: { code: "invalid_origin", message: "Use dictation from this app" } }, 403);
         if (readOnly) return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
-        if (pathname === "/api/dictation/config" && request.method === "GET") return Response.json(dictationConfig(dictation), { headers: { "cache-control": "no-store" } });
+        if (pathname === "/api/dictation/config" && request.method === "GET") return Response.json(dictationSettings.config(), { headers: { "cache-control": "no-store" } });
+        if (pathname === "/api/dictation/config" && request.method === "PUT") {
+          if (request.headers.get("x-herdr-dictation") !== "1") return jsonResponse({ error: { code: "invalid_origin", message: "Use dictation settings from this app" } }, 403);
+          try {
+            let value: unknown;
+            try { value = JSON.parse(new TextDecoder().decode(await boundedBody(request.body, 4096, request.signal))); }
+            catch (error) { if (error instanceof DictationError) throw error; throw new DictationError("format", "Expected base_url and/or api_key settings"); }
+            const policy = dictationSettings.save(parseDictationSettingsUpdate(value));
+            for (const controller of dictationRequests) controller.abort();
+            dictationRequests.clear();
+            for (const client of dictationClients) {
+              client.data.closing = true; client.data.dictation?.close(); client.data.unwatchDevice?.(); client.close(1012, "Dictation configuration changed");
+            }
+            dictationClients.clear();
+            dictation = policy;
+            dictationTransport = createDictationTransport(policy, options.dictationFetch);
+            return Response.json(dictationSettings.config(), { headers: { "cache-control": "no-store" } });
+          } catch (error) { return dictationErrorResponse(error); }
+        }
         if (!dictation.enabled) return dictationErrorResponse(new DictationError("not_configured", "Dictation is not configured", 503));
         if (pathname === "/api/dictation/ws" && request.method === "GET") {
           const deviceId = access.level === "full" ? access.device?.id : undefined;
-          if (bunServer.upgrade(request, { data: { kind: "dictation", deviceId, attached: new Map(), watches: new Map(), conversationInterests: new Set<string>(), output: new Map(), closing: false, mode: "interact", roles: 0 } })) return;
+          if (bunServer.upgrade(request, { data: { kind: "dictation", dictationPolicy: dictation, dictationTransport, deviceId, attached: new Map(), watches: new Map(), conversationInterests: new Set<string>(), output: new Map(), closing: false, mode: "interact", roles: 0 } })) return;
           return badRequest("invalid_upgrade", "Expected a WebSocket upgrade");
         }
         if ((pathname === "/api/dictation/models" && request.method === "GET") || (pathname === "/api/dictation/transcribe" && request.method === "POST")) {
+          const policy = dictation;
+          const transport = dictationTransport;
           bunServer.timeout(request, 70);
           const controller = new AbortController();
           dictationRequests.add(controller);
@@ -1805,12 +1828,13 @@ export function createServer(
           const unwatch = deviceId ? devices.onRevoke(deviceId, () => controller.abort()) : undefined;
           try {
             if (pathname.endsWith("/models")) {
-              const models = await dictationTransport.models(signal);
+              const models = await transport.models(signal);
               signal.throwIfAborted();
               return Response.json({ models }, { headers: { "cache-control": "no-store" } });
             }
-            const { file, model } = await readRecording(request, dictation, signal);
-            const text = await dictationTransport.transcribe(file, model, signal);
+            const { file, model, language } = await readRecording(request, policy, signal);
+            signal.throwIfAborted();
+            const text = await transport.transcribe(file, model, signal, language);
             signal.throwIfAborted();
             if (!text) throw new DictationError("no_speech", "No speech was recognized");
             return Response.json({ text }, { headers: { "cache-control": "no-store" } });
@@ -2670,8 +2694,9 @@ export function createServer(
       },
       async open(client) {
         if (client.data.kind === "dictation") {
+          if (client.data.dictationPolicy !== dictation) { client.data.closing = true; client.close(1012, "Dictation configuration changed"); return; }
           dictationClients.add(client);
-          client.data.dictation = new DictationSocket(dictation, dictationTransport, (event) => {
+          client.data.dictation = new DictationSocket(client.data.dictationPolicy!, client.data.dictationTransport!, (event) => {
             if (client.data.closing) return;
             if (client.send(JSON.stringify(event)) === 0 || client.getBufferedAmount() > 256 * 1024) {
               client.data.closing = true; client.data.dictation?.close(); client.close(4008, "Dictation output stalled");

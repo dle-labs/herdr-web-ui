@@ -301,8 +301,9 @@ try {
       assert.equal(await composer.locator(".voice-mic").isDisabled(), true, "unconfigured dictation stays visible with a setup reason on both layouts");
       await settings(page);
       assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true);
-      assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "self-hosted provider hides the OpenAI key editor");
-      assert.equal(await page.locator("#dictation-base-url").count(), 0, "backend service is not a browser-editable URL");
+      assert.equal(await page.locator('.settings-dialog input[placeholder="sk-..."]').count(), 0, "self-hosted provider hides the OpenAI key editor");
+      assert.equal(await page.locator("#dictation-api-key").count(), 1, "optional backend API key is available");
+      assert.equal(await page.locator("#dictation-base-url").isDisabled(), true, "administrator-configured backend URL is read-only");
       await page.locator("#dictation-model").fill(model);
       await frames(page);
       assert.equal(requests.length, initialRequests, "loading or editing presets never contacts the speech host");
@@ -790,11 +791,63 @@ try {
     assert.equal(await page.getByRole("button", { name: "Apply", exact: true }).isDisabled(), true);
     assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true);
     assert.equal(await page.getByRole("button", { name: "Check", exact: true }).isDisabled(), true);
-    assert.equal(await page.locator("#dictation-base-url").count(), 0);
+    assert.equal(await page.locator("#dictation-base-url").isDisabled(), true, "explicit backend option locks the URL");
     assert.equal(requests.length, beforeDisabled, "missing backend URL never contacts a speech service");
   } finally { await disabledContext.close(); disabled.stop(); }
+  // User-configured backend: saving is private, persistent and requires fresh Apply consent.
+  const configurable = createServer({ hostname: "127.0.0.1", port: 0, token: "dictation-settings-test-token", stateDir: join(root, "configurable-state"), dictationFetch, usage: new UsageService(undefined, []) });
+  const configContext = await browser.newContext({ locale: "en-US" });
+  try {
+    const origin = `http://127.0.0.1:${configurable.port}`;
+    assert.equal((await configContext.request.post(`${origin}/api/auth`, { data: { token: "dictation-settings-test-token" } })).ok(), true);
+    await configContext.addInitScript(({ model }) => { if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", voiceProvider: "speaches", dictation: { version: 2, model, activated: true, mode: "recording" } })); }, { model });
+    const page = await configContext.newPage();
+    await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
+    await page.locator(".conn-live").waitFor();
+    await settings(page);
+    const field = page.locator("#dictation-base-url");
+    await until("editable backend URL", () => field.isEnabled());
+    const beforeSave = requests.length;
+    await field.fill("http://invalid.example/v1");
+    await page.getByRole("button", { name: "Save speech server", exact: true }).click();
+    await page.getByRole("alert").filter({ hasText: "Could not save the speech backend configuration" }).waitFor();
+    assert.equal((await configContext.request.get(`${origin}/api/dictation/config`)).ok(), true);
+    await field.fill(baseUrl);
+    await page.getByRole("button", { name: "Save speech server", exact: true }).click();
+    await until("backend URL saved", () => page.getByRole("button", { name: "Save speech server", exact: true }).isDisabled());
+    assert.equal(requests.length, beforeSave, "saving URL never contacts Speaches");
+    assert.equal(await page.getByRole("button", { name: "Refresh models", exact: true }).isDisabled(), true, "save requires fresh Apply consent");
+    await page.locator("#dictation-api-key").fill("dictation-fixture-key");
+    await page.getByRole("button", { name: "Save key", exact: true }).click();
+    assert.equal(await page.locator("#dictation-api-key").inputValue(), "", "key clears immediately on save");
+    await until("key saved", async () => (await (await configContext.request.get(`${origin}/api/dictation/config`)).json()).api_key_configured === true);
+    assert.ok(!(await (await configContext.request.get(`${origin}/api/dictation/config`)).text()).includes("dictation-fixture-key"), "config never echoes the key");
+    await page.locator("#dictation-recognition-language").selectOption("ja");
+    await page.getByRole("button", { name: "Apply", exact: true }).click();
+    await until("saved backend available without reload", () => page.getByRole("button", { name: "Refresh models", exact: true }).isEnabled());
+    await page.getByRole("button", { name: "Refresh models", exact: true }).click();
+    await page.locator(".dictation-settings-status").filter({ hasText: "Service reachable. Applied model listed as installed; inference not verified." }).waitFor();
+    assert.equal(requests.at(-1)?.authorization, "Bearer dictation-fixture-key", "backend discovery uses only the saved key");
+    if (process.env.UI_EVIDENCE_DIR) {
+      mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+      await field.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "dictation-backend-settings.png") });
+    }
+    await page.reload();
+    await page.locator(".conn-live").waitFor();
+    await settings(page);
+    await until("saved URL restored on reload", async () => await field.inputValue() === baseUrl);
+    assert.equal(await page.locator("#dictation-recognition-language").inputValue(), "ja", "recognition language survives reload");
+    assert.equal(await page.locator("#dictation-api-key").inputValue(), "", "saved key is never loaded into the input");
+    await page.getByRole("button", { name: "Remove key", exact: true }).click();
+    await until("key removed", async () => (await (await configContext.request.get(`${origin}/api/dictation/config`)).json()).api_key_configured === false);
+    await field.fill("");
+    await page.getByRole("button", { name: "Save speech server", exact: true }).click();
+    await until("backend disabled", async () => (await (await configContext.request.get(`${origin}/api/dictation/config`)).json()).enabled === false);
+    await until("disabled policy reaches Settings", () => page.getByRole("button", { name: "Apply", exact: true }).isDisabled());
+  } finally { await configContext.close(); configurable.stop(); }
   for (const request of requests.filter((item) => item.path.endsWith("audio/transcriptions") || item.path.endsWith("models"))) {
-    assert.equal(request.authorization, null);
+    assert.ok(request.authorization === null || request.authorization === "Bearer dictation-fixture-key", "upstream receives no unrelated credentials");
     assert.equal(request.cookie, null);
     assert.equal(request.referer, null, "discovery and audio both suppress Referer");
     assert.equal(request.origin, null, "backend does not forward browser Origin");

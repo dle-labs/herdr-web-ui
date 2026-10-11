@@ -1503,8 +1503,13 @@ One set for both themes: the card is island black wherever it shows.
   and mobile, including comment editors, disabled with a reason when configuration, browser capture
   or the backend speech service is unconfigured. Off hides them; Settings stays accessible. The terminal
   draft line is also available beside direct grid typing when dictation controls are enabled.
-- Dictation settings explicitly applies a model and mode; the HTTPS speech URL is managed by the
-  WebUI backend. Recognition is English. Completed recordings upload through WebUI on Finish;
+- Dictation settings explicitly applies a model and mode; the HTTPS speech URL is saved separately
+  through the WebUI backend for all connected browsers. The URL row and Save speech server control
+  are read-only when the environment sets the destination. Saving cancels dictation and requires
+  Apply again; it does not contact the speech service. An optional API key stays in the DOM input
+  until explicit Save, clears on submit/hide/unmount, and is persisted only on the backend. Changing
+  a keyed destination requires re-entering or removing the key. Recognition language is a per-device
+  applied preference, English for legacy settings; Auto delegates detection to the backend. Completed recordings upload through WebUI on Finish;
   optional Live preview streams audio to WebUI for buffering/segmentation and HTTP recognition.
   Interim text is separate from the editable draft. No vendor fallback or polishing. Upstream
   Speaches Realtime remains gated; the browser only connects to the app's own origin.

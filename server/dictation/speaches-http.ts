@@ -1,5 +1,5 @@
 import { DICTATION_MAX_BYTES } from "../../shared/dictation.ts";
-import { boundedBody, DictationError, validateDictationSelection, type DictationPolicy } from "../dictation.ts";
+import { boundedBody, dictationLanguage, DictationError, validateDictationSelection, type DictationPolicy } from "../dictation.ts";
 
 const RESPONSE_BYTES = 256 * 1024;
 const MIME_TYPES = new Set(["audio/webm", "video/webm", "audio/ogg", "audio/wav", "audio/x-wav", "audio/wave", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a", "audio/aac", "audio/flac"]);
@@ -11,7 +11,10 @@ export function createDictationTransport(policy: DictationPolicy, transport: typ
     const timeout = AbortSignal.timeout(60_000);
     const combined = AbortSignal.any([signal, timeout]);
     try {
-      const response = await transport(`${policy.baseUrl}${path}`, { ...init, redirect: "error", signal: combined });
+      let response: Response;
+      try {
+        response = await transport(`${policy.baseUrl}${path}`, { ...init, headers: policy.apiKey ? { authorization: `Bearer ${policy.apiKey}` } : undefined, redirect: "error", signal: combined });
+      } catch { throw new DictationError("network", "Speech service request failed", 502); }
       // Fixtures may not implement redirect:error; never consume or follow a redirect.
       if (response.status >= 300 && response.status < 400) { void response.body?.cancel(); throw new DictationError("provider", "Speech service redirects are not supported", 502); }
       if (!response.ok) {
@@ -37,11 +40,12 @@ export function createDictationTransport(policy: DictationPolicy, transport: typ
         return typeof id === "string" && id.length <= 512 ? [id] : [];
       });
     },
-    async transcribe(file: Blob, model: string, signal: AbortSignal): Promise<string> {
+    async transcribe(file: Blob, model: string, signal: AbortSignal, language = "en"): Promise<string> {
+      dictationLanguage(language);
       const form = new FormData();
       form.set("file", file, file instanceof File ? file.name : "segment.wav");
       form.set("model", model);
-      form.set("language", "en");
+      if (language !== "auto") form.set("language", language);
       form.set("response_format", "json");
       const value = await request("/audio/transcriptions", { method: "POST", body: form }, signal) as { text?: unknown } | null;
       if (!value || typeof value.text !== "string") throw new DictationError("provider", "Speech service returned an invalid transcript", 502);
@@ -50,16 +54,17 @@ export function createDictationTransport(policy: DictationPolicy, transport: typ
   };
 }
 
-export async function readRecording(request: Request, policy: DictationPolicy, signal: AbortSignal): Promise<{ file: File; model: string }> {
+export async function readRecording(request: Request, policy: DictationPolicy, signal: AbortSignal): Promise<{ file: File; model: string; language: string }> {
   const type = request.headers.get("content-type") ?? "";
   if (!type.startsWith("multipart/form-data;")) throw new DictationError("format", "Expected a multipart audio recording");
   const bytes = await boundedBody(request.body, MULTIPART_BYTES, signal);
   let form: FormData;
   try { form = await new Response(bytes, { headers: { "content-type": type } }).formData(); }
   catch { throw new DictationError("format", "Invalid multipart recording"); }
-  if ([...form.keys()].some((key) => !["file", "model", "generation"].includes(key)) || ["file", "model", "generation"].some((key) => form.getAll(key).length !== 1)) throw new DictationError("format", "Invalid recording fields");
+  if ([...form.keys()].some((key) => !["file", "model", "generation", "language"].includes(key)) || ["file", "model", "generation"].some((key) => form.getAll(key).length !== 1) || form.getAll("language").length > 1) throw new DictationError("format", "Invalid recording fields");
   const file = form.get("file");
   const model = form.get("model");
+  const language = dictationLanguage(form.get("language") ?? undefined);
   validateDictationSelection(policy, model, form.get("generation"));
   if (!(file instanceof File) || !file.size) throw new DictationError("format", "Missing audio recording");
   if (file.size > DICTATION_MAX_BYTES) throw new DictationError("too_large", "Recording exceeds 10 MiB", 413);
@@ -70,7 +75,7 @@ export async function readRecording(request: Request, policy: DictationPolicy, s
   const audio = file.type.split(";")[0]!.toLowerCase() === "video/webm"
     ? new File([file], file.name, { type: "audio/webm" }) : file;
   // Compressed duration remains the capture client's responsibility; no decoder is loaded here.
-  return { file: audio, model };
+  return { file: audio, model, language };
 }
 
 export function pcmWav(samples: Int16Array): Blob {
