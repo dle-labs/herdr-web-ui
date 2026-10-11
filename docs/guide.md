@@ -219,27 +219,8 @@ ordinary tool input/output remains available in the work fold. These cards are
 finished parent turn does not prove its children finished. Unrecorded activity,
 including some mention-launched or nested workflow work, cannot be reconstructed.
 
-Recognizable `npm:@juicesharp/rpiv-ask-user-question` questionnaires are shown in the
-prompt area. An unpatched extension has a **terminal-only** notice: its footer does
-not reliably expose the actual keyboard bindings, so the WebUI will not guess
-answer or cancellation keys. Switch to the terminal lens to answer it. Clipped,
-localized or fully hidden overlays may not be recognizable.
-
-For RPIV **2.12.0** on Linux, the experimental [opt-in adapter](../integrations/rpiv/README.md)
-adds verified single-choice, checkbox (including empty selection), and one-line
-custom answers. Click an option to answer; for checkboxes, select the options and
-press Submit. The custom field opens only after choosing **Type something.** The
-normal chat composer stays hidden during the questionnaire, with its draft and
-attachments preserved until the questionnaire closes.
-
-The adapter requires a separately reviewed package copy and an explicit Pi
-configuration change; the WebUI does not install it. Each action answers only the
-current question. Notes, the final multi-question review, unsupported key mappings,
-and unverified states still require the terminal. Do not answer simultaneously
-from the browser and native terminal.
-
 Support is provided by the bridge serving that PC. An official remote bridge does
-not acquire this fork's adapters just because the local browser has them.
+not acquire this fork's recorded delegation support just because the local browser has it.
 
 ## Subscription usage
 

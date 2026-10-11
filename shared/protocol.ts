@@ -852,10 +852,8 @@ export interface SlashCommand {
 
 /**
  * GET /api/pane/prompt: an agent's interactive TUI menu currently on the pane's screen
- * (Claude/omp/codex/Pi question, approval or plan prompts), parsed server-side from the
- * visible text. Opt-in RPIV cards additionally require a fresh pane-owned process/session
- * companion; unverified modes expose `terminal_only`, never guessed default key actions.
- * `id` names what the prompt says and which asking of it this is: an answer
+ * (Claude/omp/codex question, approval or plan prompts), parsed server-side from the
+ * visible text. `id` names what the prompt says and which asking of it this is: an answer
  * names it, and one whose prompt changed between the read and the click is refused (409
  * prompt_changed) instead of misfired. The same question asked again has another id only where
  * the server saw the first asking end (a read without it, an answer through this route, the
@@ -873,10 +871,6 @@ export interface InteractivePrompt {
   multi_select: boolean;
   /** index of the "type your own answer" option, when the menu has one */
   custom_option_index: number | null;
-  /** Live RPIV checkbox state; omitted when the responder cannot attest to it. */
-  checked_option_indices?: number[];
-  /** RPIV's explicit Next also permits an empty checkbox answer. */
-  allow_empty_selection?: true;
   /** a question in Codex's queue while Codex keeps working: only the card answers it. Collapsed,
    * a message typed in the chat still goes to Codex; open in the terminal, the queue holds the
    * input, so the chat sends nothing until it is answered or closed */
@@ -884,9 +878,6 @@ export interface InteractivePrompt {
   /** the questions of a form that asks several at once (omo), in order: which are answered and
    * which one the card asks now (none while the answers are reviewed). Absent for one question */
   steps?: InteractivePromptStep[];
-  /** Recognized questionnaire without verified live keybindings. Display only: no answer
-   * action, including custom text or cancellation, may be sent through the answer endpoint. */
-  terminal_only?: true;
   /** the last-resort card for a blocked pane no reader knows: answered with its own buttons only,
    * so a message typed in the chat still goes to the agent as typed */
   fallback?: true;

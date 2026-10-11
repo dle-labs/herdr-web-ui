@@ -13,8 +13,7 @@
     "scripts/build-remote-bundle.ts",
     "scripts/ssh-integration.ts",
     "scripts/file-viewer-regression.ts",
-    "scripts/pi-delegation-regression.ts",
-    "scripts/rpiv-questionnaire-regression.ts"
+    "scripts/pi-delegation-regression.ts"
   ],
   "include": []
 }

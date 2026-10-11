@@ -21,7 +21,7 @@ import { pendingMessages } from "../lib/pendingMessages.ts";
 import { heldCountShown, heldOpenAtFold, heldOpenOnFocus, heldRefocusDue, heldRowError, heldRowsFold, heldRowsHidden, heldToggleShown, SHORT_PHONE_QUERY } from "../lib/heldRows.ts";
 import { MAX_COMPOSER_CHARS, QUEUE_READY_STATUS, agentDisplayLabel, composerDelivery, composerMessage, composerPayload, submitNote, submitNotTyped } from "../lib/compose.ts";
 import { afterRead, afterSend, afterSettled, composerLift, greetingMemory, rememberGreeting, greetingFits, greetingFolder, roomOverComposer, showsGreeting, type ChatRead } from "../lib/greeting.ts";
-import { answerFromText, answerHint, answerRefusal, needsConfirmation, promptOwnsInput, promptRequiresTerminal, type TypedAnswer } from "../lib/promptAnswer.ts";
+import { answerFromText, answerHint, answerRefusal, needsConfirmation, type TypedAnswer } from "../lib/promptAnswer.ts";
 import { ApiError, assertAttachable, fetchPaneScroll, fetchPaneSelection, scrollPane } from "../lib/api.ts";
 import { parseOsc52 } from "../lib/osc52.ts";
 import { matchHerdrWidths } from "../lib/terminalWidths.ts";
@@ -85,8 +85,6 @@ export interface PaneTerminalProps {
   machineName?: string;
   /** the lens over the pane: the chat transcript, or the live xterm grid (App remembers it per pane) */
   view: PaneView;
-  /** Opens this pane's terminal lens without sending any input. */
-  onShowTerminal?: () => void;
   findRequest?: number;
   /** Only the selected tile may take keyboard focus after async work or a lens change. */
   active?: boolean;
@@ -134,7 +132,6 @@ export function PaneTerminal({
   cwd = null,
   machineName = "",
   view,
-  onShowTerminal,
   findRequest = 0,
   active = true,
   autoSelected = false,
@@ -1814,9 +1811,7 @@ export function PaneTerminal({
   // While the agent runs, append to its held messages. Each requires an explicit send.
   // a question in Codex's queue leaves the composer alone: Codex keeps working, and a
   // message ("stop, don't touch prod") must reach it, not become the answer; its card answers it
-  // an actionable fallback card leaves chat free; terminal-only prompts always hold chat input
-  const questionnaireInput = chatView && chatPrompt?.pane === paneId && promptOwnsInput(chatPrompt.value);
-  const terminalPrompt = chatView && chatPrompt?.pane === paneId && promptRequiresTerminal(chatPrompt.value) ? chatPrompt.value : null;
+  // a fallback card is answered with its own buttons: what the user types still goes to the agent
   const answering = chatView && chatPrompt !== null && chatPrompt.pane === paneId && !chatPrompt.value.queued && !chatPrompt.value.fallback ? chatPrompt.value : null;
   // ...and while it is open in the terminal it holds the input: nothing is sent into it
   const heldByOpenQueue = chatView && chatPrompt !== null && chatPrompt.pane === paneId && chatPrompt.value.queued === "open";
@@ -1898,8 +1893,6 @@ export function PaneTerminal({
   const composerSend = useCallback(
     (text: string, { comments = [] }: { comments?: readonly PaneComment[] } = {}): boolean | string | Promise<boolean | string> => {
       const pane = paneRef.current;
-      // A prompt may arrive as Send/dictation finishes: refuse without acknowledging the draft.
-      if (terminalPrompt !== null) return answerRefusal(terminalPrompt);
       // Codex's queue open in the terminal holds the input: a message would become the answer
       if (pane !== null && heldByOpenQueue) {
         return t("Codex has a question open in the terminal: answer it above, or close it there (alt+↓) to message Codex.");
@@ -1927,7 +1920,7 @@ export function PaneTerminal({
       // and an immediate one carrying them is refused rather than typed into a shell
       return sendComposerText(composeWithComments(comments, text), { delivery: composerDelivery(agent, agentStatus), agentOnly: comments.length > 0 });
     },
-    [agent, agentStatus, answerPanePrompt, answering, terminalPrompt, heldByOpenQueue, sendComposerText, queueStore, machineId],
+    [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, sendComposerText, queueStore, machineId],
   );
 
   const actOnPending = useCallback(async (id: string, action: "steer" | "discard"): Promise<void> => {
@@ -2107,7 +2100,6 @@ export function PaneTerminal({
             onPendingAnswerDone={clearPendingAnswer}
             promptDock={promptDock}
             onPromptAnswered={onPromptAnswered}
-            onShowTerminal={onShowTerminal}
           />
           </RenderBoundary>
         )}
@@ -2208,7 +2200,7 @@ export function PaneTerminal({
           open), directly over the input card, on the same column. ChatView renders the card into
           it. It is a live region of its own, since the card is no longer inside the transcript's
           log: a prompt that arrives is announced, as it was there. */}
-      {presented && paneId !== null && chatView && <div className={`prompt-dock${questionnaireInput ? " prompt-dock-own-input" : ""}`} ref={setPromptDock} aria-live="polite" />}
+      {presented && paneId !== null && chatView && <div className="prompt-dock" ref={setPromptDock} aria-live="polite" />}
       {/* the composer belongs to the chat lens: in terminal mode the grid itself is
           the input surface (key bar included), so a second box would only duplicate it */}
       {presented && paneId !== null && secretActive && !observing && !ended && connected && outputReady && <SecretInput
@@ -2220,17 +2212,14 @@ export function PaneTerminal({
         <Composer
           key={paneId}
           paneId={paneId}
-          autoFocus={active && !questionnaireInput && !autoSelected && !coarse}
-          active={active && !questionnaireInput}
-          hidden={questionnaireInput}
+          autoFocus={active && !autoSelected && !coarse}
+          active={active}
           agent={agent}
           agentStatus={agentStatus}
           backgroundTasks={backgroundTasks}
           backgroundWait={backgroundWait}
           metadata={chatMetadata?.pane === paneId ? chatMetadata.value : null}
           connected={connected && !held}
-          terminalPromptHint={terminalPrompt === null ? null : answerHint(terminalPrompt)}
-          onShowTerminal={onShowTerminal}
           answerHint={answering === null ? null
             : pendingAnswer?.promptId === answering.id ? t("Confirm your answer in the card above, or type another…") : answerHint(answering)}
           // no suggestion under any card, a fallback or queued one included

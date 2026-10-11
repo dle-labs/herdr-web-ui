@@ -50,7 +50,6 @@ describe("browser lane", () => {
       { script: "scripts/pending-pane-switch-regression.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/terminal-dispose-browser-qa.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/dictation-regression.ts", seconds: expect.any(Number), code: 0 },
-      { script: "scripts/rpiv-questionnaire-regression.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/pi-delegation-regression.ts", seconds: expect.any(Number), code: 0 },
       { script: "scripts/sticky-modifiers-regression.ts", seconds: expect.any(Number), code: 7 },
     ]);
@@ -61,12 +60,11 @@ describe("browser lane", () => {
   it("summarizes every script and exits zero on success without enabling local evidence", async () => {
     const { text, code, evidence } = await lane();
     expect(code).toBe(0);
-    expect(rows(text)).toHaveLength(30);
+    expect(rows(text)).toHaveLength(29);
     expect(rows(text).map((row) => row.script)).toContain("scripts/pending-pane-switch-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/terminal-viewport-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/palette-machines-demo-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/dictation-regression.ts");
-    expect(rows(text).map((row) => row.script)).toContain("scripts/rpiv-questionnaire-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/pi-delegation-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/file-viewer-comments-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/block-comments-regression.ts");
