@@ -17,7 +17,7 @@ import { badRequest, conflictResponse, errorResponse, isCount, isJsonObject, jso
 import { parseMoveRequest } from "./pane-move.ts";
 import { serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
-import { sameAttachment } from "./input-guard.ts";
+import { isMouseReport, sameAttachment } from "./input-guard.ts";
 import { dictationPolicy, dictationConfig, dictationErrorResponse, DictationError } from "./dictation.ts";
 import { createDictationTransport, readRecording } from "./dictation/speaches-http.ts";
 import { DictationSocket } from "./dictation/socket.ts";
@@ -25,6 +25,7 @@ import { startStatusCollector } from "./collector.ts";
 import { claudePanePid, claudePaneSession, conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneRunsOmo, toolOutput } from "./conversation.ts";
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
 import { DevinHistoryChanged } from "./devin.ts";
+import { ConversationMonitor } from "./conversation-monitor.ts";
 import { omoPanes } from "./omo.ts";
 import { OMO_ALIASES, OmoStatus, processAlive } from "./omo-status.ts";
 import { omoRuns, omoTasks } from "./omo-tasks.ts";
@@ -83,7 +84,7 @@ import {
   worktreeRemove,
 } from "./herdr/client.ts";
 import { type AlertTiming, createPushService, defaultStateDir, handlePushRequest } from "./push.ts";
-import { claudeHeldIsGrey, claudeInputDraft, viewportShowsLive, codexQuestionsCollapsed, handlePromptRequest, isClaudeHeld, heldCandidate, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded } from "./prompt.ts";
+import { CLAUDE_CLEAR_INPUT_KEYS, claudeClearableDraft, claudeHeldIsGrey, claudeInputDraft, claudeInputEmpty, viewportShowsLive, codexQuestionsCollapsed, handlePromptRequest, isClaudeHeld, heldCandidate, modelListWaits, noteSubmitted, parseInteractivePrompt, promptWaitEnded, claudeRestoredDraft, lastChatSubmitted } from "./prompt.ts";
 import { submitRoute } from "./submit-route.ts";
 import { secretPrompt, validSecret } from "../shared/secret-prompt.ts";
 import { PasteImageError, savePaneImage } from "./paste.ts";
@@ -195,7 +196,25 @@ export const SUBMIT_DEADLINE_MS = 45_000;
 const CLAUDE_INPUT_DRAFT_MESSAGE = "Claude Code's input box is not empty (a draft, bash mode, or a box that could not be read); send or clear it in the terminal, then send this message";
 /** agent.prompt refusals herdr answers before it pastes anything (herdr/client.ts agentPrompt): nothing was typed. */
 const NOT_TYPED_BY_AGENT_PROMPT = new Set(["agent_blocked", "agent_not_found", "agent_not_ready"]);
-const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "secret-input", "input-ready", "take-over", "watch", "submit-agent-only"];
+/** How long a cleared Claude input box may take to read empty before the send is refused after all. */
+const DRAFT_CLEAR_WAIT_MS = 1_500;
+const DRAFT_CLEAR_POLL_MS = 50;
+
+/** input_draft, naming the one-row draft the chat may offer to clear (claudeClearableDraft), or none. */
+class InputDraftError extends HerdrError {
+  readonly draft: string | null;
+  constructor(draft: string | null, readonly identity?: PendingIdentity) {
+    super("input_draft", CLAUDE_INPUT_DRAFT_MESSAGE);
+    this.draft = draft;
+  }
+}
+/** between the two Esc presses that empty Claude Code's restored copy of the chat's message */
+const RESTORED_CLEAR_GAP_MS = 200;
+/** after them, before the box is read again */
+const RESTORED_CLEAR_SETTLE_MS = 300;
+/** what a send must still have of its deadline before the copy is cleared: the clear, the box read again, then the send */
+const RESTORED_CLEAR_RESERVE_MS = 2_000;
+const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "secret-input", "input-ready", "take-over", "watch", "submit-agent-only", "conversation-watch"];
 
 /** Bind addresses only this machine can reach, so an unset token is nobody else's business. */
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -308,6 +327,7 @@ interface SocketData {
   relay?: MachineRelay;
   /** A fresh claim per attach lifetime; deleting it invalidates queued terminal keys. */
   attached: Map<string, object>;
+  conversationInterests: Set<string>;
   watches: Map<string, PaneWatch>;
   output: Map<string, OutputWindow>;
   closing: boolean;
@@ -315,6 +335,18 @@ interface SocketData {
   mode: ClientRole;
   /** how often `mode` changed: a switch away and back during an await is still a change */
   roles: number;
+}
+
+/** A `presence` frame's answer, or null for any other frame. A relayed frame is only parsed when it can be one. */
+function presenceOf(raw: string | Buffer): boolean | null {
+  const text = String(raw);
+  if (!text.includes("\"presence\"")) return null;
+  try {
+    const message = JSON.parse(text) as { type?: unknown; active?: unknown };
+    return message?.type === "presence" ? message.active === true : null;
+  } catch {
+    return null;
+  }
 }
 
 type Client = ServerWebSocket<SocketData>;
@@ -395,6 +427,8 @@ export function createServer(
     opencodeDb?: string;
     /** Native Devin store; tests pass an isolated SQLite database. */
     devinDbPath?: string;
+    /** Native Hermes store; pane process HERMES_HOME wins when this is unset. Tests use an isolated store. */
+    hermesHome?: string;
     updates?: UpdateService;
     /** updates herdr itself (server/herdr-update.ts); unset, the app offers no herdr update. Tests pass one that runs a stand-in herdr. */
     herdrUpdate?: HerdrUpdater;
@@ -464,6 +498,8 @@ export function createServer(
   // herdr releases its exclusive attach slot only after the old process exits.
   const retiringAttachments = new Map<string, Promise<void>>();
   const clients = new Set<Client>();
+  /** connections whose page is in use (`presence`), relayed ones included: while any is, no web push goes out */
+  const present = new Set<Client>();
   type PendingLease = { attachment: PaneAttachment; pty: PtySession | MirrorSession; authority: object };
   const pendingAuthorities = new WeakMap<Client, Map<string, object>>();
   type PendingItem = PendingRecord<Client, PendingLease>;
@@ -472,8 +508,24 @@ export function createServer(
   }, Date.now, options.pendingStartTimeoutMs);
   const pendingDrains = new Set<string>();
   /** `typed: false`: refused before anything of the message reached the pane (see ServerMessage submit-result). */
-  type SubmitReply = { ok: boolean; pending?: PendingMessage; code?: string; message?: string; typed?: false };
+  type SubmitReply = { ok: boolean; pending?: PendingMessage; code?: string; message?: string; typed?: false; draft?: string | null };
   const pendingRequests = new WeakMap<Client, PendingRequestBook<SubmitReply>>();
+  const draftConfirmations = new WeakMap<Client, Map<string, { draft: string; identity: PendingIdentity }>>();
+  let stopped = false;
+  const conversations = new ConversationMonitor((paneId, signature) => {
+    for (const client of clients) {
+      if (!client.data.closing && client.readyState === WebSocket.OPEN && client.data.attached.has(paneId) && client.data.conversationInterests.has(paneId)) {
+        send(client, { type: "conversation-changed", pane_id: paneId, signature });
+      }
+    }
+  }, options.codexHome, options.devinDbPath, options.opencodeDb, options.hermesHome);
+
+  function releaseConversation(paneId: string): void {
+    for (const client of clients) {
+      if (!client.data.closing && client.readyState === WebSocket.OPEN && client.data.attached.has(paneId) && client.data.conversationInterests.has(paneId)) return;
+    }
+    conversations.unwatch(paneId);
+  }
   /** each pane's input while a composer message is in flight, one step after another */
   const paneQueues = new Map<string, Promise<unknown>>();
   /** when each pane last got keystrokes through its attach pty */
@@ -550,11 +602,17 @@ export function createServer(
     return /(?:^|\s)@\S+$/.test(body) ? `${open}${body} ${close}` : text;
   };
 
+  /**
+   * `clearDraft`: the draft an input_draft refusal named, which the user asked to clear and send
+   * over. It goes only while the box still holds exactly that, and the message only once the box
+   * reads empty.
+   */
   async function submitText(paneId: string, text: string, payload: string, arrivedAt: number, fromTerminal = false, authorize: () => void = () => {}, agentOnly = false,
-    progress: { typing: boolean } = { typing: false }): Promise<void> {
-    const inTime = (): void => {
+    progress: { typing: boolean } = { typing: false }, clearDraft?: string, confirmation?: { draft: string; identity: PendingIdentity }): Promise<void> {
+    let clearedDraft = false;
+    const inTime = (reserve = 0): void => {
       authorize();
-      if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) {
+      if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS) - reserve) {
         throw new HerdrError("submit_timeout", "the message waited too long behind earlier input; nothing was typed");
       }
     };
@@ -564,44 +622,118 @@ export function createServer(
     inTime();
     // the terminal's input line stands in for the keyboard: it types what the user wrote, an
     // answer into an open menu included, where agent.prompt would refuse
-    if (!fromTerminal || agentOnly) {
-      const pane = await paneGet(paneId).catch((error: unknown) => {
-        if (error instanceof HerdrError && error.code === "pane_not_found") return undefined;
-        throw error;
-      });
-      inTime();
-      if ((pane?.agent ?? pane?.agent_session?.agent) === "claude") {
-        const [live, colors] = await claudeBoxReads(paneId);
+    try {
+      if (!fromTerminal || agentOnly) {
+        const pane = await paneGet(paneId).catch((error: unknown) => {
+          if (error instanceof HerdrError && error.code === "pane_not_found") return undefined;
+          throw error;
+        });
         inTime();
-        if (claudeInputDraft(live, colors)) throw new HerdrError("input_draft", CLAUDE_INPUT_DRAFT_MESSAGE);
+        const identity = pane ? pendingIdentity(pane) : null;
+        const sameClaude = (current: PendingIdentity | null): boolean => current?.agent === "claude"
+          && confirmation !== undefined && confirmation.draft === clearDraft
+          && current.terminalId === confirmation.identity.terminalId && current.session === confirmation.identity.session;
+        if (clearDraft !== undefined && !sameClaude(identity)) {
+          throw new HerdrError("pending_target_changed", "The named draft's Claude terminal or session changed; nothing was cleared or sent");
+        }
+        if ((pane?.agent ?? pane?.agent_session?.agent) === "claude") {
+          if (clearDraft === undefined) {
+            try {
+              await freeClaudeBox(paneId, pane?.agent_status === "working", authorize, arrivedAt + (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS));
+            } catch (error) {
+              if (error instanceof InputDraftError) throw new InputDraftError(error.draft, identity ?? undefined);
+              throw error;
+            }
+          }
+          let reads = await claudeBoxReads(paneId);
+          inTime();
+          // reads the pane's state first, then the screen the checks and the caller use, so a prompt
+          // that opens while the state is read is on that screen
+          const clearScreenReady = async (): Promise<void> => {
+            const current = await paneGet(paneId);
+            if (clearDraft !== undefined && !sameClaude(pendingIdentity(current))) {
+              throw new HerdrError("pending_target_changed", "The named draft's Claude terminal or session changed; nothing was cleared or sent");
+            }
+            reads = await claudeBoxReads(paneId);
+            if (secretPrompt(reads[0], attachments.get(paneId)?.cols) !== null
+              || parseInteractivePrompt("claude", reads[0], null, true, [], heldCandidate(paneId)) !== null
+              || modelListWaits("claude", reads[0]) || current.agent_status === "blocked") {
+              throw new HerdrError("agent_blocked", "The terminal is waiting for an answer; its draft was not cleared");
+            }
+            if (!["working", "idle", "done"].includes(current.agent_status)) {
+              throw new HerdrError("agent_not_ready", "The agent's current input state is not known");
+            }
+          };
+          if (clearDraft !== undefined) await clearScreenReady();
+          if (claudeInputDraft(...reads)) {
+            // only the draft the user was shown goes, never what has since replaced it
+            const draft = claudeClearableDraft(...reads);
+            if (clearDraft === undefined || draft !== clearDraft) throw new InputDraftError(draft, identity ?? undefined);
+            const reserve = DRAFT_CLEAR_WAIT_MS + 500;
+            inTime(reserve);
+            // A confirmation names the earlier draft, not text typed while it was inspected.
+            await clearScreenReady();
+            inTime(reserve);
+            const currentDraft = claudeClearableDraft(...reads);
+            if (currentDraft !== clearDraft) throw new InputDraftError(currentDraft, identity ?? undefined);
+            // The final draft comparison and clearing keys are not atomic (herdr has no compare-and-clear),
+            // so terminal text another client types moments after the user's explicit "Clear it and send"
+            // click can also be cleared.
+            // Connecting to herdr also yields: check the budget and authority again at the write.
+            const allowed = (): boolean => {
+              try { inTime(reserve); clearedDraft = true; return true; } catch { return false; }
+            };
+            try {
+              await paneSendKeys(paneId, CLAUDE_CLEAR_INPUT_KEYS, undefined, allowed);
+            } catch (error) {
+              if (error instanceof HerdrError && error.code === "cancelled") inTime(reserve);
+              throw error;
+            }
+            clearedDraft = true;
+            for (const deadline = Date.now() + DRAFT_CLEAR_WAIT_MS; await clearScreenReady(), claudeInputDraft(...reads);) {
+              if (Date.now() >= deadline) throw new InputDraftError(claudeClearableDraft(...reads));
+              await Bun.sleep(DRAFT_CLEAR_POLL_MS);
+            }
+            await clearScreenReady();
+            if (!claudeInputEmpty(...reads)) throw new InputDraftError(null);
+            inTime();
+          }
+          if (clearDraft !== undefined && !claudeInputEmpty(...reads)) throw new InputDraftError(null);
+        }
+        try {
+          progress.typing = true;
+          await agentPrompt(paneId, closeMention(text));
+          noteSubmitted(paneId, text);
+          return;
+        } catch (error) {
+          if (!(error instanceof HerdrError)) throw error;
+          if (NOT_TYPED_BY_AGENT_PROMPT.has(error.code)) progress.typing = false;
+          if (clearDraft !== undefined) throw error;
+          const queuedOnly = error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
+          const route = submitRoute(error.code, queuedOnly, agentOnly);
+          if (route === "rethrow") throw error;
+          if (route !== "type") throw new HerdrError(route.refuse.code, route.refuse.message);
+        }
       }
-      try {
+      inTime();
+      // a mirrored pane's browser never learned the program's paste mode, so `payload` came as bare
+      // lines: several of them are shaped here as the same block typed into the mirror is. herdr is
+      // asked only for such a block, so a one-line message never waits on it.
+      const shaped = await mirrorInput(closeMention(payload), async () => await terminalAttach() ? null : (await paneContext(paneId)).agent);
+      inTime();
+      progress.typing = true;
+      await paneSendText(paneId, shaped);
+      await Bun.sleep(options.submitDelayMs ?? SUBMIT_DELAY_MS);
+      authorize();
+      await paneSendKeys(paneId, ["Enter"]);
+      noteSubmitted(paneId, text);
+    } catch (error) {
+      if (clearedDraft) {
         progress.typing = true;
-        await agentPrompt(paneId, closeMention(text));
-        noteSubmitted(paneId, text);
-        return;
-      } catch (error) {
-        if (!(error instanceof HerdrError)) throw error;
-        if (NOT_TYPED_BY_AGENT_PROMPT.has(error.code)) progress.typing = false;
-        const queuedOnly = error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
-        const route = submitRoute(error.code, queuedOnly, agentOnly);
-        if (route === "rethrow") throw error;
-        if (route !== "type") throw new HerdrError(route.refuse.code, route.refuse.message);
-        // route "type": a Codex blocked only by its queue is an agent, and its prompt takes the message
+        throw new HerdrError("submit_partial", "Claude Code's terminal draft was cleared or may have changed, but sending was not confirmed. Your chat text stayed here. Check the terminal before sending again.");
       }
+      throw error;
     }
-    inTime();
-    // a mirrored pane's browser never learned the program's paste mode, so `payload` came as bare
-    // lines: several of them are shaped here as the same block typed into the mirror is. herdr is
-    // asked only for such a block, so a one-line message never waits on it.
-    const shaped = await mirrorInput(closeMention(payload), async () => await terminalAttach() ? null : (await paneContext(paneId)).agent);
-    inTime();
-    progress.typing = true;
-    await paneSendText(paneId, shaped);
-    await Bun.sleep(options.submitDelayMs ?? SUBMIT_DELAY_MS);
-    authorize();
-    await paneSendKeys(paneId, ["Enter"]);
-    noteSubmitted(paneId, text);
   }
 
   /** authorizeSocket as a test: may this connection type now? */
@@ -719,6 +851,35 @@ export function createServer(
     return [live, viewportShowsLive(scrollBefore, scrollAfter, colors, before, live) ? colors : null];
   }
 
+  /**
+   * The box check both chat sends share: a Claude Code input box that is not known to be empty is
+   * refused, except the chat's own last message, which Claude puts back as typed text when the send
+   * right after it is cancelled. That copy, while the agent is not working, two Esc presses empty
+   * again — never Ctrl+C, which would arm "press Ctrl-C again to exit" — then the box is read once
+   * more before the send. Every other draft, and a box still not empty after them, refuses as before.
+   * `authorize` throws once the sender may no longer send: it is asked before each Esc, and again
+   * right before herdr is written to. A send with less than RESTORED_CLEAR_RESERVE_MS left before its
+   * `deadline` clears nothing: it would erase the copy, then time out without sending.
+   */
+  async function freeClaudeBox(paneId: string, working: boolean, authorize: () => void, deadline: number): Promise<void> {
+    const allowed = (): boolean => { try { authorize(); return true; } catch { return false; } };
+    const [live, colors] = await claudeBoxReads(paneId);
+    if (!claudeInputDraft(live, colors)) return;
+    if (working || claudeRestoredDraft(live, colors, lastChatSubmitted(paneId)) === null) {
+      throw new InputDraftError(claudeClearableDraft(live, colors));
+    }
+    if (deadline - Date.now() < RESTORED_CLEAR_RESERVE_MS) throw new HerdrError("submit_timeout", "Too little time was left to clear Claude Code's input box and send; nothing was typed");
+    // the read proved the box holds the copy: a lone Esc on an EMPTY box would open Claude's
+    // rewind dialog instead
+    authorize();
+    await paneSendKeys(paneId, ["esc"], undefined, allowed);
+    await Bun.sleep(RESTORED_CLEAR_GAP_MS);
+    authorize();
+    await paneSendKeys(paneId, ["esc"], undefined, allowed);
+    await Bun.sleep(RESTORED_CLEAR_SETTLE_MS);
+    if (claudeInputDraft(...await claudeBoxReads(paneId))) throw new HerdrError("input_draft", CLAUDE_INPUT_DRAFT_MESSAGE);
+  }
+
   async function dispatchPendingText(owner: Client, paneId: string, text: string, lease: PendingLease, identity: PendingIdentity,
     automatic: boolean, arrivedAt: number, committing: (working: boolean) => void = () => {}): Promise<SubmitReply> {
     let wrote = false;
@@ -736,21 +897,30 @@ export function createServer(
       // a draft typed in the terminal is the user's: the paste would join it and the Enter send both (#609).
       // The box is the live screen's; only the viewport read tells Claude's grey text from a draft. The live
       // read comes after the colors, so text typed between the two is in the box and holds the message.
-      if (context.identity.agent === "claude" && claudeInputDraft(...await claudeBoxReads(paneId))) {
-        throw new HerdrError("input_draft", CLAUDE_INPUT_DRAFT_MESSAGE);
-      }
+      if (context.identity.agent === "claude") await freeClaudeBox(paneId, context.working, () => authorizePending(owner, paneId, lease), arrivedAt + (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS));
       if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "The pending message waited too long; nothing was typed");
       authorizePending(owner, paneId, lease);
+      // asked again right before herdr is written to: its connect is awaited (#666)
+      const allowed = (): boolean => {
+        try { authorizePending(owner, paneId, lease); return true; } catch { return false; }
+      };
       // Pending input is a guarded literal paste + Enter, never Codex's native Tab queue.
       // Keep the final key here so a disconnect, pane switch or new menu can cancel it.
       wrote = true;
-      await paneSendText(paneId, `\u001b[200~${closeMention(text)}\u001b[201~`);
+      await paneSendText(paneId, `\u001b[200~${closeMention(text)}\u001b[201~`, undefined, allowed).catch((error: unknown) => {
+        // a paste the guard refused was never written: the message is unsent, not uncertain
+        if (error instanceof HerdrError && error.code === "cancelled") { wrote = false; authorizePending(owner, paneId, lease); }
+        throw error;
+      });
       await Bun.sleep(options.submitDelayMs ?? SUBMIT_DELAY_MS);
       const beforeEnter = await pendingContext(owner, paneId, lease, identity, true);
       if (automatic && beforeEnter.working) throw new HerdrError("pending_wait", "The agent started another turn before this queued message could be committed");
       authorizePending(owner, paneId, lease);
-      committing(!automatic && beforeEnter.working);
-      await paneSendKeys(paneId, ["Enter"]);
+      const steering = !automatic && beforeEnter.working;
+      committing(steering);
+      // Claude Code queues what Enter commits during a turn; Ctrl+Enter sends it now (#737). herdr
+      // encodes the key as the pane asked, and as a plain CR for a program that asked for nothing.
+      await paneSendKeys(paneId, [steering && beforeEnter.identity.agent === "claude" ? "ctrl+enter" : "Enter"], undefined, allowed);
       noteSubmitted(paneId, text);
       return { ok: true };
     } catch (error) {
@@ -794,11 +964,13 @@ export function createServer(
   function stopSlowClient(client: Client): void {
     if (client.data.closing) return;
     client.data.closing = true;
+    present.delete(client);
     killWatches(client);
     pending.close(client);
     clients.delete(client);
     for (const paneId of client.data.attached.keys()) detach(paneId, client);
     client.data.attached.clear();
+    client.data.conversationInterests.clear();
     client.data.output.clear();
     client.close(OUTPUT_STALLED_CLOSE_CODE, "terminal output consumer stalled");
   }
@@ -846,6 +1018,7 @@ export function createServer(
     now: options.statusNow,
     loopbackHttp: options.pushLoopbackHttp === true,
     canDeliver: (id) => id === null || (id === undefined ? !devices.gated : devices.has(id)),
+    inUse: () => present.size > 0,
     lookupTitle: async (paneId) => {
       return paneTitle(await paneGet(paneId));
     },
@@ -942,7 +1115,9 @@ export function createServer(
     // the "terminal ended" screen): a stale entry would read as a live claim in
     // releaseUnclaimed and keep a later, empty pty on this pane running
     for (const member of attachment.clients) member.data.attached.delete(paneId);
+    for (const member of attachment.clients) member.data.conversationInterests.delete(paneId);
     for (const member of attachment.clients) member.data.output.delete(paneId);
+    releaseConversation(paneId);
     const retired = attachment.pty.exited.finally(() => {
       if (retiringAttachments.get(paneId) === retired) retiringAttachments.delete(paneId);
     });
@@ -987,6 +1162,7 @@ export function createServer(
     await retiringAttachments.get(paneId);
     const mirrored = !(await terminalAttach());
     const { terminalId, rect } = await terminalInfoFor(paneId);
+    if (stopped) throw new HerdrError("server_stopped", "the web bridge stopped during attachment creation");
     // an observer-first attachment spawns at the pane's own grid (fallback 80x24 when
     // the layout has no rect for it): the attach must not seed the shared pty with a
     // watching phone's viewport
@@ -1297,7 +1473,9 @@ export function createServer(
 
   function detach(paneId: string, client: Client): void {
     holdPending(client, paneId);
+    client.data.conversationInterests.delete(paneId);
     client.data.output.delete(paneId);
+    releaseConversation(paneId);
     const attachment = attachments.get(paneId);
     if (!attachment) return;
     attachment.clients.delete(client);
@@ -1554,13 +1732,13 @@ export function createServer(
           try {
             relay = new MachineRelay(machines, machineId, readOnly);
             await relay.ready;
-            const upgraded = bunServer.upgrade(request, { data: { attached: new Map<string, object>(), watches: new Map<string, PaneWatch>(), mode: readOnly ? "observe" : "interact", output: new Map(), closing: false, roles: 0, relay, deviceId, readOnly } });
+            const upgraded = bunServer.upgrade(request, { data: { attached: new Map<string, object>(), watches: new Map<string, PaneWatch>(), conversationInterests: new Set<string>(), mode: readOnly ? "observe" : "interact", output: new Map(), closing: false, roles: 0, relay, deviceId, readOnly } });
             if (upgraded) return undefined as unknown as Response;
             relay.close();
           } catch { relay?.close(); return new Response("remote websocket unavailable", { status: 502 }); }
           return new Response("websocket upgrade required", { status: 426 });
         }
-        const upgraded = bunServer.upgrade(request, { data: { attached: new Map<string, object>(), watches: new Map<string, PaneWatch>(), mode: readOnly ? "observe" : "interact", output: new Map(), closing: false, roles: 0, deviceId, readOnly } });
+        const upgraded = bunServer.upgrade(request, { data: { attached: new Map<string, object>(), watches: new Map<string, PaneWatch>(), conversationInterests: new Set<string>(), mode: readOnly ? "observe" : "interact", output: new Map(), closing: false, roles: 0, deviceId, readOnly } });
         if (upgraded) return undefined as unknown as Response;
         return new Response("websocket upgrade required", { status: 426 });
       }
@@ -1590,7 +1768,7 @@ export function createServer(
         if (!dictation.enabled) return dictationErrorResponse(new DictationError("not_configured", "Dictation is not configured", 503));
         if (pathname === "/api/dictation/ws" && request.method === "GET") {
           const deviceId = access.level === "full" ? access.device?.id : undefined;
-          if (bunServer.upgrade(request, { data: { kind: "dictation", deviceId, attached: new Map(), watches: new Map(), output: new Map(), closing: false, mode: "interact", roles: 0 } })) return;
+          if (bunServer.upgrade(request, { data: { kind: "dictation", deviceId, attached: new Map(), watches: new Map(), conversationInterests: new Set<string>(), output: new Map(), closing: false, mode: "interact", roles: 0 } })) return;
           return badRequest("invalid_upgrade", "Expected a WebSocket upgrade");
         }
         if ((pathname === "/api/dictation/models" && request.method === "GET") || (pathname === "/api/dictation/transcribe" && request.method === "POST")) {
@@ -2216,7 +2394,7 @@ export function createServer(
         const ref = url.searchParams.get("ref");
         if (!paneId || !ref) return badRequest("missing_parameter", "pane_id and ref query parameters are required");
         try {
-          const output = await toolOutput(paneId, ref, options.codexHome, options.opencodeDb);
+          const output = await toolOutput(paneId, ref, options.codexHome, options.opencodeDb, options.hermesHome);
           if (output === null) return jsonResponse({ error: { code: "output_not_found", message: "no such tool call in this pane's conversation" } }, 404);
           // a tool call's id names its output for good; OpenCode's ref names a place in a row it rewrites in place
           const cacheControl = OPENCODE_TOOL_REF.test(ref) ? "private, no-store" : "private, max-age=86400, immutable";
@@ -2250,8 +2428,7 @@ export function createServer(
           from: url.searchParams.get("from") ?? undefined,
         };
         try {
-          const { version, ...conversation } = await paneConversation(paneId, options.codexHome, page, options.devinDbPath, options.opencodeDb);
-          // The chat polls every 2s: an unchanged conversation answers 304 with no body.
+          const { version, ...conversation } = await paneConversation(paneId, options.codexHome, page, options.devinDbPath, options.opencodeDb, options.hermesHome);
           // no-store keeps the browser's own cache out of it, so the chat sees the 304.
           // weak: the same answer goes out gzipped or plain (compress.ts), which are not the same bytes
           const etag = `W/"${version}"`;
@@ -2466,8 +2643,10 @@ export function createServer(
             client.data.closing = true;
             killWatches(client);
             clients.delete(client);
+            present.delete(client);
             for (const paneId of client.data.attached.keys()) detach(paneId, client);
             client.data.attached.clear();
+            client.data.conversationInterests.clear();
             client.data.output.clear();
             client.data.relay?.close(1008, "Device access revoked");
             client.close(1008, "Device access revoked");
@@ -2485,9 +2664,14 @@ export function createServer(
       },
 
       async message(client, raw) {
-        if (client.data.closing) return;
+        if (stopped || client.data.closing) return;
         if (client.data.kind === "dictation") { client.data.dictation?.message(raw); return; }
+        // read here for a relayed connection too: alerts for every PC go out from this server
+        const presence = presenceOf(raw);
+        if (presence === true) present.add(client);
+        else if (presence === false) present.delete(client);
         if (client.data.relay) { client.data.relay.message(raw); return; }
+        if (presence !== null) return;
         let message: ClientMessage;
         try {
           message = JSON.parse(String(raw)) as ClientMessage;
@@ -2550,17 +2734,22 @@ export function createServer(
                 // a covered grid (keep_size) creates the pty at the pane's own size, as an observer does
                 attachment = await ensureAttachment(message.pane_id, geometry.cols, geometry.rows, client.data.mode === "observe" || message.keep_size === true);
               } catch (error) {
-                if (client.data.attached.get(message.pane_id) === claim) client.data.attached.delete(message.pane_id);
+                if (client.data.attached.get(message.pane_id) === claim) {
+                  client.data.attached.delete(message.pane_id);
+                  client.data.conversationInterests.delete(message.pane_id);
+                  releaseConversation(message.pane_id);
+                }
                 throw error;
               }
-              if (client.data.attached.get(message.pane_id) !== claim) {
+              if (stopped || client.data.closing || client.data.attached.get(message.pane_id) !== claim) {
                 releaseUnclaimed(message.pane_id, attachment);
                 break;
               }
-              // a mirror whose pane went away during its first read has already ended: joining
-              // it would leave this client on a terminal that never says anything again
-              if (attachment.mirror && attachments.get(message.pane_id) !== attachment) {
+              // A pane that ended during creation must not gain clients or revive interest.
+              if (attachments.get(message.pane_id) !== attachment) {
                 client.data.attached.delete(message.pane_id);
+                client.data.conversationInterests.delete(message.pane_id);
+                releaseConversation(message.pane_id);
                 send(client, { type: "pty-exit", pane_id: message.pane_id, code: null });
                 break;
               }
@@ -2607,6 +2796,24 @@ export function createServer(
             case "detach": {
               client.data.attached.delete(message.pane_id);
               detach(message.pane_id, client);
+              break;
+            }
+            case "conversation-watch": {
+              if (typeof message.pane_id !== "string" || message.pane_id.trim() === "" || typeof message.enabled !== "boolean") {
+                send(client, { type: "error", code: "invalid_conversation_watch", message: "pane_id must be a nonempty string and enabled must be a boolean" });
+                break;
+              }
+              if (message.enabled) {
+                if (!client.data.attached.has(message.pane_id)) {
+                  send(client, { type: "error", code: "not_attached", message: "conversation interest requires an attached pane", pane_id: message.pane_id });
+                  break;
+                }
+                client.data.conversationInterests.add(message.pane_id);
+                conversations.watch(message.pane_id);
+              } else {
+                client.data.conversationInterests.delete(message.pane_id);
+                releaseConversation(message.pane_id);
+              }
               break;
             }
             case "pty-ack": {
@@ -2675,8 +2882,18 @@ export function createServer(
                 send(client, { type: "error", code: "input_not_ready", message: "Terminal input is not ready. Nothing was sent.", pane_id: message.pane_id });
                 break;
               }
+              const typedIntoPty = (text: string) => {
+                lastTyped.set(message.pane_id, Date.now());
+                if (text.endsWith("\x1b")) typedEscape.add(message.pane_id); else typedEscape.delete(message.pane_id);
+                if (lastTyped.size > 64) {
+                  for (const [pane, at] of lastTyped) if (Date.now() - at > TYPED_SETTLE_MS) { lastTyped.delete(pane); typedEscape.delete(pane); }
+                }
+              };
               if (paneQueues.has(message.pane_id)) {
                 const text = message.text;
+                // a click or a wheel (a click replayed behind a held arrow) is the attach's own mouse:
+                // herdr encodes it for the program's mouse mode, send_text would type its bytes (#667)
+                const mouse = isMouseReport(text);
                 // typed into this attach: one that ended meanwhile (and was attached again) takes none of it
                 const pty = attachment.pty;
                 const claim = client.data.attached.get(message.pane_id);
@@ -2691,15 +2908,16 @@ export function createServer(
                   // nothing typed outlives its connection
                   if (!clients.has(client)) return;
                   authorizeSocket(client);
+                  if (mouse) {
+                    if (!allowed() || !pty.write(text)) { inputFailed(); return; }
+                    typedIntoPty(text);
+                    return;
+                  }
                   return paneSendText(message.pane_id, text, undefined, allowed);
                 }).catch(inputFailed);
               } else {
                 if (!attachment.pty.write(message.text)) { inputFailed(); break; }
-                lastTyped.set(message.pane_id, Date.now());
-                if (message.text.endsWith("\x1b")) typedEscape.add(message.pane_id); else typedEscape.delete(message.pane_id);
-                if (lastTyped.size > 64) {
-                  for (const [pane, at] of lastTyped) if (Date.now() - at > TYPED_SETTLE_MS) { lastTyped.delete(pane); typedEscape.delete(pane); }
-                }
+                typedIntoPty(message.text);
               }
               break;
             }
@@ -2876,9 +3094,10 @@ export function createServer(
             case "submit": {
               // every submit is answered: the composer keeps its text until it hears back. `typed: false`
               // only where nothing of the message reached the pane, which the client cannot tell on its own
-              const result = ({ ok, code, message: text, pending: accepted, typed }: SubmitReply) => send(client, {
+              const result = ({ ok, code, message: text, pending: accepted, typed, draft }: SubmitReply) => send(client, {
                 type: "submit-result", id: message.id, pane_id: message.pane_id, ok, ...(accepted ? { pending: accepted } : {}), ...(code ? { code, message: text } : {}),
                 ...(typed === false ? { typed: false as const } : {}),
+                ...(draft ? { draft } : {}),
               });
               if (!Number.isSafeInteger(message.id) || typeof message.pane_id !== "string" || !message.pane_id
                 || typeof message.text !== "string" || typeof message.payload !== "string") {
@@ -2888,6 +3107,11 @@ export function createServer(
               if ((message.delivery !== undefined && message.delivery !== "immediate" && message.delivery !== "queue")
                 || (message.delivery === "queue" && message.typed !== undefined && message.typed !== false)) {
                 result({ ok: false, code: "invalid_delivery", message: "Use immediate delivery, or queue a chat message", typed: false });
+                break;
+              }
+              if (message.clear_draft !== undefined && (typeof message.clear_draft !== "string" || !message.clear_draft
+                || message.delivery === "queue" || (message.typed !== undefined && message.typed !== false))) {
+                result({ ok: false, code: "invalid_delivery", message: "Clear a terminal draft only for a chat message sent at once", typed: false });
                 break;
               }
               if (client.data.mode === "observe") {
@@ -2940,11 +3164,20 @@ export function createServer(
                 await serialize(message.pane_id, () => {
                   // held while this waited its turn (the attach was refused after the check above)
                   if (attachments.get(message.pane_id)?.held) throw new HerdrError("attach_held", ATTACH_HELD_MESSAGE);
-                  return submitText(message.pane_id, message.text, message.payload, arrivedAt, message.typed === true, () => authorizeSocket(client), message.agent_only === true, progress);
+                  return submitText(message.pane_id, message.text, message.payload, arrivedAt, message.typed === true, () => authorizeSocket(client), message.agent_only === true, progress,
+                    message.clear_draft, draftConfirmations.get(client)?.get(message.pane_id));
                 });
+                if (message.clear_draft !== undefined) draftConfirmations.get(client)?.delete(message.pane_id);
                 result({ ok: true });
               } catch (error) {
-                result({ ok: false, ...pendingFault(error), ...(progress.typing ? {} : { typed: false as const }) });
+                if (message.clear_draft !== undefined) draftConfirmations.get(client)?.delete(message.pane_id);
+                if (error instanceof InputDraftError && error.draft && error.identity) {
+                  let confirmations = draftConfirmations.get(client);
+                  if (!confirmations) { confirmations = new Map(); draftConfirmations.set(client, confirmations); }
+                  confirmations.set(message.pane_id, { draft: error.draft, identity: error.identity });
+                }
+                result({ ok: false, ...pendingFault(error), ...(progress.typing ? {} : { typed: false as const }),
+                  ...(error instanceof InputDraftError ? { draft: error.draft } : {}) });
               }
               break;
             }
@@ -3008,13 +3241,16 @@ export function createServer(
 
       close(client) {
         client.data.unwatchDevice?.();
-        if (client.data.kind === "dictation") { client.data.closing = true; client.data.dictation?.close(); dictationClients.delete(client); return; }
+        client.data.closing = true;
+        present.delete(client);
+        if (client.data.kind === "dictation") { client.data.dictation?.close(); dictationClients.delete(client); return; }
         if (client.data.relay) { client.data.relay.close(); return; }
         killWatches(client);
         pending.close(client);
         clients.delete(client);
         for (const paneId of client.data.attached.keys()) detach(paneId, client);
         client.data.attached.clear();
+        client.data.conversationInterests.clear();
         client.data.output.clear();
       },
     },
@@ -3035,6 +3271,8 @@ export function createServer(
     statusReady: collector.ready,
     alertsSettled: () => push.settled(),
     stop: () => {
+      stopped = true;
+      conversations.stop();
       for (const controller of dictationRequests) controller.abort();
       dictationRequests.clear();
       for (const client of dictationClients) { client.data.closing = true; client.data.dictation?.close(); client.data.unwatchDevice?.(); }

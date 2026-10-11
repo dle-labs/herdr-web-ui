@@ -886,6 +886,32 @@
   font-size: var(--fs-xs);
 }
 
+/* a note with its one way on (send over the terminal's draft): the button after the reason, or
+   under it when the row is too short for both */
+.composer-note-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.composer-note-action {
+  min-height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  font-weight: var(--fw-medium);
+}
+
+@media (pointer: coarse) {
+  .composer-note-action {
+    min-height: var(--touch-target);
+  }
+}
+
 @media (max-width: 480px) {
   /* the transcript's gutter: the composer column equals the transcript column on a phone too */
   .composer {

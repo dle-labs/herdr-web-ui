@@ -184,7 +184,7 @@ export async function fetchSession(machineId = "local"): Promise<SessionSnapshot
 const wrappedOnly = new Set<string>();
 
 /**
- * GET /api/pane/read as the chat view polls it: herdr's own scrollback (up to
+ * GET /api/pane/read as the chat view reads it: herdr's own scrollback (up to
  * `lines`), ANSI-stripped text. herdr owns scrollback — the attach stream cannot
  * serve history, so the transcript reads it back instead. `recent_unwrapped`
  * rejoins the rows the terminal soft-wrapped, so a line reflows to the chat's
@@ -209,7 +209,9 @@ export async function fetchPaneTranscript(paneId: string, lines: number, machine
 export type ConversationPageQuery = { before?: string; since?: string; from?: string };
 
 /**
- * The last answer per polled conversation URL and its ETag. The chat polls every 2s
+ * The last answer per newest-page conversation URL and its ETag. The chat reads it again on
+ * every transcript push (at most every 2s), every send and status edge, and a 10s backstop
+ * (2s without pushes),
  * and a newest page can be megabytes: an unchanged one comes back as a bodyless 304,
  * and the chat gets the very same object back, which tells it nothing changed. An
  * older page (`before`) is asked for once, so it keeps no ETag and takes no slot.
@@ -651,10 +653,14 @@ export async function fetchPanePrompt(paneId: string, machineId = "local"): Prom
   return (await fetchPanePromptState(paneId, machineId)).prompt;
 }
 
-/** The waiting prompt, and with none, the next prompt the agent suggests (older servers send no suggestion). */
-export async function fetchPanePromptState(paneId: string, machineId = "local"): Promise<{ prompt: InteractivePrompt | null; suggestion: string | null }> {
-  const body = await getJson<{ prompt: InteractivePrompt | null; suggestion?: string | null }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`));
-  return { prompt: body.prompt, suggestion: typeof body.suggestion === "string" && body.suggestion !== "" ? body.suggestion : null };
+/** The waiting prompt, and with none, the next prompt the agent suggests; restored is a send the agent put back in its input box when it was cancelled (older servers send neither). */
+export async function fetchPanePromptState(paneId: string, machineId = "local"): Promise<{ prompt: InteractivePrompt | null; suggestion: string | null; restored: string | null }> {
+  const body = await getJson<{ prompt: InteractivePrompt | null; suggestion?: string | null; restored?: string | null }>(machinePath(machineId, `pane/prompt?pane_id=${encodeURIComponent(paneId)}`));
+  return {
+    prompt: body.prompt,
+    suggestion: typeof body.suggestion === "string" && body.suggestion !== "" ? body.suggestion : null,
+    restored: typeof body.restored === "string" && body.restored !== "" ? body.restored : null,
+  };
 }
 
 /** POST /api/pane/prompt/answer: ApiError 409 `prompt_changed` when the menu moved on. */

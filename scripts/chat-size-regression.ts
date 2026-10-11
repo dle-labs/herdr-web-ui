@@ -15,6 +15,16 @@ const NO_RESIZE_WAIT_MS = 400;
 type Frame = { dir: "in" | "out"; type: string; keep_size?: boolean; pane_id?: string };
 const framesOf = (page: Page) => page.evaluate(() => (window as unknown as { frames_: Frame[] }).frames_);
 
+/**
+ * Installs the page clock and pauses it. The pause time is read from the page, plus a margin for the
+ * round trip: the installed clock follows the page's real time, which can already be past a time
+ * taken here, and pausing at a past time throws (#766).
+ */
+async function pauseClock(page: Page): Promise<void> {
+  await page.clock.install();
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1_000);
+}
+
 async function stopHolder(holder: PtySession): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
@@ -258,8 +268,7 @@ export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, orig
     const keeping = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 1280, height: 800 } }, { language: "en", defaultView: "terminal" });
     await attached(keeping);
     // freeze timers after the real attach; only the release delay is advanced below
-    await keeping.clock.install();
-    await keeping.clock.pauseAt(new Date());
+    await pauseClock(keeping);
     await keeping.evaluate(() => {
       Object.defineProperty(document, "hasFocus", { configurable: true, value: () => false });
       window.dispatchEvent(new Event("blur"));
@@ -282,8 +291,7 @@ export async function checkBackgroundTabKeepsTerminalSize(browser: Browser, orig
     // its page can freeze before one does, and its attach would keep herdr's window at its size
     const pocket = await openRecording(browser, contexts, origin, paneId, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, { language: "en", defaultView: "terminal" });
     await attached(pocket);
-    await pocket.clock.install();
-    await pocket.clock.pauseAt(new Date());
+    await pauseClock(pocket);
     const pocketVisibility = (hidden: boolean) => pocket.evaluate((hide) => {
       Object.defineProperty(document, "visibilityState", { configurable: true, get: () => hide ? "hidden" : "visible" });
       Object.defineProperty(document, "hasFocus", { configurable: true, value: () => !hide });
@@ -526,8 +534,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           scenario === "mount", queueScenario || scenario === "writes" ? setup : undefined);
         if (scenario === "held") {
           await page.getByText("Another app has this pane open.", { exact: false }).waitFor();
-          await page.clock.install();
-          await page.clock.pauseAt(new Date());
+          await pauseClock(page);
           await page.evaluate(() => {
             Object.defineProperty(document, "hasFocus", { configurable: true, value: () => false });
             window.dispatchEvent(new Event("blur"));
@@ -569,8 +576,7 @@ export async function checkInactiveAttachLifecycle(browser: Browser, origin: str
           assert.deepEqual(await sent(page), [{ dir: "out", type: "attach", keep_size: true }]);
         } else {
           // Freeze timers after the real first attach; only the release delay is advanced below.
-          await page.clock.install();
-          await page.clock.pauseAt(new Date());
+          await pauseClock(page);
           if (scenario === "writes") {
             await page.clock.runFor(50);
             holdOutput = true;

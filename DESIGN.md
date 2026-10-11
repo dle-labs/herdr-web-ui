@@ -12,7 +12,7 @@ chrome color, amber: focus, the chosen lens, the terminal cursor and the user's 
 buttons). Agent states carry the remaining saturated colors and none of them is amber. The user's
 chat turns are neutral raised cards, so a long thread never turns into a wall of color. Dark is the
 default, light follows the same hierarchy, and comfortable or compact density changes scale without
-changing information architecture. A dark report look, a neutral charcoal one, Catppuccin and lilac are
+changing information architecture. A dark report look, a neutral charcoal one, Catppuccin, lilac and forest are
 opt-in palettes (Settings → Appearance → Colors); amber stays the default and the look before settings load.
 
 The sidebar is one grid: a leading cell that says who or what a row is (the coding agent's brand
@@ -70,12 +70,12 @@ paper, not UI, and the viewer (`.file-viewer-pdf`) must not tint it for the them
 
 ### Opt-in palettes
 
-`settings.palette` (`amber` default, `report`, `charcoal`, `catppuccin`, `lilac`) is written as `data-palette`. The
-tables above are amber, the base blocks; the four opt-in palettes override them in
+`settings.palette` (`amber` default, `report`, `charcoal`, `catppuccin`, `lilac`, `forest`) is written as `data-palette`. The
+tables above are amber, the base blocks; the five opt-in palettes override them in
 `[data-theme][data-palette]` blocks of `src/styles.css`, which hold the complete values.
 
 `--bubble-border` is the edge of the chat's user bubble. It is `transparent` where `--bg-elevated`
-alone parts the bubble from `--bg`: dark amber, dark report, dark charcoal and dark lilac. It is `var(--border)`
+alone parts the bubble from `--bg`: dark amber, dark report, dark charcoal, dark lilac and dark forest. It is `var(--border)`
 where the two surfaces sit close: every light theme (the `[data-theme="light"]` block sets it for
 all palettes) and dark Catppuccin, whose elevated surface is darker than its canvas.
 
@@ -116,6 +116,21 @@ all palettes) and dark Catppuccin, whose elevated surface is darker than its can
   states working `#85b8ff`, input `#ff94ad`, done `#92d9ab`, terminal `#18172f`, selection
   `#3a3768`. It keeps amber's rounded corners and card shadow, tinted indigo in light.
 
+- **Forest** is a low-saturation green-grey, flat on every surface, meant to be restful over a long
+  session (a preference, not a medical claim). In dark the canvas `--bg` `#101a16` sits under
+  chrome `--bg-panel` `#16231d` (elevated `#1d2d25`, hover `#263b30`, input `#132019`), borders `#2d4437` / `#3d5b49`, text `#d4e5d8` / `#9ab9a3` / `#edf7ef`, a pale green
+  accent and primary `#8fd3a2` (hover `#a7dfb5`) with `#102016` text. States keep hues of their
+  own: working `#79c7d4`, input `#ffa294`, done `#91d69a`, idle `#9ab9a3`; danger text `#ffd7d0`,
+  scrim `rgba(6, 14, 10, 0.6)`. Terminal `#16231d`, cursor `#8fd3a2`, selection `#31513e`. Light is
+  the same hue by day: canvas `#eaf2ed`, chrome `#f7fbf8` (elevated `#edf5ef`, hover `#e1eee5`,
+  input `#ffffff`), borders `#c9ddd0` / `#a7c3b2`, ink `#20352a` / `#4f6d5a` / `#15291e`, a green
+  accent `#2c7648` (darkened until it is AA on a hovered row) and primary `#397f50` (hover
+  `#2f6e44`) with white text, states working `#166578`, input `#a02b20`, done `#225f32`, idle
+  `#4f6d5a`, danger text `#9d3022`, scrim `rgba(24, 52, 35, 0.35)` and shadows tinted the same
+  green. Terminal `#f7fbf8`, cursor `#2c7648`, selection `#cfe5d5`. Tints are these colors at a
+  low alpha (0.1–0.16). It keeps amber's rounded corners and card shadow, and has syntax colors
+  of its own (below).
+
 ### Terminal theme
 
 xterm.js reads a JavaScript theme, so `src/lib/settings.ts` `terminalTheme()` mirrors these four
@@ -146,6 +161,8 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 | Dark charcoal | `#d7a08a` | `#a7b789` | `#c2a2af` | `#9fb4c2` | `#dcd8d0` | `#b8a5c9` |
 | Catppuccin Mocha | `#cba6f7` | `#a6e3a1` | `#fab387` | `#f9e2af` | `#f5e0dc` | `#f5c2e7` |
 | Catppuccin Latte | `#712fc6` | `#2f7620` | `#b44201` | `#905c13` | `#4c4f69` | `#bc1d91` |
+| Dark forest | `#e6a96d` | `#91d69a` | `#d2b18a` | `#79c7d4` | `#d4e5d8` | `#c2a0d8` |
+| Light forest | `#9c4f15` | `#225f32` | `#865d13` | `#166578` | `#20352a` | `#68489c` |
 
 `--syntax-function` in Catppuccin: Mocha `#89b4fa`, Latte `#0b59f4`.
 
@@ -235,10 +252,13 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 
 ### Settings
 - `theme`: `dark`, `light`, or `system`; default `dark`.
-- `palette`: `amber`, `report`, `charcoal`, `catppuccin` or `lilac`; default `amber`.
+- `palette`: `amber`, `report`, `charcoal`, `catppuccin`, `lilac` or `forest`; default `amber`.
 - `density`: `comfortable` or `compact`; default `comfortable`.
 - `sidebarRows`: `one` or `two`; default `two`.
 - Terminal font size is independent: default `13px`, clamped to `10–22px`.
+  During a two-finger pinch the font follows the fingers live and a badge above the grid shows the
+  size in pixels; the grid refits locally and the shared pty resizes once when a finger lifts.
+  Cancellation restores the starting size.
 - Terminal and chat font families are comma-separated lists, default empty. They go in front of the
   terminal's built-in fonts (after the bundled Symbols Nerd Font Mono, which only draws icons) and of
   `--font-ui` in the chat's prose (as `--font-chat`), never in place of them; code in the chat keeps
@@ -484,7 +504,7 @@ One set for both themes: the card is island black wherever it shows.
   are a quiet count beside it (`.background-count`), not a badge.
 
 ### Pill (`.pill`)
-- Mono metadata at `--chip-h`. Offline is the one header pill and uses danger tokens.
+- Mono metadata at `--chip-h`. Offline is the one header pill that stays, and uses danger tokens. A deep link that could not open what it named, and Copy link, say so in a plain `.header-note` pill for a moment (8 s, 1.6 s for Link copied). The note takes the flexible context's place and ellipsizes when narrow, keeping the lens and More controls in view.
 
 ### Sidebar roster row and footer
 - No top bar. The sidebar opens with the plan panel (when Settings puts it there), the PC workspace groups and a separate **Agents** list spanning the connected PCs. A workspace starts from the `+` on its PC's header, or from the **New workspace**

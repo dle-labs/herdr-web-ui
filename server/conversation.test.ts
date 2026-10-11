@@ -490,6 +490,97 @@ describe("parseClaudeTranscript", () => {
     ]);
   });
 
+  it("drops a prompt cancelled before any reply when Claude Code re-sends it from the same parent", () => {
+    // Claude Code 2.1.296 on send, Esc before any reply, then a re-send: the cancelled record
+    // and the re-send are siblings under one parent, only bookkeeping lines between, and the
+    // TUI shows only the re-send
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", uuid: "a35be47b", parentUuid: "07055903", timestamp: "2026-10-10T08:00:00.000Z", message: { role: "user", content: "apple 2-87" } }),
+      JSON.stringify({ type: "attachment", attachment: { type: "file-history-snapshot" } }),
+      JSON.stringify({ type: "last-prompt" }),
+      JSON.stringify({ type: "user", uuid: "7477aa61", parentUuid: "07055903", timestamp: "2026-10-10T08:00:04.000Z", message: { role: "user", content: "cherry 2" } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-10-10T08:00:06.000Z", message: { role: "assistant", content: [{ type: "text", text: "Cherry." }] } }),
+    ].join("\n"));
+    expect(turns).toEqual([
+      { role: "user", ts: "2026-10-10T08:00:04.000Z", parts: [{ kind: "text", text: "cherry 2" }] },
+      { role: "assistant", ts: "2026-10-10T08:00:06.000Z", end_ts: "2026-10-10T08:00:06.000Z", parts: [{ kind: "text", text: "Cherry." }] },
+    ]);
+  });
+
+  it("keeps a prompt re-sent from the same parent when the first one was answered", () => {
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", uuid: "u1", parentUuid: "p", timestamp: "2026-10-10T08:00:00.000Z", message: { role: "user", content: "first" } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-10-10T08:00:02.000Z", message: { role: "assistant", content: [{ type: "text", text: "one answer" }] } }),
+      JSON.stringify({ type: "user", uuid: "u2", parentUuid: "p", timestamp: "2026-10-10T08:00:05.000Z", message: { role: "user", content: "second" } }),
+    ].join("\n"));
+    expect(turns.map((turn) => [turn.role, turn.parts[0]])).toEqual([
+      ["user", { kind: "text", text: "first" }],
+      ["assistant", { kind: "text", text: "one answer" }],
+      ["user", { kind: "text", text: "second" }],
+    ]);
+  });
+
+  it("keeps an unanswered prompt when the next one hangs from another parent", () => {
+    // an ordinary next prompt's parent is the answer before it, not the earlier prompt's
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", uuid: "u1", parentUuid: "p", timestamp: "2026-10-10T08:00:00.000Z", message: { role: "user", content: "first" } }),
+      JSON.stringify({ type: "user", uuid: "u2", parentUuid: "q", timestamp: "2026-10-10T08:00:05.000Z", message: { role: "user", content: "second" } }),
+    ].join("\n"));
+    expect(turns.map((turn) => [turn.role, turn.parts[0]])).toEqual([
+      ["user", { kind: "text", text: "first" }],
+      ["user", { kind: "text", text: "second" }],
+    ]);
+  });
+
+  it("sees the cancelled prompt whether it was written as a string or as blocks", () => {
+    const turns = parseClaudeTranscript([
+      JSON.stringify({ type: "user", uuid: "u1", parentUuid: "p", timestamp: "2026-10-10T08:00:00.000Z", message: { role: "user", content: "string draft" } }),
+      JSON.stringify({ type: "user", uuid: "u2", parentUuid: "p", timestamp: "2026-10-10T08:00:03.000Z", message: { role: "user", content: [{ type: "text", text: "block resend" }] } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-10-10T08:00:04.000Z", message: { role: "assistant", content: [{ type: "text", text: "answer" }] } }),
+      JSON.stringify({ type: "user", uuid: "u3", parentUuid: "a", timestamp: "2026-10-10T08:01:00.000Z", message: { role: "user", content: [{ type: "text", text: "block draft" }] } }),
+      JSON.stringify({ type: "user", uuid: "u4", parentUuid: "a", timestamp: "2026-10-10T08:01:03.000Z", message: { role: "user", content: "string resend" } }),
+      JSON.stringify({ type: "assistant", timestamp: "2026-10-10T08:01:05.000Z", message: { role: "assistant", content: [{ type: "text", text: "another" }] } }),
+    ].join("\n"));
+    expect(turns.map((turn) => [turn.role, turn.parts[0]])).toEqual([
+      ["user", { kind: "text", text: "block resend" }],
+      ["assistant", { kind: "text", text: "answer" }],
+      ["user", { kind: "text", text: "string resend" }],
+      ["assistant", { kind: "text", text: "another" }],
+    ]);
+  });
+
+  it("hides the cancelled prompt on the live page too once its re-send arrives", () => {
+    // Live records: user a35be47b parented on 07055903, cancelled before any reply (only
+    // attachment/last-prompt bookkeeping after it), then re-send 7477aa61 on the same
+    // parent and the answer. The re-send opens no new turn, so the cancelled record stays
+    // inside the live tail the sibling rule reparses instead of settling visible.
+    const root = mkdtempSync(join(tmpdir(), "herdr-resend-page-"));
+    try {
+      const path = join(root, "session.jsonl");
+      const write = (...entries: unknown[]) => appendFileSync(path, entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
+      const prompt = (uuid: string, parentUuid: string, text: string, timestamp: string) =>
+        ({ type: "user", uuid, parentUuid, timestamp, message: { role: "user", content: text } });
+      const answer = (text: string, timestamp: string) =>
+        ({ type: "assistant", timestamp, message: { role: "assistant", content: [{ type: "text", text }] } });
+      const texts = (turns: ConversationTurn[]) => turns.flatMap((turn) => turn.parts.flatMap((part) => part.kind === "text" ? [part.text] : []));
+      write(prompt("u0", "p0", "first ask", "2026-10-10T08:00:00.000Z"), answer("first answer", "2026-10-10T08:00:02.000Z"),
+        prompt("a35be47b", "p1", "apple 2-87", "2026-10-10T08:01:00.000Z"),
+        { type: "attachment", attachment: { type: "file-history-snapshot" } }, { type: "last-prompt" });
+      expect(texts(transcriptPage("claude-transcript", path).turns)).toEqual(["first ask", "first answer", "apple 2-87"]);
+      write(prompt("7477aa61", "p1", "cherry 2", "2026-10-10T08:01:04.000Z"), answer("Cherry.", "2026-10-10T08:01:06.000Z"));
+      const warm = transcriptPage("claude-transcript", path);
+      expect(texts(warm.turns)).toEqual(["first ask", "first answer", "cherry 2", "Cherry."]);
+      forgetTranscriptState();
+      expect(transcriptPage("claude-transcript", path).turns).toEqual(warm.turns);
+      // an ordinary next prompt hangs from another parent and still opens a turn of its own
+      write(prompt("u9", "p9", "next ask", "2026-10-10T08:02:00.000Z"));
+      expect(texts(transcriptPage("claude-transcript", path).turns)).toEqual(["first ask", "first answer", "cherry 2", "Cherry.", "next ask"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      forgetTranscriptState();
+    }
+  });
+
   describe("subagent notifications", () => {
     const roots: string[] = [];
     afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); forgetTranscriptState(); });

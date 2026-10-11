@@ -344,10 +344,11 @@ export const defaultCodexHome = (): string => process.env["CODEX_HOME"] || join(
 /** What processCodexHome found, by pid and argv, and when (PROCESS_HOME_TTL_MS). */
 const processHomes = new Map<string, { home: string | null; at: number }>();
 /**
- * A chat polls every 2 s and macOS reads the environment with a `ps` spawn: a process's
- * environment does not change, so its answer is kept. A pid reused by another process
- * carries other arguments or comes after this; ponytail: a reused pid with the same argv
- * inside it reads the old store until it runs out.
+ * A visible chat reads its conversation up to every 2 s while the transcript changes, the
+ * conversation monitor re-resolves its file every 5 s, and macOS reads the environment with
+ * a `ps` spawn: a process's environment does not change, so its answer is kept. A pid
+ * reused by another process carries other arguments or comes after this; ponytail: a
+ * reused pid with the same argv inside it reads the old store until it runs out.
  */
 const PROCESS_HOME_TTL_MS = 30_000;
 
@@ -1304,8 +1305,9 @@ export async function codexTranscriptPath(paneId: string, cwd: string, home = de
     // lsof is available on macOS, where /proc does not exist. Keep the same
     // canonical-store and unambiguous-open-file checks as the Linux path. One run
     // for every Codex process of the pane (a wrapper and the binary are two), and
-    // -b keeps lsof off the stat calls it does not need for a name: a chat polls this
-    // every 2 s, and each run costs about 20 ms of process start and kernel walk
+    // -b keeps lsof off the stat calls it does not need for a name: a chat reads this up
+    // to every 2 s while its transcript changes, the conversation monitor every 5 s, and
+    // each run costs about 20 ms of process start and kernel walk
     const child = Bun.spawn(["/usr/sbin/lsof", "-nPbw", "-a", "-p", codexProcesses.map((process) => process.pid).join(","), "-Fn"], { stdout: "pipe", stderr: "ignore" });
     const timer = setTimeout(() => child.kill(), 3000);
     try {

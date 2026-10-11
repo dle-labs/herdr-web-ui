@@ -62,6 +62,27 @@
   min-height: 0;
 }
 
+/* A pinch's target size floats above xterm, without taking rows or touches. */
+.terminal-font-size {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  z-index: var(--z-banner);
+  transform: translateX(-50%);
+  padding: var(--space-1) var(--space-2);
+  border: var(--hairline) solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--bg-elevated);
+  color: var(--text-strong);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: var(--lh-base);
+  white-space: nowrap;
+  box-shadow: var(--shadow-card);
+  pointer-events: none;
+}
+
 /* Under the chat lens a prompt card and the held messages can take the stack's whole height (a
    phone with its keyboard up). The transcript's box then reaches zero, and its scroller, which
    keeps its own padding, must not paint over what stands under it. The xterm mount is not

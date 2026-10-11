@@ -898,7 +898,7 @@ describe("workspace and discovery endpoints", () => {
 
     const prompt = await fetch(`${base()}/api/pane/prompt?pane_id=${encodeURIComponent(paneId)}`);
     expect(prompt.status).toBe(200);
-    expect(await prompt.json()).toEqual({ prompt: null, suggestion: null });
+    expect(await prompt.json()).toEqual({ prompt: null, suggestion: null, restored: null });
 
     for (const [path, body] of [
       ["/api/workspace/rename", { workspace_id: workspaceId, label: `${label}-renamed` }],
@@ -2036,6 +2036,82 @@ describe("web push", () => {
     expect(pushed!.urgency).toBe("high");
     expect(pushed!.vapidValid).toBe(true);
   }, 40_000);
+
+  it("sends no device an alert while a connected page says it is in use, and alerts again once it is not (#751)", async () => {
+    let created: Awaited<ReturnType<typeof workspaceCreate>> | undefined;
+    let dir: string | undefined;
+    let device: FakePushService | undefined;
+    let bridge: ReturnType<typeof createServer> | undefined;
+    let page: RecordingSocket | undefined;
+    try {
+      created = await workspaceCreate({ cwd: tmpdir(), label: "herdr-web-ui-test-push-presence" });
+      const paneId = created.root_pane.pane_id;
+      dir = mkdtempSync(join(tmpdir(), "herdr-web-ui-push-presence-"));
+      device = await startFakePushService();
+      bridge = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: dir, machines: false, pushLoopbackHttp: true,
+        alertTiming: { short: 0, long: 0, longTurn: 0 } });
+      const subscribe = await fetch(`http://127.0.0.1:${bridge.port}/api/push/subscribe`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ subscription: device.subscription }),
+      });
+      expect(subscribe.status).toBe(204);
+      page = await RecordingSocket.connect(`ws://127.0.0.1:${bridge.port}/ws`);
+      // a connection's frames are handled in order: the role-ack says the presence before it was read
+      const tell = async (active: boolean): Promise<void> => {
+        page!.seen.length = 0;
+        page!.send({ type: "presence", active });
+        page!.send({ type: "role", mode: "interact" });
+        await page!.waitFor((message) => message.type === "role-ack", "role-ack after presence", 5_000);
+      };
+      const report = async (state: "working" | "blocked"): Promise<boolean> => {
+        // only a frame this report caused may answer it
+        page!.seen.length = 0;
+        await herdrRpc("pane.report_agent", { pane_id: paneId, source: "manual", agent: "claude", state });
+        return page!.waitFor((message) => message.type === "pane-status" && message.pane_id === paneId && message.agent_status === state,
+          `${state} on the page`, 2_500).then(() => true).catch(() => false);
+      };
+      const alerts = () => device!.received.filter((push) => push.payload.pane_id === paneId);
+
+      await tell(true);
+      // the collector may still be subscribing to the new pane: alternate until a blocked lands
+      let blocked = false;
+      for (let attempt = 0; attempt < 8 && !blocked; attempt++) {
+        await report("working");
+        blocked = await report("blocked");
+      }
+      expect(blocked).toBe(true);
+      await bridge.alertsSettled();
+      expect(alerts()).toHaveLength(0);
+
+      await tell(false);
+      expect(await report("working")).toBe(true);
+      expect(await report("blocked")).toBe(true);
+      const pushed = await device.waitFor((push) => push.payload.pane_id === paneId, "alert once no page is in use", 5_000);
+      expect(pushed.payload.body).toBe("waiting for your input");
+
+      // a page that leaves without saying so no longer holds the alerts back
+      await tell(true);
+      page.close();
+      page = undefined;
+      const watcher = await RecordingSocket.connect(`ws://127.0.0.1:${bridge.port}/ws`);
+      page = watcher;
+      // the server reads the close on its own time: alternate until an alert comes, which only
+      // happens once the closed page stopped holding them back
+      let alerted = false;
+      for (let attempt = 0; attempt < 8 && !alerted; attempt++) {
+        expect(await report("working")).toBe(true);
+        expect(await report("blocked")).toBe(true);
+        await bridge.alertsSettled();
+        alerted = alerts().length === 2;
+      }
+      expect(alerted).toBe(true);
+    } finally {
+      page?.close();
+      bridge?.stop();
+      device?.stop();
+      if (created) await workspaceClose(created.workspace.workspace_id).catch(() => undefined);
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("reports a Codex unknown after work as done over WS and HTTP and delivers its completion push", async () => {
     // Exercise the real collector -> CompletionTracker -> PushService path using

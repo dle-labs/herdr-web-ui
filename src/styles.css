@@ -7,7 +7,7 @@
  * the attribute); `[data-density="compact"]` overrides the type scale and row
  * heights. The base blocks are the amber palette, the default and the look before
  * settings load; `[data-palette]` blocks override them for the opt-in report,
- * charcoal and catppuccin palettes. xterm cannot read CSS custom properties, so the --term-* group
+ * charcoal, catppuccin, lilac and forest palettes. xterm cannot read CSS custom properties, so the --term-* group
  * is mirrored in settings.ts `terminalTheme()`.
  * Component-scoped rules live beside their component (Sidebar.css,
  * PaneTerminal.css, ...); this file owns the app shell, the header and the
@@ -559,6 +559,90 @@
   --term-fg: #2b2d4d;
   --term-cursor: #4a42c2;
   --term-selection: #dcd7f8;
+}
+
+/* Forest: low-saturation green-grey surfaces for long sessions. The accent stays green, while
+   working, blocked and done keep separate status hues. */
+[data-theme="dark"][data-palette="forest"] {
+  --bg: #101a16;
+  --bg-panel: #16231d;
+  --bg-elevated: #1d2d25;
+  --bg-hover: #263b30;
+  --bg-input: #132019;
+  --border: #2d4437;
+  --border-strong: #3d5b49;
+  --text: #d4e5d8;
+  --text-dim: #9ab9a3;
+  --text-strong: #edf7ef;
+  --accent: #8fd3a2;
+  --accent-tint: rgba(143, 211, 162, 0.14);
+  --primary: #8fd3a2;
+  --primary-hover: #a7dfb5;
+  --primary-text: #102016;
+  --primary-tint: rgba(143, 211, 162, 0.16);
+  --status-idle: #9ab9a3;
+  --status-working: #79c7d4;
+  --status-blocked: #ffa294;
+  --status-done: #91d69a;
+  --status-working-tint: rgba(121, 199, 212, 0.14);
+  --status-blocked-tint: rgba(255, 162, 148, 0.14);
+  --status-done-tint: rgba(145, 214, 154, 0.14);
+  --danger-tint: rgba(255, 162, 148, 0.12);
+  --danger-text: #ffd7d0;
+  --scrim: rgba(6, 14, 10, 0.6);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --term-bg: #16231d;
+  --term-fg: #d4e5d8;
+  --term-cursor: #8fd3a2;
+  --term-selection: #31513e;
+  --syntax-keyword: #e6a96d;
+  --syntax-string: #91d69a;
+  --syntax-number: #d2b18a;
+  --syntax-type: #79c7d4;
+  --syntax-variable: #d4e5d8;
+  --syntax-meta: #c2a0d8;
+}
+
+[data-theme="light"][data-palette="forest"] {
+  --bg: #eaf2ed;
+  --bg-panel: #f7fbf8;
+  --bg-elevated: #edf5ef;
+  --bg-hover: #e1eee5;
+  --bg-input: #ffffff;
+  --border: #c9ddd0;
+  --border-strong: #a7c3b2;
+  --text: #20352a;
+  --text-dim: #4f6d5a;
+  --text-strong: #15291e;
+  --accent: #2c7648;
+  --accent-tint: rgba(44, 118, 72, 0.1);
+  --primary: #397f50;
+  --primary-hover: #2f6e44;
+  --primary-text: #ffffff;
+  --primary-tint: rgba(57, 127, 80, 0.12);
+  --status-idle: #4f6d5a;
+  --status-working: #166578;
+  --status-blocked: #a02b20;
+  --status-done: #225f32;
+  --status-working-tint: rgba(22, 101, 120, 0.12);
+  --status-blocked-tint: rgba(160, 43, 32, 0.1);
+  --status-done-tint: rgba(34, 95, 50, 0.12);
+  --danger-tint: rgba(160, 43, 32, 0.1);
+  --danger-text: #9d3022;
+  --scrim: rgba(24, 52, 35, 0.35);
+  --shadow-drawer: 0 0 40px rgba(24, 52, 35, 0.22);
+  --shadow-pop: 0 16px 48px rgba(24, 52, 35, 0.16), 0 0 0 1px var(--border);
+  --shadow-card: 0 4px 16px rgba(24, 52, 35, 0.07);
+  --term-bg: #f7fbf8;
+  --term-fg: #20352a;
+  --term-cursor: #2c7648;
+  --term-selection: #cfe5d5;
+  --syntax-keyword: #9c4f15;
+  --syntax-string: #225f32;
+  --syntax-number: #865d13;
+  --syntax-type: #166578;
+  --syntax-variable: #20352a;
+  --syntax-meta: #68489c;
 }
 
 [data-chat-width="narrow"] {

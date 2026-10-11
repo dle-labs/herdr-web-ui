@@ -30,7 +30,7 @@
  * This module turns those files into the conversation the chat lens renders;
  * the pty stays the input path. Pure parsing lives in parseClaudeTranscript /
  * parseOmpTranscript (unit-tested); pane/session/file resolution is
- * integration and lives in paneConversation.
+ * integration and lives in paneTranscript.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -52,6 +52,7 @@ import { forgetAllPiIndexes, forgetPiIndex, piAbandonedTurns, piBranchSegments }
 import { defaultDevinDbPath, DevinHistoryUnavailable, devinConversation, forgetDevinState } from "./devin.ts";
 import { trimOutput } from "./tool-output.ts";
 import { parseConversationMetadata } from "./conversation-metadata.ts";
+import { forgetHermesTranscriptState, hermesConversationPage, hermesToolOutput, hermesTranscriptForPane } from "./hermes.ts";
 
 import { invokedSkill } from "./skill-activity.ts";
 import { agentTaskResult, isContextClear, MAX_TURNS, parseOmpTranscript, piImageBlock, piMessage, piResults, toolSummary } from "./transcript-records.ts";
@@ -220,6 +221,7 @@ interface TranscriptEntry {
   content?: unknown;
   timestamp?: string;
   uuid?: string;
+  parentUuid?: string | null;
   isMeta?: boolean;
   isCompactSummary?: boolean;
   message?: { role?: string; content?: unknown; stop_reason?: unknown };
@@ -274,6 +276,21 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
     return turn;
   };
 
+  /** the last human prompt and the entry it hangs from: a send Claude Code cancelled before
+   *  any reply is re-sent as a sibling of it, and its own screen shows only the re-send */
+  let lastPrompt: { turn: ConversationTurn; parent: string | null | undefined; answered: boolean } | null = null;
+  const pushPrompt = (turn: ConversationTurn, entry: TranscriptEntry): void => {
+    if (lastPrompt !== null && !lastPrompt.answered && typeof entry.parentUuid === "string" && entry.parentUuid === lastPrompt.parent) {
+      const index = turns.indexOf(lastPrompt.turn);
+      if (index !== -1) turns.splice(index, 1);
+    }
+    turns.push(turn);
+    lastPrompt = { turn, parent: entry.parentUuid, answered: false };
+  };
+  const markPromptAnswered = (): void => {
+    if (lastPrompt !== null) lastPrompt.answered = true;
+  };
+
   for (const line of text.split("\n")) {
     if (line.trim().length === 0) continue;
     let entry: TranscriptEntry;
@@ -283,7 +300,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
       continue; // a torn tail line while Claude is mid-append
     }
     if (entry === null || typeof entry !== "object" || entry.isMeta) continue;
-    if (isContextClear(entry, "claude-transcript")) { turns.length = 0; pending.clear(); continue; }
+    if (isContextClear(entry, "claude-transcript")) { turns.length = 0; pending.clear(); lastPrompt = null; continue; }
     const content = entry.message?.content;
     // a compaction's summary marks where the conversation was folded, readable on request
     if (entry.isCompactSummary) {
@@ -340,7 +357,7 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
     if (entry.type === "user" && typeof content === "string") {
       if (notified(content, entry.timestamp ?? null)) continue;
       if (isCommandEntry(content)) continue;
-      turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: unwrapPastes(content) }] });
+      pushPrompt({ role: "user", ts: entry.timestamp ?? null, parts: [{ kind: "text", text: unwrapPastes(content) }] }, entry);
       continue;
     }
 
@@ -369,11 +386,12 @@ export function parseClaudeTranscript(text: string, maxTurns = MAX_TURNS, option
         if (image?.type !== "image" || image.source?.type !== "base64" || typeof image.source.media_type !== "string" || !IMAGE_TYPES.has(image.source.media_type)) return [];
         return [{ kind: "image" as const, media_type: image.source.media_type, ref: `${entry.uuid}:${index}` }];
       });
-      if (prompt.trim() || images.length > 0) turns.push({ role: "user", ts: entry.timestamp ?? null, parts: [...images, ...(prompt.trim() ? [{ kind: "text" as const, text: unwrapPastes(prompt) }] : [])] });
+      if (prompt.trim() || images.length > 0) pushPrompt({ role: "user", ts: entry.timestamp ?? null, parts: [...images, ...(prompt.trim() ? [{ kind: "text" as const, text: unwrapPastes(prompt) }] : [])] }, entry);
       continue;
     }
 
     if (entry.type === "assistant" && Array.isArray(content)) {
+      markPromptAnswered();
       const turn = assistantTurn(entry.timestamp);
       // an entry that names no stop reason is still at work when it calls a tool
       const stop = entry.message?.stop_reason;
@@ -440,7 +458,7 @@ export class HistoryChanged extends Error {
 
 /** What paneConversation resolved: which store the turns came from, and where they start. */
 export type RecognizedConversation = {
-  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript";
+  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript";
   turns: ConversationTurn[];
   metadata: ConversationMetadata;
   /** the first turn's position, for the page before it; null at the conversation's beginning */
@@ -457,12 +475,12 @@ export type RecognizedConversation = {
 };
 
 /** The stores read as one append-only file: OpenCode's and Devin's databases are paged by opencode.ts and devin.ts. */
-type StreamSource = Exclude<RecognizedConversation["source"], "opencode-transcript" | "devin-transcript">;
+type StreamSource = Exclude<RecognizedConversation["source"], "opencode-transcript" | "devin-transcript" | "hermes-transcript">;
 
 /** A restart may parse the same files differently: its answers never match an earlier ETag. */
 const PROCESS_VERSION = randomUUID();
 
-function answerVersion(key: string, signature: string): string {
+export function answerVersion(key: string, signature: string): string {
   return createHash("sha256").update(`${PROCESS_VERSION}\0${key}\0${signature}`).digest("base64url").slice(0, 22);
 }
 
@@ -641,13 +659,37 @@ function opensTurn(source: StreamSource, line: string): boolean {
     block?.type === "text" && typeof block.text === "string" && !isCommandEntry(block.text.trim()));
 }
 
-function turnStarts(bytes: Buffer, source: StreamSource): number[] {
+/**
+ * Where the last turn-opening Claude prompt hangs, and whether an assistant entry has
+ * answered it since. A prompt Claude Code cancelled before any reply is written again as
+ * the re-send's sibling (same parentUuid): it continues the cancelled prompt's turn rather
+ * than opening a new one, so the cancelled record never settles into a page that reparses
+ * without it — the same sibling rule parseClaudeTranscript applies to the bytes.
+ */
+interface PromptChain { parent: string | null; answered: boolean }
+
+function turnStarts(bytes: Buffer, source: StreamSource, chain: PromptChain = { parent: null, answered: true }): number[] {
   const starts: number[] = [];
   for (let offset = 0; offset < bytes.length;) {
     const newline = bytes.indexOf(0x0a, offset);
     const end = newline === -1 ? bytes.length : newline;
     const line = bytes.subarray(offset, end);
-    if (line.includes(TURN_MARK[source]) && opensTurn(source, line.toString("utf8"))) starts.push(offset);
+    if (source === "claude-transcript" && line.includes('"type":"assistant"')) chain.answered = true;
+    if (line.includes(TURN_MARK[source]) && opensTurn(source, line.toString("utf8"))) {
+      if (source === "claude-transcript") {
+        let parent: string | null = null;
+        try {
+          const uuid: unknown = (JSON.parse(line.toString("utf8")) as TranscriptEntry | null)?.parentUuid;
+          parent = typeof uuid === "string" ? uuid : null;
+        } catch { /* opensTurn already read the line as JSON */ }
+        // a re-send of an unanswered prompt opens no turn of its own
+        if (chain.answered || parent === null || parent !== chain.parent) starts.push(offset);
+        chain.parent = parent;
+        chain.answered = false;
+      } else {
+        starts.push(offset);
+      }
+    }
     offset = end + 1;
   }
   return starts;
@@ -679,9 +721,10 @@ function pageBefore(stream: TranscriptStream, source: StreamSource, to: number, 
 }
 
 /**
- * The newest page is asked for on every poll while an agent works, and between polls its
- * file only grows. Rescanning its whole window (16 MB on a long session) and reparsing
- * the page each time held the event loop 50-110 ms every 2 s, so per live file:
+ * The newest page is read again after each transcript change while an agent works (at most
+ * every 2 s per chat), and between reads its file only grows. Rescanning its whole window
+ * (16 MB on a long session) and reparsing the page each time held the event loop 50-110 ms
+ * per read, so per live file:
  * - the turn starts found so far are kept, and only the bytes appended since are scanned;
  * - the turns before the page's last turn start are kept (a later append cannot change a
  *   turn that another has followed), and only the last turn is parsed again.
@@ -695,6 +738,8 @@ interface LiveScan {
   starts: number[];
   /** the bytes just before `scanned`: a file rewritten rather than appended to no longer has them */
   tail: string;
+  /** the prompt chain the scanned lines end on, which the next appended lines continue */
+  chain: PromptChain;
 }
 const liveScans = new Map<string, LiveScan>();
 
@@ -771,15 +816,16 @@ function newestPage(path: string, stream: TranscriptStream, source: StreamSource
   // there, as in pageBefore, and never counts as a start)
   if (!scan || scan.id !== stream.id || scan.source !== source || scan.scanned > stream.length || scan.scanned < from
     || bytesBefore(stream, scan.scanned) !== scan.tail) {
-    scan = { id: stream.id, source, scanned: from, starts: [], tail: bytesBefore(stream, from) };
+    scan = { id: stream.id, source, scanned: from, starts: [], tail: bytesBefore(stream, from), chain: { parent: null, answered: true } };
   }
   let pending: number[] = [];
   if (scan.scanned < stream.length) {
     const bytes = readStream(stream, scan.scanned, stream.length);
     const complete = bytes.lastIndexOf(0x0a) + 1;
-    for (const offset of turnStarts(bytes.subarray(0, complete), source)) scan.starts.push(scan.scanned + offset);
-    // a last line still without its newline counts now, and is scanned again once complete
-    pending = turnStarts(bytes.subarray(complete), source).map((offset) => scan!.scanned + complete + offset);
+    for (const offset of turnStarts(bytes.subarray(0, complete), source, scan.chain)) scan.starts.push(scan.scanned + offset);
+    // a last line still without its newline counts now, and is scanned again once
+    // complete, so it is scanned on a copy that leaves the kept chain untouched
+    pending = turnStarts(bytes.subarray(complete), source, { ...scan.chain }).map((offset) => scan!.scanned + complete + offset);
     scan.scanned += complete;
     scan.tail = bytesBefore(stream, scan.scanned);
   }
@@ -920,6 +966,7 @@ export function forgetTranscriptState(): void {
   forgetAllCodexState();
   forgetAllPiIndexes();
   forgetDevinState();
+  forgetHermesTranscriptState();
 }
 
 /**
@@ -953,6 +1000,7 @@ export function forgetPaneTranscriptState(paneId: string): void {
     forgetPiIndex(path);
     forgetClaudeSessionFile(path);
     forgetOpencodeRead(path);
+    forgetHermesTranscriptState(path);
   }
 }
 
@@ -1110,7 +1158,13 @@ async function ompTranscriptPath(paneId: string, cwd: string): Promise<string> {
 /** Where a pane's conversation is: a transcript file, or a session in OpenCode's database. */
 type ResolvedTranscript =
   | { source: StreamSource; path: string; codexHome?: string }
-  | { source: "opencode-transcript"; path: string; session: string };
+  | { source: "opencode-transcript"; path: string; session: string }
+  | { source: "hermes-transcript"; path: string; sessionId: string };
+
+/** A native file or database session, resolved without parsing conversation turns. */
+export type NativeTranscript =
+  | ResolvedTranscript
+  | { source: "devin-transcript"; path: string; session: string; cwd: string };
 
 /**
  * The store a pane's transcript lives in. herdr's agent label follows the
@@ -1120,12 +1174,12 @@ type ResolvedTranscript =
  * label: omo's own store is read only when omo is really running
  * in that pane, never on a matching cwd alone.
  */
-async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: string, panes?: HerdrPane[], opencodeDb?: string): Promise<ResolvedTranscript> {
+async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: string, panes?: HerdrPane[], opencodeDb?: string, hermesHome?: string): Promise<ResolvedTranscript> {
   const paneId = pane.pane_id;
   let agent = pane.agent ?? pane.agent_session?.agent ?? "";
   // herdr names no agent for this pane: a session report an earlier agent left behind says
   // nothing about what runs now, so the pane's processes are asked before it is followed.
-  // A pane herdr does label is not asked: the lookup would cost every chat poll an RPC (and
+  // A pane herdr does label is not asked: the lookup would cost every transcript lookup an RPC (and
   // a process-table read on Windows), and a gjc below another agent would take its chat.
   if (!pane.agent) {
     const info = await herdrRpc<{ process_info?: { shell_pid?: number; foreground_processes?: { argv?: unknown }[] } }>(
@@ -1168,6 +1222,10 @@ async function resolveTranscript(pane: HerdrPane, cwd: string, codexHome?: strin
       const path = opencodeDb ?? opencodeDatabasePath();
       if (path === null) throw new ConversationUnavailable("no_session_path");
       return { source: "opencode-transcript", path, session };
+    }
+    if (agent === "hermes") {
+      const resolved = await hermesTranscriptForPane(pane, cwd, hermesHome);
+      return { source: "hermes-transcript", path: resolved.dbPath, sessionId: resolved.sessionId };
     }
     throw new ConversationUnavailable("no_recognized_transcript");
   } catch (error) {
@@ -1224,22 +1282,10 @@ export function devinSessionForPane(pane: HerdrPane, panes: HerdrPane[], argv: s
   return explicit;
 }
 
-/**
- * pane -> agent session -> transcript turns. Read-only, same-user files only.
- * Claude sessions are looked up by id under ~/.claude/projects; omp sessions
- * come from herdr or the pane's omp process (ompTranscriptPath); omo sessions are resolved from its own store by
- * process/session evidence (omoTranscriptForPane). Throws ConversationUnavailable when the pane has
- * no recognized agent store (the caller falls back to the scrollback
- * transcript view, like chatmux).
- *
- * Without `page` this is the newest page. `before` is the page ending at a
- * returned cursor; `from` is every turn after one, for a chat that already
- * shows the pages before it. A cursor from another file throws HistoryChanged.
- * `opencodeDb` is OpenCode's store, unset where OpenCode itself would find it.
- */
-export async function paneConversation(paneId: string, codexHome?: string, page: ConversationPage = {}, devinDbPath?: string, opencodeDb?: string): Promise<RecognizedConversation> {
-  const snapshot = await sessionSnapshot();
-  const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
+/** Resolve the native live file or database session without reading conversation turns. */
+export async function paneTranscript(paneId: string, codexHome?: string, snapshot?: SessionSnapshot, devinDbPath?: string, opencodeDb?: string, hermesHome?: string): Promise<NativeTranscript> {
+  const panes = (snapshot ?? await sessionSnapshot()).panes;
+  const pane = panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined) throw new ConversationUnavailable("pane_not_found");
   if (typeof pane.cwd !== "string" || pane.cwd.length === 0) throw new ConversationUnavailable("no_recognized_transcript");
 
@@ -1257,33 +1303,60 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     // No Devin runs under the label: what does run is resolved below, as it was before this
     // reader (an omo is found by its process tree, whatever herdr calls the pane).
     if (processes.length === 1) {
-      const sessionId = devinSessionForPane(pane, snapshot.panes, processes[0]!.argv as string[]);
-      try {
-        const answer = devinConversation(sessionId, cwd, page, storePath);
-        rememberPaneDevin(paneId, sessionId, cwd, storePath);
-        return answer;
-      } catch (error) {
-        if (error instanceof DevinHistoryUnavailable) throw new ConversationUnavailable("transcript_missing");
-        throw error;
-      }
+      const session = devinSessionForPane(pane, panes, processes[0]!.argv as string[]);
+      return { source: "devin-transcript", path: storePath, session, cwd };
     }
   }
 
-  let resolved: ResolvedTranscript;
-  try {
-    resolved = await resolveTranscript(pane, pane.cwd, codexHome, snapshot.panes, opencodeDb);
-  } catch (error) {
-    if (!(error instanceof ConversationNotStarted)) throw error;
+  return resolveTranscript(pane, pane.cwd, codexHome, panes, opencodeDb, hermesHome);
+}
+
+/**
+ * pane -> agent session -> transcript turns. Read-only, same-user files only.
+ * Claude sessions are looked up by id under ~/.claude/projects; omp sessions
+ * come from herdr or the pane's omp process (ompTranscriptPath); omo sessions are resolved from its own store by
+ * process/session evidence (omoTranscriptForPane). Throws ConversationUnavailable when the pane has
+ * no recognized agent store (the caller falls back to the scrollback
+ * transcript view, like chatmux).
+ *
+ * Without `page` this is the newest page. `before` is the page ending at a
+ * returned cursor; `from` is every turn after one, for a chat that already
+ * shows the pages before it. A cursor from another file throws HistoryChanged.
+ * `opencodeDb` is OpenCode's store, unset where OpenCode itself would find it.
+ */
+export async function paneConversation(paneId: string, codexHome?: string, page: ConversationPage = {}, devinDbPath?: string, opencodeDb?: string, hermesHome?: string): Promise<RecognizedConversation> {
+  const snapshot = await sessionSnapshot();
+  let resolved: NativeTranscript;
+
+  const onNotStarted = (error: ConversationNotStarted): RecognizedConversation => {
     // a file read before and gone since is no conversation not begun: the terminal stands in for it
     if (writtenSessions.has(`${error.source}\0${error.identity}`)) throw new ConversationUnavailable("transcript_missing");
     // nothing comes before a conversation not begun: a cursor into it is another one's
     if (page.before !== undefined || page.since !== undefined || page.from !== undefined) throw new HistoryChanged();
     // an agent at work on its first turn has written nothing yet, but its terminal shows the turn
-    if (pane.agent_status === "working" || pane.agent_status === "blocked") throw error;
+    const status = snapshot.panes.find((pane) => pane.pane_id === paneId)?.agent_status;
+    if (status === "working" || status === "blocked") throw error;
     // the chat says there is nothing yet; the session's first prompt writes the file and
-    // the next poll's history_id differs, so the chat takes it whole
+    // the next refresh's history_id differs, so the chat takes it whole
     const id = `unwritten:${error.sessionId}`;
     return { source: error.source, turns: [], metadata: { model: null, reasoning_effort: null }, cursor: null, history_id: id, version: answerVersion(id, "") };
+  };
+
+  try {
+    resolved = await paneTranscript(paneId, codexHome, snapshot, devinDbPath, opencodeDb, hermesHome);
+  } catch (error) {
+    if (error instanceof ConversationNotStarted) return onNotStarted(error);
+    throw error;
+  }
+  if (resolved.source === "devin-transcript") {
+    try {
+      const answer = devinConversation(resolved.session, resolved.cwd, page, resolved.path);
+      rememberPaneDevin(paneId, resolved.session, resolved.cwd, resolved.path);
+      return answer;
+    } catch (error) {
+      if (error instanceof DevinHistoryUnavailable) throw new ConversationUnavailable("transcript_missing");
+      throw error;
+    }
   }
   if (resolved.source === "opencode-transcript") {
     // its caches are keyed by store and session, which is what the pane is remembered against
@@ -1294,6 +1367,18 @@ export async function paneConversation(paneId: string, codexHome?: string, page:
     const { kind: _kind, signature, ...conversation } = answer;
     const key = `opencode\0${resolved.path}\0${resolved.session}\0${page.before ?? ""}\0${page.since ?? ""}\0${page.from ?? ""}`;
     return { source: resolved.source, ...conversation, version: answerVersion(key, signature) };
+  }
+  if (resolved.source === "hermes-transcript") {
+    rememberPaneRead(paneId, resolved.path);
+    try {
+      const answer = hermesConversationPage(resolved.sessionId, resolved.path, page);
+      writtenSessions.add(`${resolved.source}\0${resolved.sessionId}`);
+      rememberPaneSession(paneId, `${resolved.source}\0${resolved.sessionId}`);
+      return answer;
+    } catch (error) {
+      if (error instanceof ConversationNotStarted) return onNotStarted(error);
+      throw error;
+    }
   }
   const identity = resolved.source === "claude-transcript" ? nodePath.basename(resolved.path, ".jsonl")
     : resolved.source === "pi-transcript" || resolved.source === "omp-transcript" ? realpathSync(resolved.path) : null;
@@ -1438,19 +1523,20 @@ const TOOL_REF = /^[A-Za-z0-9_:.-]{1,128}$/;
 const TOOL_OUTPUT_MAX = 2_000_000;
 
 /** The whole output of a tool call whose page output was cut, by its id; null when there is none. */
-export async function toolOutput(paneId: string, ref: string, codexHome?: string, opencodeDb?: string): Promise<string | null> {
+export async function toolOutput(paneId: string, ref: string, codexHome?: string, opencodeDb?: string, hermesHome?: string): Promise<string | null> {
   if (!TOOL_REF.test(ref)) return null;
   const snapshot = await sessionSnapshot();
   const pane = snapshot.panes.find((candidate) => candidate.pane_id === paneId);
   if (pane === undefined || typeof pane.cwd !== "string" || pane.cwd.length === 0) return null;
   let resolved: ResolvedTranscript;
-  try { resolved = await resolveTranscript(pane, pane.cwd, codexHome, snapshot.panes, opencodeDb); }
+  try { resolved = await resolveTranscript(pane, pane.cwd, codexHome, snapshot.panes, opencodeDb, hermesHome); }
   catch (error) { if (error instanceof ConversationUnavailable) return null; throw error; }
   if (resolved.source === "opencode-transcript") {
     const output = opencodeToolOutput(resolved.path, resolved.session, ref);
     return output !== null && output.length > TOOL_OUTPUT_MAX ? `${output.slice(0, TOOL_OUTPUT_MAX)}\n… trimmed` : output;
   }
   rememberPaneRead(paneId, resolved.path);
+  if (resolved.source === "hermes-transcript") return hermesToolOutput(resolved.sessionId, resolved.path, ref, TOOL_OUTPUT_MAX);
   return transcriptToolOutput(resolved.source, resolved.path, ref, resolved.codexHome ?? codexHome);
 }
 

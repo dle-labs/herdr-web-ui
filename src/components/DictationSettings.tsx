@@ -105,7 +105,7 @@ export function DictationSettings() {
       </SettingsRow>}
     </SettingsGroup>
     {settings.voiceProvider === "openai" && <>
-      <SettingsGroup title={t("Tidy dictated text")}>
+      <SettingsGroup title={t("Tidy dictated text")} section="tidy-dictation">
         <SettingsRow label={t("In chat")} description={t("Drops fillers and fixes spacing; code and paths stay as spoken")}>
           <Toggle label={t("Tidy dictated text in chat")} checked={settings.voicePolishChat} onChange={(voicePolishChat) => update({ voicePolishChat })} />
         </SettingsRow>
@@ -214,7 +214,7 @@ function OpenAiKeySettings() {
       if (live.current) setBusy(false);
     }
   };
-  return <SettingsGroup title={t("OpenAI API key")} note={t("Audio is sent to OpenAI with your key. Nothing is recorded until you press the mic.")}>
+  return <SettingsGroup title={t("OpenAI API key")} section="openai-key" note={t("Audio is sent to OpenAI with your key. Nothing is recorded until you press the mic.")}>
     <SettingsRow label={t("OpenAI API key")} description={status ? status.configured ? status.source === "env" ? t("OpenAI key set by HERDR_WEB_OPENAI_API_KEY") : t("OpenAI key saved on this PC") : t("No OpenAI key configured. OpenAI dictation is unavailable.") : undefined} wide>
       {status && status.source !== "env" && <form className="dictation-settings-key" onSubmit={(event) => {
         event.preventDefault();

@@ -458,6 +458,11 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   padding: var(--space-2) var(--side-gutter) calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
 }
 
+/* Keep the footer at the bottom when both lists are short after the upper section folds. */
+.sidebar-shell:not(:has(.machine-list .machine-workspaces)) .sidebar-footer {
+  margin-top: auto;
+}
+
 .sidebar-footer-action {
   justify-content: flex-start;
   gap: 0;

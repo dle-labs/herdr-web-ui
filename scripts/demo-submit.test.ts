@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { it } from "bun:test";
 
 /** Drives owner-only transport events and a fake clock without a DOM, network or live herdr. */
-it("the demo drains accepted pending IDs once, supports steering/discard, and never resumes a lost owner lease", async () => {
+it("the demo refuses draft clearing, drains accepted pending IDs once, and never resumes a lost owner lease", async () => {
   const saved = new Map(["setTimeout", "clearTimeout", "window", "location", "PushManager"].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const opened: any[] = [];
   try {
@@ -38,9 +38,9 @@ it("the demo drains accepted pending IDs once, supports steering/discard, and ne
       assert.ok(frames.find((frame) => frame.type === "snapshot").features.includes("pending-input"));
       socket.send(JSON.stringify({ type: "attach", pane_id: codex }));
       let requestId = 1;
-      const send = (pane: string, text: string, delivery?: unknown, typed?: unknown, reuseId?: number) => {
+      const send = (pane: string, text: string, delivery?: unknown, typed?: unknown, reuseId?: number, clearDraft?: unknown) => {
         const id = reuseId ?? requestId++;
-        socket.send(JSON.stringify({ type: "submit", id, pane_id: pane, text, payload: text, ...(delivery !== undefined ? { delivery } : {}), ...(typed !== undefined ? { typed } : {}) }));
+        socket.send(JSON.stringify({ type: "submit", id, pane_id: pane, text, payload: text, ...(delivery !== undefined ? { delivery } : {}), ...(typed !== undefined ? { typed } : {}), ...(clearDraft !== undefined ? { clear_draft: clearDraft } : {}) }));
         return frames.findLast((frame) => frame.type === "submit-result" && frame.id === id);
       };
       const action = (pendingId: string, action: string) => {
@@ -52,6 +52,19 @@ it("the demo drains accepted pending IDs once, supports steering/discard, and ne
       return { socket, frames, send, action, pending };
     };
     const owner = connect();
+    const claudeBefore = await json("/api/pane/conversation?pane_id=" + claude);
+    for (const clear of ["", 1, null, true]) {
+      assert.equal(owner.send(claude, "must stay here", undefined, undefined, undefined, clear).code, "invalid_delivery");
+    }
+    assert.equal(owner.send(claude, "must stay here", undefined, true, undefined, "named draft").code, "invalid_delivery");
+    assert.equal(owner.send(claude, "must stay here", "queue", false, undefined, "named draft").code, "invalid_delivery");
+    const refused = owner.send(claude, "must stay here", undefined, false, undefined, "named draft");
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, "unsupported");
+    assert.equal(owner.send(claude, "must stay here", undefined, false, refused.id, "another draft").code, "invalid_submit_id");
+    owner.socket.send(JSON.stringify({ type: "submit", id: refused.id, pane_id: claude, text: "must stay here", payload: "must stay here", typed: false, clear_draft: "named draft", agent_only: true }));
+    assert.equal(owner.frames.findLast((frame) => frame.type === "submit-result" && frame.id === refused.id).code, "invalid_submit_id", "changing the agent-only safeguard changes the request identity");
+    assert.deepEqual(await json("/api/pane/conversation?pane_id=" + claude), claudeBefore);
     const before = await transcript();
     assert.equal(owner.send(codex, "not an approval answer", "queue").code, "agent_blocked");
     assert.equal(owner.send(codex, "bad delivery", "Tab").code, "invalid_delivery");

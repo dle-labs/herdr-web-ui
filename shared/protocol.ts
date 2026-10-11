@@ -117,7 +117,7 @@ export type { DictationConfigResponse, DictationModelsResponse, DictationTranscr
  *         history, soft-wrapped lines joined; a terminal selection that outlives one screen)
  *  POST   /api/pane/input  { pane_id, text }   -> { ok: true }
  *  GET    /api/pane/conversation?pane_id=    -> ConversationResponse (structured agent
- *         transcript turns - claude, codex, omp, omo, gjc, pi or devin; source:"scrollback" when the pane has no
+ *         transcript turns - claude, codex, omp, omo, gjc, pi, devin, OpenCode or hermes; source:"scrollback" when the pane has no
  *         recognized store)
  *  POST   /api/pane/close { pane_id }         -> { ok: true } (pane.close RPC; the collector's
  *         session-changed broadcast removes it from every client's sidebar)
@@ -164,9 +164,11 @@ export type { DictationConfigResponse, DictationModelsResponse, DictationTranscr
  *         known yet. server_time: that PC's clock, which the times are on)
  *  GET    /api/pane/files?pane_id=&q=&limit=  -> { files: string[] } (paths relative to the pane
  *         cwd matching q, for @-mentions; git ls-files when the cwd is a repo, bounded walk otherwise)
- *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null, suggestion: string | null }
+ *  GET    /api/pane/prompt?pane_id=     -> { prompt: InteractivePrompt | null, suggestion: string | null, restored: string | null }
  *         (the agent's TUI question/approval menu currently on screen, parsed from the visible pane
- *         text; with no menu, the next prompt Claude Code suggests, grey in its empty input box)
+ *         text; with no menu, the next prompt Claude Code suggests, grey in its empty input box, and
+ *         `restored`: the chat's last message when Claude Code put it back as typed text in that box,
+ *         as it does for a send cancelled before any reply; older servers send neither)
  *  POST   /api/pane/prompt/answer { pane_id, prompt_id, option_index?, option_indices?, custom_text? }
  *         -> { ok: true } | 409 prompt_changed (the screen no longer shows that prompt)
  *  POST   /api/workspace/create { cwd?, label?, agent?: { kind, name?, args? } }
@@ -395,6 +397,8 @@ export type ConversationPart =
   /** `error`: the call failed (the agent recorded it so, or its output says a command exited non-zero) */
   | {
     kind: "tool"; name: string; summary: string; input: string; output: string; error?: boolean;
+    /** Hermes could not load a tool-call list whose arguments exceeded its page limit. */
+    arguments_omitted?: true;
     skill?: SkillActivity;
     delegation?: DelegationEvidence;
     /** set when `output` was cut: the call's id, for GET /api/pane/conversation/tool-output, and the whole output's length */
@@ -493,7 +497,7 @@ export interface OmoActivity {
 export interface ConversationResponse {
   /** Stable across appends; changes on transcript replacement or native context clear. */
   history_id?: string;
-  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "scrollback";
+  source: "claude-transcript" | "omp-transcript" | "omo-transcript" | "gjc-transcript" | "pi-transcript" | "codex-transcript" | "devin-transcript" | "opencode-transcript" | "hermes-transcript" | "scrollback";
   turns: ConversationTurn[];
   metadata?: ConversationMetadata;
   /**
@@ -922,9 +926,10 @@ export interface PushPayload {
  *  Client -> server frames: attach {pane_id, cols, rows} | detach {pane_id} | input {pane_id, text}
  *    | keys {pane_id, keys} | resize {pane_id, cols, rows} | role {mode}
  *    | pty-ack {pane_id, stream_id, offset} | secret {id, pane_id, prompt, secret}
- *    | watch {pane_id, cols, rows} | unwatch {pane_id}
+ *    | watch {pane_id, cols, rows} | unwatch {pane_id} | conversation-watch {pane_id, enabled}
  *  Server -> client frames: snapshot | pty-data | pty-exit | pane-geometry | role-ack
- *    | pane-status | pane-exited | session-changed | secret-result | watch-data | watch-end | error
+ *    | pane-status | pane-exited | session-changed | conversation-changed | secret-result
+ *    | watch-data | watch-end | error
  *
  *  attach {flow_control:"ack"} opts into per-subscription output credit.
  *  pty-data.flow carries a stream_id and cumulative UTF-8 payload offset;
@@ -963,6 +968,9 @@ export type ClientMessage =
   /** keep_size: the grid is covered (the chat lens), so the attach leaves the shared pty's size as it is */
   | { type: "attach"; pane_id: string; cols: number; rows: number; flow_control?: "ack"; keep_size?: boolean }
   | { type: "detach"; pane_id: string }
+  /** Native invalidations require "conversation-watch" and an attachment; observers may subscribe.
+   * Detaching clears interest, so reconnect/reattach must enable it again. REST remains authoritative. */
+  | { type: "conversation-watch"; pane_id: string; enabled: boolean }
   /** a pane another web bridge holds (`attach_held`): take herdr's attach slot from it, here, now */
   | { type: "take-over"; pane_id: string }
   | { type: "input"; pane_id: string; text: string }
@@ -985,8 +993,11 @@ export type ClientMessage =
    * works the bridge keeps the message until its next turn, or the owner explicitly steers it.
    * Omission keeps the legacy immediate submission. Queued messages never resume after lease loss.
    * Queue request ids increase monotonically per connection; recent duplicates replay their
-   * receipt, and retired ids are rejected rather than executed after history eviction. */
-  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue"; agent_only?: boolean }
+   * receipt, and retired ids are rejected rather than executed after history eviction.
+   * `clear_draft`: an immediate chat message only, sent again over the `draft` its input_draft
+   * refusal named: the server clears Claude's input box first while it still holds exactly that,
+   * and refuses again (input_draft) when it holds anything else or does not read empty after. */
+  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue"; agent_only?: boolean; clear_draft?: string }
   | { type: "pending-action"; id: number; pane_id: string; pending_id: string; action: "steer" | "discard" }
   /** Masked input: revalidate the visible prompt, type literal bytes + Enter immediately.
    * Never queued, retried, sent through agent.prompt, or echoed in a result. */
@@ -995,12 +1006,17 @@ export type ClientMessage =
   /** Cumulative UTF-8 payload bytes processed by xterm, only for this subscription. */
   | { type: "pty-ack"; pane_id: string; stream_id: string; offset: number }
   | { type: "role"; mode: ClientRole }
+  /** whether this page is in use: visible and focused. While any connection of a server says
+   * so, that server sends no web push to any device (#751). Sent on connect and on every change,
+   * also through a remote PC's socket (the connection server reads it there too); an older
+   * server ignores it, so it needs no feature. */
+  | { type: "presence"; active: boolean }
   /** a read-only view of the pane at this grid, for a tab out of use (feature "watch"); never resizes the pane */
   | { type: "watch"; pane_id: string; cols: number; rows: number }
   | { type: "unwatch"; pane_id: string };
 
 /** What a server supports beyond the base protocol, listed in its first snapshot; older bridges list nothing. */
-export type ServerFeature = "submit" | "pending-input" | "secret-input" | "input-ready" | "take-over" | "watch" | "submit-agent-only";
+export type ServerFeature = "submit" | "pending-input" | "secret-input" | "input-ready" | "take-over" | "watch" | "submit-agent-only" | "conversation-watch";
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: SessionSnapshot; features?: ServerFeature[] }
@@ -1014,10 +1030,14 @@ export type ServerMessage =
   /** the shared pty's grid changed: observe clients adopt it, interact clients drive it. `fixed`: the grid is the pane's own in herdr (a mirrored pane), so every client adopts it and none resizes */
   | { type: "pane-geometry"; pane_id: string; cols: number; rows: number; fixed?: boolean }
   | { type: "role-ack"; mode: ClientRole }
-  /** ok after Enter delivery, or bridge acceptance (`pending`); never an agent execution acknowledgement. */
-  /** `typed: false` (a refusal only): the server knows nothing of the message reached the pane. Absent,
-   * some of it may have, or the bridge is older than the field and the client judges by `code`. */
-  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; code?: string; message?: string; typed?: false }
+  /** ok after Enter delivery, or bridge acceptance (`pending`); never an agent execution acknowledgement.
+   * `draft`: on an immediate send's input_draft, the one-row draft in Claude's input box that a send
+   * with `clear_draft` may clear (absent when the box is not one the server clears).
+   * `submit_partial`: the explicitly confirmed terminal draft was cleared, but sending was not
+   * confirmed; never a nothing-typed receipt.
+   * `typed: false` (a refusal only): nothing of the message reached the pane. Absent, some of it
+   * may have, or the bridge is older than the field and the client judges by `code`. */
+  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; code?: string; message?: string; typed?: false; draft?: string }
   /** `typed: false` as on submit-result: this action typed nothing of the pending message, and nothing of it was typed before. */
   | { type: "pending-result"; id: number; pane_id: string; pending_id: string; ok: boolean; code?: string; message?: string; typed?: false }
   /** Owner-only receipt and state; only an explicit removed outcome permits deleting a retained client message. */
@@ -1025,6 +1045,8 @@ export type ServerMessage =
   | { type: "secret-result"; id: number; pane_id: string; ok: boolean; code?: string }
   /** agent-status push for ANY pane, attached or not (server-side status collector) */
   | { type: "pane-status"; pane_id: string; agent_status: AgentStatus; /** a pane's running background tasks (OmO's, or a Claude Code pane's subagents and commands), when the frame is about them: it changes no status */ background_tasks?: number; /** every frame says it: absent, the pane does not wait on its turn's background work */ background_wait?: true }
+  /** Native transcript invalidation for an interested attached pane; signature is opaque, not a REST ETag. Refetch the existing conversation endpoint. */
+  | { type: "conversation-changed"; pane_id: string; signature: string }
   /** a pane's process exited (pushed even when nobody is attached to it) */
   | { type: "pane-exited"; pane_id: string }
   /** session structure changed (pane created/closed): refetch /api/session */
