@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { InteractivePrompt } from "../../shared/protocol.ts";
-import { answerFromText, answerHint, answerRefusal, focusFollowsAnswer, needsConfirmation, pressOrigin, promptRequiresTerminal, type PressOrigin } from "./promptAnswer.ts";
+import { answerFromText, answerHint, answerRefusal, focusFollowsAnswer, needsConfirmation, pressOrigin, promptOwnsInput, promptRequiresTerminal, type PressOrigin } from "./promptAnswer.ts";
 
 const prompt = (options: string[], custom: number | null, multi = false): InteractivePrompt => ({
   id: "p", agent: "claude", kind: "question", title: "Question", question: "?", body: null,
@@ -9,6 +9,17 @@ const prompt = (options: string[], custom: number | null, multi = false): Intera
 });
 
 describe("answering a prompt from the chat", () => {
+  it("gives Pi questionnaires their own input without hiding unrelated or queued chat", () => {
+    const question: InteractivePrompt = { ...prompt(["Memory", "Redis", "Type something."], 2), agent: "pi" };
+    expect(promptOwnsInput(question)).toBe(true);
+    expect(promptOwnsInput({ ...question, terminal_only: true })).toBe(true);
+    expect(promptOwnsInput({ ...question, multi_select: true })).toBe(true);
+    expect(promptOwnsInput({ ...question, queued: "collapsed" })).toBe(false);
+    expect(promptOwnsInput({ ...question, queued: "open" })).toBe(false);
+    expect(promptOwnsInput({ ...question, agent: "codex" })).toBe(false);
+    expect(promptOwnsInput({ ...question, kind: "menu" })).toBe(false);
+    expect(promptOwnsInput(null)).toBe(false);
+  });
   it("keeps terminal-only prompts out of typed answers, regardless of option metadata", () => {
     expect(promptRequiresTerminal(null)).toBe(false);
     expect(promptRequiresTerminal(prompt([], 0))).toBe(false);

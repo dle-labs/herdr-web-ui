@@ -14,6 +14,11 @@ export function promptRequiresTerminal(prompt: InteractivePrompt | null): boolea
   return prompt?.terminal_only === true;
 }
 
+/** RPIV/Pi questionnaires own their input; keep the ordinary draft mounted but out of view. */
+export function promptOwnsInput(prompt: InteractivePrompt | null): boolean {
+  return prompt?.agent === "pi" && prompt.kind === "question" && !prompt.queued;
+}
+
 /** The options a typed number can pick, by the number the agent shows (index + 1). */
 function choices(prompt: InteractivePrompt): number[] {
   return prompt.options.flatMap((_, index) => index === prompt.custom_option_index ? [] : [index]);
