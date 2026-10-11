@@ -19,6 +19,8 @@ async function checkLayout(): Promise<void> {
     import { createRoot } from ${JSON.stringify(join(repo, "node_modules/react-dom/client.js"))};
     import { FileViewer } from ${JSON.stringify(join(repo, "src/components/FileViewer.tsx"))};
     import { SettingsProvider } from ${JSON.stringify(join(repo, "src/lib/settings.ts"))};
+    // This Bun-only fixture checks geometry, not the Vite worker pipeline.
+    localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ highlightCode: false }));
     const query = new URLSearchParams(location.search);
     const name = query.get("kind") === "text" ? "notes-" + "very-long-unbroken-name-".repeat(30) + ".ts" : "image-" + "very-long-unbroken-name-".repeat(30) + ".svg";
     const path = "/workspace/" + "long-directory/".repeat(40) + name;
@@ -73,8 +75,8 @@ async function checkLayout(): Promise<void> {
           { headers: { "content-type": "image/svg+xml" } });
       }
       // A module script: the bundle is ESM, and FileViewer reaches `new URL(…, import.meta.url)` for its
-      // workers, which a classic script cannot parse. The fixture's text is short enough to be
-      // highlighted on the page, so no worker is ever started here.
+      // workers, which a classic script cannot parse. Highlighting is disabled only in this
+      // layout fixture; git-diff-demo-regression verifies the real asynchronous worker path.
       return new Response(`<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="stylesheet" href="/styles.css?safe=${url.searchParams.get("safe") ?? "none"}"></head><body><div id="root"></div><script type="module" src="/entry.js"></script></body></html>`,
         { headers: { "content-type": "text/html" } });
     } });

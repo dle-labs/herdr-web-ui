@@ -61,6 +61,8 @@ function useMarkdownPreview(text: string | null): Preview {
 
 export interface FileViewerProps {
   connected: boolean;
+  /** Render inside the workspace viewer, without a second modal or focus trap. */
+  embedded?: boolean;
   /** absolute, `~/…`, or relative to the pane's folder */
   path: string;
   paneId: string | null;
@@ -109,7 +111,7 @@ function CopyFileButton({ text, sourceRef, onShowSource }: { text: string; sourc
  * file endpoint). Each opens whole in a new tab (a text file raw), and anything can be downloaded:
  * an installed app on a phone opens a new tab in an in-app view, which does not always offer to save it.
  */
-export function FileViewer({ connected, path: asked, paneId, machineId, paneFolder, onClose, onOpen, commentId = null, keyboardActive = true }: FileViewerProps) {
+export function FileViewer({ connected, path: asked, paneId, machineId, paneFolder, onClose, onOpen, commentId = null, keyboardActive = true, embedded = false }: FileViewerProps) {
   const t = useT();
   const { fetchFileInfo, fileUrl, fetchDirectories } = useMachineApi();
   // a remote PC's bridge reads a relative folder from the pane's folder only from its next bundle
@@ -121,8 +123,8 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
   const [info, setInfo] = useState<FileInfo | null>(null);
   const [candidates, setCandidates] = useState<string[] | null>(null);
   // Escape closes it, Tab stays in it, and the focus goes back to the row that opened it
-  const surface = useFocusTrap<HTMLElement>(true);
-  useSheetSwipe(surface, onClose);
+  const surface = useFocusTrap<HTMLElement>(!embedded);
+  useSheetSwipe(surface, embedded ? null : onClose);
   // Settings → Chat width, Default: the Preview is as wide as the chat of the pane that opened it
   useOpeningPaneLane(surface, paneId === null ? null : paneStorageId(machineId, paneId));
   // a kind, not a message: it is said in the language of the moment it shows
@@ -194,7 +196,7 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
   const commentEscape = useRef<() => boolean>(() => false);
   const walkDialogOpen = useRef(false);
   useEffect(() => {
-    if (!keyboardActive) return;
+    if (!keyboardActive || embedded) return;
     // the FilesDialog beneath listens on window too (and stands down while this is open); this
     // one is the topmost overlay, so it takes the key, unless a native modal (Add PC) is over it
     /** Escape closes the open comment popover, else the viewer, from anywhere in it, unless something in it took the key. */
@@ -205,7 +207,7 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, keyboardActive]);
+  }, [onClose, keyboardActive, embedded]);
 
   // the file found (a bare name may have been found deeper in the folder), else as asked
   const url = fileUrl(info?.path ?? path, paneId);
@@ -346,8 +348,8 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
   })();
 
   return (
-    <div className="modal-scrim file-viewer-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal file-viewer" role="dialog" aria-modal="true" aria-label={info?.name ?? path} ref={surface} tabIndex={-1}>
+    <div className={embedded ? "file-viewer-embedded" : "modal-scrim file-viewer-scrim"} onMouseDown={(event) => !embedded && event.target === event.currentTarget && onClose()}>
+      <section className="modal file-viewer" role={embedded ? "region" : "dialog"} aria-modal={embedded ? undefined : true} aria-label={info?.name ?? path} ref={surface} tabIndex={-1}>
         {/* three groups, spaced apart: how the text shows, the file itself, the window */}
         <header className={stacked ? "modal-header file-viewer-header file-viewer-header-stacked" : "modal-header file-viewer-header"}>
           <div className="file-viewer-title">

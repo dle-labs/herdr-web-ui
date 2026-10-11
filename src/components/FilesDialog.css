@@ -1,17 +1,20 @@
+.workspace-files-scrim {
+  padding: 0;
+}
 .files-dialog-changes {
-  width: min(96vw, 1280px);
-  max-height: calc(var(--app-height, 100dvh) - var(--space-8));
+  width: 100%;
+  max-width: 100%;
+  height: var(--app-height, 100dvh);
+  max-height: 100%;
+  border-radius: 0;
 }
 .files-dialog-changes .modal-body {
+  flex: 1;
   min-height: 0;
   overflow: hidden;
   display: flex;
+  padding: 0;
 }
-.files-dialog .segmented {
-  margin-inline-start: auto;
-}
-@media (max-width: 768px) {
-  .files-dialog-changes {
-    width: 100%;
-  }
+.files-dialog .modal-title {
+  flex: 1;
 }

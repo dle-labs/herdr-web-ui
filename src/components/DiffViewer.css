@@ -1,0 +1,10 @@
+/* Custom gutter utilities are slotted beside Pierre's positioned line-number
+   content. Match its native utility's stacking, or the number intercepts clicks
+   and moving onto the button makes the hover utility disappear. */
+.diff-comment-plus {
+  position: relative;
+  z-index: 4;
+  appearance: none;
+  padding: 0;
+  touch-action: none;
+}

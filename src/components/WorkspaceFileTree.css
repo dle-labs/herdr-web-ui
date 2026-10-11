@@ -1,0 +1,12 @@
+.workspace-file-tree { height: 100%; overflow: auto; padding: var(--space-2); font-size: var(--fs-sm); }
+.workspace-tree-children { padding-inline-start: var(--space-4); }
+.workspace-tree-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--touch-target); border: 0; border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); background: var(--bg-panel); color: var(--text); text-align: start; cursor: pointer; }
+.workspace-tree-row:hover { background: var(--bg-hover); }
+.workspace-tree-row[aria-current="true"] { background: var(--bg-elevated); outline: var(--hairline) solid var(--accent); }
+.workspace-tree-row svg { width: var(--space-4); height: var(--space-4); flex-shrink: 0; color: var(--text-dim); }
+.workspace-tree-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.workspace-tree-row small { color: var(--notice); }
+.workspace-tree-row[data-status="deleted"] small { color: var(--status-blocked); }
+.workspace-tree-row[data-status="added"] small, .workspace-tree-row[data-status="untracked"] small { color: var(--status-done); }
+.workspace-tree-branch p { padding: var(--space-2); color: var(--text-dim); }
+.workspace-tree-branch [role="alert"] { color: var(--status-blocked); }

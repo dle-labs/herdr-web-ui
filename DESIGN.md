@@ -184,14 +184,19 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 
 ### Git Changes view
 
-- Files / Changes switches inside the Files dialog; the workspace/agent sidebar remains unchanged.
-  A wide dialog puts the changed-path tree beside the selected diff. At 768px and below, the tree
-  and the unified diff are separate steps, with a Changed files back button.
+- Browse files opens a full-viewport workspace viewer directly, with a file tree beside the
+  document. Changed paths open their Git diff; unchanged paths open the existing file preview
+  in the same surface. Diffs form one continuous scroll region, with the tree selection following
+  the viewed file. On narrow screens the tree and document are separate steps.
+- A changes shortcut immediately before the composer's agent mark appears when the visible pane
+  has changes. Follow edits is opt-in, refreshes only while visible and connected, and preserves
+  dirty comment drafts. Wrap and highlight controls share the file viewer's settings.
 - Pierre's shadow-root variables map to existing surfaces, text, fonts and focus tokens. Added
   lines use `--status-done`, deleted lines `--status-blocked`, and renamed paths `--notice`;
   Git letters and +/- indicators convey the same meaning without color. Tree icons use Lucide.
-- Comments open in the flow below the selected old/new line, using the shared comment field and
-  save/delete behavior. Saved cards always name the file, line range and side. Changed comparison
+- The gutter plus toggles a plain-text comment in the flow below the selected old/new line;
+  releasing a dragged line range opens the same editor. Configured dictation inserts text without
+  sending. Comments use the shared comment field and save/delete behavior. Saved cards always name the file, line range and side. Changed comparison
   revisions move cards into Outdated comments, never onto unrelated source lines.
 - Saving adds a pending chat comment; it neither changes source files nor sends a message.
   Dirty fields block close, comparison switches and refresh until saved or explicitly cleared.

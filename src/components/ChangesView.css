@@ -3,7 +3,9 @@
   flex-direction: column;
   width: 100%;
   min-width: 0;
-  height: min(72vh, calc(var(--app-height, 100dvh) - 180px));
+  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 .changes-toolbar, .changes-filebar, .changes-mode, .diff-comment-tools, .diff-comment-actions, .diff-comment-heading {
   display: flex;
@@ -29,7 +31,10 @@
   --trees-status-renamed-override: var(--notice);
   --trees-status-untracked-override: var(--status-done);
 }
-.changes-detail { min-height: 0; overflow: auto; padding-inline-start: var(--space-3); }
+.changes-detail { min-height: 0; min-width: 0; overflow: auto; padding-inline-start: var(--space-3); }
+.changes-diff-section { border-block-end: var(--hairline) solid var(--border); padding-block-end: var(--space-4); scroll-margin-block-start: var(--space-2); }
+.changes-diff-placeholder { min-height: 180px; }
+.changes-back { margin-block: var(--space-2); }
 .changes-filebar { position: sticky; top: 0; background: var(--bg-panel); padding-block: var(--space-2); z-index: 4; }
 .changes-path { flex: 1; font-family: var(--font-mono); font-size: var(--fs-sm); }
 .changes-note { padding: var(--space-4); color: var(--text-dim); }
