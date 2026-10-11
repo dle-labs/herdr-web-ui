@@ -54,6 +54,7 @@ import { useUpdates } from "./lib/updates.ts";
 import { UpdateNotice } from "./components/UpdateControls.tsx";
 import { TelemetryNotice } from "./components/TelemetryControls.tsx";
 import { FilesDialog } from "./components/FilesDialog.tsx";
+import { WorkspaceFilesContext } from "./lib/workspaceFiles.ts";
 import { PlanButton, PlanDialog } from "./components/PlanDialog.tsx";
 import { FileViewer } from "./components/FileViewer.tsx";
 import { OpenFileContext } from "./lib/filePaths.ts";
@@ -684,6 +685,12 @@ export function App() {
     setDrawerOpen(false);
   }, []);
 
+  const openWorkspaceFiles = useCallback((paneId: string) => {
+    selectPane(paneId, false);
+    setDiffCommentView(null);
+    setFilesOpen(true);
+  }, [selectPane]);
+
   // a layout call the palette made and the PC refused: a bridge from before the route says so
   // over the pane (the tab's own menu has a line of its own); anything else is logged, as
   // other background failures are
@@ -1174,6 +1181,7 @@ export function App() {
 
         {/* a file path in the chat opens in the viewer, relative to the selected pane's folder */}
         <OpenFileContext.Provider value={selectedPaneId !== null ? viewFile : null}>
+        <WorkspaceFilesContext.Provider value={openWorkspaceFiles}>
         <FileCommentNavContext.Provider value={viewFileComment}>
         <div className={`pane-column${chatShown ? " is-chat" : ""}`}>
         {/* over the pane only: a bar across the window would cut the sidebar off from its top row in the header */}
@@ -1224,6 +1232,7 @@ export function App() {
         </main>
         </div>
         </FileCommentNavContext.Provider>
+        </WorkspaceFilesContext.Provider>
         </OpenFileContext.Provider>
       </div>
 
@@ -1258,9 +1267,9 @@ export function App() {
       {planOpen && selectedPane && <PlanDialog paneId={selectedPane.pane_id} title={selectedTitle ?? ""} onClose={() => setPlanOpen(false)} />}
       {filesOpen && selectedPane && <MachineContext.Provider value={diffCommentView?.machineId ?? selectedMachineId}>
         <FilesDialog key={`${diffCommentView?.machineId ?? selectedMachineId}:${diffCommentView?.paneId ?? selectedPane.pane_id}:${diffCommentView?.comment.id ?? "browse"}`}
-          start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={diffCommentView?.paneId ?? selectedPane.pane_id}
+          start={diffCommentView?.comment.diff?.repository ?? selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={diffCommentView?.paneId ?? selectedPane.pane_id}
           initialComment={diffCommentView?.comment ?? null} connected={connected && paneRole?.mode === "interact" && paneRole.machineId === (diffCommentView?.machineId ?? selectedMachineId) && paneRole.paneId === (diffCommentView?.paneId ?? selectedPane.pane_id)}
-          viewing={viewing !== null} onOpenFile={diffCommentView === null ? viewFile : (path) => openFile({ path, paneId: diffCommentView.paneId, machineId: diffCommentView.machineId })}
+          viewing={viewing !== null}
           onClose={() => { setFilesOpen(false); setDiffCommentView(null); }} />
       </MachineContext.Provider>}
       {viewing !== null && <MachineContext.Provider value={viewing.machineId}>

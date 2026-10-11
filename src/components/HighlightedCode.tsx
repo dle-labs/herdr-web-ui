@@ -8,8 +8,8 @@ import "./HighlightedCode.css";
 
 /**
  * The lines of `code` to show now, and whether they were left plain for being too long. Highlighting
- * never holds the page: short code is highlighted at once, longer code in a worker (shown plain
- * until it answers, or with the colors it had while a reply grows), and code the worker gives up on
+ * never tokenizes on the page: all code is highlighted in a bounded worker (shown plain until it
+ * answers, or with the colors it had while a reply grows), and code the worker gives up on
  * stays plain. Above `limit` characters, or `LINE_ELEMENT_LIMIT` lines, it is not tried at all;
  * otherwise the worker's budget bounds it. Off in Settings, or in a language it has no grammar for,
  * every code is plain and never too long.
@@ -20,7 +20,7 @@ export function useHighlightedLines(code: string, language: string | null, limit
   const highlighted = settings.highlightCode && canHighlight(language) ? language : null;
   const manyLines = useMemo(() => countLines(source) > LINE_ELEMENT_LIMIT, [source]);
   const overLimit = highlighted !== null && ((limit !== undefined && code.length > limit) || manyLines);
-  // what is known without waiting: no language, too long, short enough, or highlighted before
+  // what is known without waiting: no language, too long, or highlighted before
   const known = useMemo((): Highlighted | null => {
     if (highlighted === null || overLimit) return { lines: plainLines(source), tooLong: overLimit };
     return highlightKnown(source, highlighted);
