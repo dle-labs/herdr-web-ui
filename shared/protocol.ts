@@ -647,7 +647,7 @@ export interface PluginActionResult {
 }
 
 /** GET /api/agents: one agent kind herdr can start (`agent.start` kind), with a display label. */
-/** GET /api/workspace/directories: the folders inside one directory, for the folder browser. */
+/** GET /api/workspace/directories: folders inside one directory; `files=1` also includes files and best-effort Git ignore metadata. */
 export interface DirectoryListing {
   /** the directory listed, absolute */
   path: string;
@@ -661,6 +661,8 @@ export interface DirectoryListing {
   truncated: boolean;
   /** the files beside the folders, when asked for (`files=1`), sorted, within the same cap */
   files?: { name: string; size: number }[];
+  /** Listed folder names Git ignores, in listing order, only with `files=1`. Empty outside Git or when inspection fails; absent on older bridges. Tracked folders are not ignored. */
+  ignored_directories?: string[];
 }
 
 /** How the file viewer shows a file. */

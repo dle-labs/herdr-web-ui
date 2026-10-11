@@ -1,14 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, FileText, Folder } from "lucide-react";
+import { ChevronDown, ChevronRight, Database, File, FileArchive, FileAudio, FileCode, FileJson, FileText, FileType, FileVideo, Folder, FolderOpen, GitBranch, Image, LockKeyhole, NotebookText, FileSliders, FileTerminal, Type } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { fileIconCategory, type FileIconCategory } from "../lib/fileTypeIcon.ts";
 import type { DirectoryListing, GitChangedFile } from "../../shared/protocol.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 import { workspaceChildPath as join, workspaceTreeEntries } from "../lib/workspaceFileTree.ts";
 import "./WorkspaceFileTree.css";
 interface Props {
-  root: string; paneId: string; files: readonly GitChangedFile[];
+  root: string; paneId: string | null; files: readonly GitChangedFile[];
   selected: string | null; onSelect: (absolutePath: string) => void;
+  refreshToken?: number;
 }
+
+const FILE_ICONS: Record<FileIconCategory, LucideIcon> = {
+  code: FileCode, config: FileSliders, json: FileJson, markdown: NotebookText,
+  text: FileText, image: Image, audio: FileAudio, video: FileVideo,
+  pdf: FileType, archive: FileArchive, shell: FileTerminal, database: Database,
+  font: Type, lock: LockKeyhole, git: GitBranch, file: File,
+};
 
 /** Directory reads happen only for expanded branches; inventory supplies missing/deleted entries. */
 export function WorkspaceFileTree(props: Props) {
@@ -36,7 +46,7 @@ export function WorkspaceFileTree(props: Props) {
   </nav>;
 }
 
-function Directory({ root, paneId, files, selected, onSelect, relative }: Props & { relative: string }) {
+function Directory({ root, paneId, files, selected, onSelect, refreshToken, relative, ignored = false }: Props & { relative: string; ignored?: boolean }) {
   const t = useT();
   const { fetchDirectories } = useMachineApi();
   const absolute = relative ? join(root, relative) : root;
@@ -54,23 +64,24 @@ function Directory({ root, paneId, files, selected, onSelect, relative }: Props 
       if (active) setListing(next);
     }).catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
-  }, [absolute, fetchDirectories, paneId, open, attempt]);
+  }, [absolute, fetchDirectories, paneId, open, attempt, refreshToken]);
   // An empty or home-relative start is resolved by the bridge even outside a Git repository.
   const resolvedRoot = relative === "" ? listing?.path ?? root : root;
-  const entries = workspaceTreeEntries(listing, files, relative);
+  const entries = workspaceTreeEntries(listing, files, relative, ignored);
   const prefix = relative ? `${relative}/` : "";
   return <div className="workspace-tree-branch">
-    {relative !== "" && <button type="button" className="workspace-tree-row" aria-expanded={open} onClick={() => setOpen(!open)}>
-      {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}<Folder aria-hidden="true" /><span>{relative.split("/").at(-1)}</span>
+    {relative !== "" && <button type="button" className="workspace-tree-row" data-ignored={ignored || undefined} title={relative} aria-expanded={open} onClick={() => setOpen(!open)}>
+      {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}{open ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />}<span className="workspace-tree-label">{relative.split("/").at(-1)}</span>
     </button>}
     {open && <div className={relative ? "workspace-tree-children" : undefined}>
       {listing === null && !failed && <p role="status">{t("Loading…")}</p>}
       {failed && <p role="alert">{t("Folders could not be loaded.")} <button className="btn" type="button" onClick={() => setAttempt((n) => n + 1)}>{t("Retry")}</button></p>}
       {entries.map(([name, entry]) => {
         const path = `${prefix}${name}`;
-        return entry.directory ? <Directory key={name} root={resolvedRoot} paneId={paneId} files={files} selected={selected} onSelect={onSelect} relative={path} />
-          : <button key={name} type="button" className="workspace-tree-row" data-status={entry.status} aria-current={selected === join(resolvedRoot, path) ? "true" : undefined} title={path} onClick={() => onSelect(join(resolvedRoot, path))}>
-            <FileText aria-hidden="true" /><span>{name}</span>{entry.status && <small aria-label={entry.status}>{entry.status === "deleted" ? "D" : entry.status === "added" || entry.status === "untracked" ? "A" : entry.status === "renamed" ? "R" : "M"}</small>}
+        const Icon = FILE_ICONS[fileIconCategory(name)];
+        return entry.directory ? <Directory key={name} root={resolvedRoot} paneId={paneId} files={files} selected={selected} onSelect={onSelect} refreshToken={refreshToken} relative={path} ignored={entry.ignored} />
+          : <button key={name} type="button" className="workspace-tree-row" data-status={entry.status} data-ignored={entry.ignored || undefined} aria-current={selected === join(resolvedRoot, path) ? "true" : undefined} title={path} onClick={() => onSelect(join(resolvedRoot, path))}>
+            <span className="workspace-tree-caret" aria-hidden="true" /><Icon aria-hidden="true" /><span className="workspace-tree-label">{name}</span>{entry.status && <small aria-label={entry.status}>{entry.status === "deleted" ? "D" : entry.status === "added" || entry.status === "untracked" ? "A" : entry.status === "renamed" ? "R" : "M"}</small>}
           </button>;
       })}
       {listing?.truncated && <p role="status">{t("This folder listing is incomplete.")}</p>}

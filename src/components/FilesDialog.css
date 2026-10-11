@@ -1,3 +1,10 @@
+.workspace-files-scrim {
+  padding: max(var(--space-4), env(safe-area-inset-top, 0px))
+    max(var(--space-4), env(safe-area-inset-right, 0px))
+    max(var(--space-4), env(safe-area-inset-bottom, 0px))
+    max(var(--space-4), env(safe-area-inset-left, 0px));
+}
+
 .files-dialog-changes {
   width: min(96vw, 1100px);
   max-width: 100%;
@@ -6,6 +13,10 @@
 }
 
 @media (max-width: 640px) {
+  .workspace-files-scrim {
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+  }
+
   .files-dialog-changes {
     width: 100%;
     max-height: 92%;

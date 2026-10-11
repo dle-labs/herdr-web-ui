@@ -153,6 +153,8 @@ export interface Settings {
   dictation: DictationConfig;
   /** the file viewer wraps long lines instead of scrolling sideways */
   wrapCode: boolean;
+  /** Side-by-side diffs on wide screens; narrow browsers always use unified. */
+  splitDiff: boolean;
   /** code in the chat and the file viewer is colored by syntax; off, it is plain text */
   highlightCode: boolean;
   /** the width of a Markdown preview: the chat's lane (--chat-w), centered, or the viewer's width */
@@ -218,6 +220,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voicePolishTerminal: false,
   dictation: { ...DEFAULT_DICTATION_CONFIG },
   wrapCode: false,
+  splitDiff: true,
   highlightCode: true,
   markdownWidth: "readable",
 };
@@ -409,6 +412,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     voicePolishTerminal: typeof record["voicePolishTerminal"] === "boolean" ? record["voicePolishTerminal"] : DEFAULT_SETTINGS.voicePolishTerminal,
     dictation: sanitizeDictation(record["dictation"]),
     wrapCode: typeof record["wrapCode"] === "boolean" ? record["wrapCode"] : DEFAULT_SETTINGS.wrapCode,
+    splitDiff: typeof record["splitDiff"] === "boolean" ? record["splitDiff"] : DEFAULT_SETTINGS.splitDiff,
     highlightCode: typeof record["highlightCode"] === "boolean" ? record["highlightCode"] : DEFAULT_SETTINGS.highlightCode,
     markdownWidth: MARKDOWN_WIDTHS.find((width) => width === record["markdownWidth"]) ?? DEFAULT_SETTINGS.markdownWidth,
   };

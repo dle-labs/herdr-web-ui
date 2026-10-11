@@ -8,6 +8,14 @@ import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
 import { changedSettings, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
 
+it("shares the diff layout preference with the file browser and sanitizes saved values", () => {
+  expect(DEFAULT_SETTINGS.splitDiff).toBe(true);
+  expect(sanitizeSettings({}).splitDiff).toBe(true);
+  expect(sanitizeSettings({ splitDiff: false }).splitDiff).toBe(false);
+  expect(sanitizeSettings({ splitDiff: true }).splitDiff).toBe(true);
+  for (const splitDiff of [null, "false", 0]) expect(sanitizeSettings({ splitDiff }).splitDiff).toBe(true);
+});
+
 it("keeps a tab's pane while out of use until this device turns the pause on", () => {
   expect(DEFAULT_SETTINGS.releasePaneAway).toBe(false);
   expect(sanitizeSettings({}).releasePaneAway).toBe(false);

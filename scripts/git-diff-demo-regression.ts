@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Locator, type Page } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
+import { openSettingsPage } from "./settings-page.ts";
 
 // The real client over fictional demo data, never an attached or mirrored user pane.
 // CI copies its shared demo build; a standalone run builds its own copy.
@@ -55,8 +56,8 @@ try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
   writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n<script src="./regression-patch.js"></script>\n<script type="module"'));
-  // Extend only fictional demo fixtures: a readable unchanged file, a long added
-  // file for real scrolling, and revision changes for follow mode. Never use herdr.
+  // Extend only fictional demo fixtures with readable files, ignored folders and
+  // a long added file for real scrolling. Never use herdr.
   writeFileSync(join(app, "regression-patch.js"), `(() => {
     const demoFetch = window.fetch;
     window.gitRequests = []; window.gitSent = [];
@@ -78,9 +79,12 @@ try {
       }
       if (url.includes("/workspace/directories") && response.ok) {
         const data = await response.json();
-        data.files = data.path.endsWith("/src")
-          ? [{ name: "greeting.ts", size: 90 }, { name: "new.ts", size: 3000 }]
-          : [{ name: "unchanged.ts", size: 35 }];
+        const source = data.path.endsWith("/src"), ignored = data.path.endsWith("/ignored"), nested = data.path.endsWith("/ignored/nested");
+        data.directories = source || nested ? [] : ignored ? ["nested"] : ["src", "ignored"];
+        data.ignored_directories = source || ignored || nested ? [] : ["ignored"];
+        data.files = source ? [{ name: "greeting.ts", size: 90 }, { name: "new.ts", size: 3000 }]
+          : ignored || nested ? [{ name: "hidden.txt", size: 35 }]
+          : [{ name: "unchanged.ts", size: 35 }, { name: "notes.md", size: 35 }, { name: "picture.png", size: 35 }];
         return Response.json(data);
       }
       if (parsed.pathname.endsWith("/fs/stat")) return Response.json({ path: parsed.searchParams.get("path"), name: "unchanged.ts", size: 35, modified: "2026-01-01T00:00:00.000Z", mime: "text/plain", kind: "text" });
@@ -109,7 +113,7 @@ try {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? chromium.executablePath(), headless: true, args: ["--no-sandbox"] });
   try {
     const url = `http://127.0.0.1:${server.port}/index.html`;
-    for (const mobile of [false, true]) {
+    for (const mobile of [true, false]) {
       const context = await browser.newContext({ viewport: { width: mobile ? 390 : 1280, height: mobile ? 844 : 900 }, isMobile: mobile, hasTouch: mobile, locale: "en-US", serviceWorkers: "block" });
       try {
         await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", comments: true, view: "chat", theme: "dark" })));
@@ -125,28 +129,54 @@ try {
         await shortcut.click();
         await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
         const dialog = await openChanges(page);
-        await section(dialog).locator('[data-diff-type]').waitFor();
-        assert.equal(await dialog.locator('[data-diff-path]').count(), 2, "Browse files immediately mounts the continuous diff document");
+        await dialog.locator(".workspace-file-tree").waitFor();
+        if (!mobile) await section(dialog).locator('[data-diff-type]').waitFor();
         const bounds = await dialog.boundingBox();
         const viewport = page.viewportSize()!;
-        assert.ok(bounds && bounds.width >= viewport.width - 2 && bounds.height >= viewport.height - 2, "Files occupies the full viewport");
+        assert.ok(bounds && bounds.width <= (mobile ? viewport.width : Math.min(viewport.width * .96, 1100)) + 2 && bounds.height <= viewport.height * .92 + 2, "Files is a bounded dialog or full-width 92% phone sheet");
+        if (!mobile) assert.ok(bounds && Math.abs(bounds.x + bounds.width / 2 - viewport.width / 2) <= 2, "desktop Files is centered");
+        assert.equal(await page.getByRole("dialog").count(), 1, "there is one Files dialog");
         assert.equal(await dialog.getByRole("tab").count(), 0, "there are no Files/Changes tabs");
-        if (mobile) await dialog.getByRole("button", { name: "Files", exact: true }).click();
+        assert.equal(await dialog.locator(".changes-toolbar, .changes-filepath, .changes-path").count(), 0, "old changes toolbar and file path bar are absent");
+        assert.equal(await dialog.getByRole("combobox").count(), 0, "there is no Compare selector");
+        for (const name of ["Compare", "Follow edits", "Open file", "All changes", "Unified", "Split", "Wrap long lines", "Highlight code"]) {
+          assert.equal(await dialog.getByRole("button", { name, exact: true }).count(), 0, `${name} is not a Files control`);
+        }
+        assert.equal(await dialog.locator(".modal-header").getByRole("button", { name: "Refresh changes", exact: true }).count(), 1, "refresh is in the modal header");
+        if (mobile) {
+          assert.equal(await dialog.locator(".changes-navigation").isVisible(), true, "Browse files starts on the phone tree");
+          assert.equal(await dialog.locator(".changes-detail").isVisible(), false, "detail does not cover the initial phone tree");
+        }
         await treeFile(dialog, "src/greeting.ts").waitFor();
         await treeFile(dialog, "src/new.ts").waitFor();
         assert.equal(await treeFile(dialog, "src/greeting.ts").getAttribute("data-status"), "modified");
         assert.equal(await treeFile(dialog, "src/new.ts").getAttribute("data-status"), "untracked");
         assert.equal(await treeFile(dialog, "unchanged.ts").getAttribute("data-status"), null);
+        const heights = await dialog.locator(".workspace-tree-row").evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
+        assert.ok(heights.length > 0 && heights.every((height) => height > 0 && height <= 32), "tree rows are compact, at most 32px");
+        const icons = await Promise.all(["unchanged.ts", "notes.md", "picture.png"].map((path) => treeFile(dialog, path).locator("svg").evaluate((svg) => svg.outerHTML)));
+        assert.equal(new Set(icons).size, 3, "code, Markdown and image files have different file-type icons");
+        const ignored = treeFile(dialog, "ignored");
+        assert.equal(await ignored.getAttribute("data-ignored"), "true");
+        await ignored.click();
+        await treeFile(dialog, "ignored/hidden.txt").waitFor();
+        await treeFile(dialog, "ignored/nested").click();
+        const inherited = treeFile(dialog, "ignored/nested/hidden.txt");
+        await inherited.waitFor();
+        assert.equal(await inherited.getAttribute("data-ignored"), "true", "ignored state propagates through expanded directories");
+        assert.equal(await inherited.evaluate((row) => getComputedStyle(row).color), await ignored.evaluate((row) => getComputedStyle(row).color), "ignored descendants retain dim styling");
+        assert.notEqual(await ignored.evaluate((row) => getComputedStyle(row).color), await treeFile(dialog, "unchanged.ts").evaluate((row) => getComputedStyle(row).color), "ignored folders are dimmer than ordinary rows");
         await treeFile(dialog, "unchanged.ts").click();
         await dialog.locator('.file-viewer-embedded [role="region"]').waitFor();
         await dialog.locator(".file-viewer-embedded").getByText("export const unchanged = true;", { exact: false }).first().waitFor();
         await dialog.locator(".file-viewer-embedded .hl-keyword").first().waitFor();
         assert.equal(await page.getByRole("dialog").count(), 1, "unchanged preview stays inside Files");
-        await dialog.getByRole("button", { name: "All changes", exact: true }).click();
+        if (mobile) await dialog.getByRole("button", { name: "Back to files", exact: true }).click();
+        await treeFile(dialog, "src/greeting.ts").click();
         if (mobile) {
           assert.equal(await section(dialog).locator('[data-diff-type]').getAttribute("data-diff-type"), "single");
           assert.equal(await dialog.locator(".changes-navigation").isVisible(), false, "mobile detail replaces the tree");
-          await dialog.getByRole("button", { name: "Files", exact: true }).click();
+          await dialog.getByRole("button", { name: "Back to files", exact: true }).click();
           await treeFile(dialog, "src/new.ts").click();
           await section(dialog, "src/new.ts").locator('[data-diff-type="single"]').waitFor();
           assert.equal(await dialog.evaluate((node) => node.scrollWidth > node.clientWidth), false, "phone dialog does not overflow");
@@ -155,47 +185,41 @@ try {
           console.log("PASS Git Changes: phone tree, embedded preview, unified diff and back navigation");
         } else {
           assert.equal(await section(dialog).locator('[data-diff-type]').getAttribute("data-diff-type"), "split");
-          await dialog.getByRole("button", { name: "Unified", exact: true }).click();
+          await page.keyboard.press("ControlOrMeta+Shift+Comma");
+          await openSettingsPage(page, "File viewer");
+          const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+          const layout = settings.getByRole("group", { name: "Diff layout", exact: true });
+          await layout.getByRole("button", { name: "Unified", exact: true }).click();
+          await page.waitForFunction(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}").splitDiff === false);
           await section(dialog).locator('[data-diff-type="single"]').waitFor();
-          await dialog.getByRole("button", { name: "Split", exact: true }).click();
+          await layout.getByRole("button", { name: "Split", exact: true }).click();
+          await page.waitForFunction(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings") ?? "{}").splitDiff === true);
           await section(dialog).locator('[data-diff-type="split"]').waitFor();
           for (const name of ["Wrap long lines", "Highlight code"]) {
-            const control = dialog.locator(".changes-toolbar").getByRole("button", { name, exact: true });
-            const original = await control.getAttribute("aria-pressed");
+            const control = settings.getByRole("switch", { name, exact: true });
+            const original = await control.getAttribute("aria-checked");
             await control.click();
-            assert.notEqual(await control.getAttribute("aria-pressed"), original, `${name} toggles`);
+            assert.notEqual(await control.getAttribute("aria-checked"), original, `${name} toggles in Settings`);
             if (name === "Highlight code") {
               await page.waitForFunction(() => !document.querySelector('[data-diff-path="src/greeting.ts"] diffs-container')?.shadowRoot?.querySelector('[data-code] span[style*="syntax-"]'));
             }
             await control.click();
-            assert.equal(await control.getAttribute("aria-pressed"), original);
+            assert.equal(await control.getAttribute("aria-checked"), original);
             if (name === "Highlight code") await section(dialog).locator('[data-code] span[style*="syntax-"]').first().waitFor();
           }
+          await settings.getByRole("button", { name: "Close settings", exact: true }).click();
+          await settings.waitFor({ state: "hidden" });
           await section(dialog, "src/new.ts").locator('[data-diff-type]').waitFor();
           await page.mouse.move(1, 1); // No section hover may influence the scroll-selection assertion.
           await dialog.locator(".changes-detail").evaluate((node) => { const next = node.querySelector('[data-diff-path="src/new.ts"]')!; node.scrollTop += next.getBoundingClientRect().top - node.getBoundingClientRect().top; });
           await page.waitForFunction(() => document.querySelector('.workspace-tree-row[title="src/new.ts"]')?.getAttribute("aria-current") === "true");
           assert.equal(await dialog.locator('[data-diff-path]').count(), 2, "scrolling preserves both diff sections");
           await treeFile(dialog, "src/greeting.ts").click();
-          const follow = dialog.getByRole("button", { name: "Follow edits", exact: true });
-          await follow.click();
-          assert.equal(await follow.getAttribute("aria-pressed"), "true");
           await page.evaluate(() => { (window as any).gitRevision = 1; });
+          await dialog.locator(".modal-header").getByRole("button", { name: "Refresh changes", exact: true }).click();
           await section(dialog, "src/new.ts").getByText("export const line0 = 1;", { exact: false }).first().waitFor();
-          await page.waitForFunction(() => document.querySelector('.workspace-tree-row[title="src/new.ts"]')?.getAttribute("aria-current") === "true");
+          assert.equal(await dialog.locator('[data-diff-path]').count(), 2, "refresh retains the continuous all-changes document");
           await treeFile(dialog, "src/greeting.ts").click();
-          assert.equal(await follow.getAttribute("aria-pressed"), "false", "explicit file navigation stops follow");
-          const compare = dialog.getByRole("combobox");
-          await compare.selectOption("staged");
-          await page.waitForFunction(() => {
-            const file = document.querySelector('.workspace-tree-row[title="src/new.ts"]');
-            return file !== null && !file.hasAttribute("data-status");
-          });
-          assert.equal(await section(dialog, "src/new.ts").count(), 0, "unstaged files stay in the tree but not the staged diff document");
-          await treeFile(dialog, "src/greeting.ts").waitFor();
-          await compare.selectOption("unstaged");
-          await section(dialog, "src/new.ts").waitFor();
-          await compare.selectOption("all");
           await number(section(dialog), "new", 2).waitFor();
           const line = number(section(dialog), "new", 2);
           await line.hover();
@@ -238,15 +262,23 @@ try {
           assert.match(sent, /src\/greeting\.ts:2 \(old;all;/);
           assert.match(sent, /src\/greeting\.ts:1-3 \(new;all;/);
           assert.match(sent, /Review the new greeting/); assert.match(sent, /Explain the old greeting/);
-          console.log("PASS Git Changes: continuous scroll, preview, follow, controls, comparisons, gutter toggle, mouse range, dirty guards and composer send");
+          console.log("PASS Git Changes: continuous scroll, embedded preview, Settings controls, refresh, gutter toggle, mouse range, dirty guards and composer send");
         }
         // An empty repository uses the same response contract, mocked only in this page.
         await page.evaluate(() => { (window as any).gitEmpty = true; });
         const empty = await openChanges(page);
-        await empty.getByText("No changes in this comparison.", { exact: true }).waitFor();
+        await empty.getByText("No changes in this comparison.", { exact: true }).waitFor({ state: "attached" });
         assert.equal(await empty.locator("[data-diff-path]").count(), 0);
-        if (mobile) await empty.getByRole("button", { name: "Files", exact: true }).click();
+        if (mobile) {
+          await treeFile(empty, "unchanged.ts").waitFor();
+          await treeFile(empty, "unchanged.ts").click();
+          await empty.locator(".file-viewer-embedded").waitFor();
+          await empty.getByRole("button", { name: "Back to files", exact: true }).click();
+        }
         await treeFile(empty, "unchanged.ts").waitFor();
+        const requests: string[] = await page.evaluate(() => (window as any).gitRequests);
+        assert.ok(requests.length > 0, "git requests were observed");
+        assert.ok(requests.every((request) => new URL(request, url).searchParams.get("mode") === "all"), "every changes and diff request uses all mode");
         assert.deepEqual(errors, [], "no browser exceptions");
         console.log(`PASS Git Changes: ${mobile ? "phone" : "desktop"} empty comparison`);
       } catch (error) {

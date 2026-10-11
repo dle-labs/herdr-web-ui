@@ -180,9 +180,6 @@ export function DiffViewer({ file, mode, owner, connected, split }: {
     </button>
   );
   return <div className="diff-viewer" ref={surface} data-comment-surface="">
-    {settings.comments && <div className="diff-comment-tools">
-      <span>{t("Select line numbers to comment on a line or range.")}</span>
-    </div>}
     {/* A fresh renderer prevents a worker's previous token AST from surviving the
         plain-text threshold change. The draft text lives outside this subtree. */}
     {metadata !== null && <FileDiff key={String(settings.highlightCode)} fileDiff={metadata} lineAnnotations={annotations} selectedLines={selected} options={{

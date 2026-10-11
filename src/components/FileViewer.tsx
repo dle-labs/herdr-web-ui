@@ -22,8 +22,7 @@ import { pathParts } from "../lib/filePaths.ts";
 import { languageForPath } from "../lib/highlight.ts";
 import { useT } from "../lib/i18n.ts";
 import { MAX_INLINE_IMAGE_BYTES, markdownImagePreview } from "../lib/markdownImages.ts";
-import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
-import { useSheetSwipe } from "../lib/sheets.ts";
+import { nativeModalOver } from "../lib/useFocusTrap.ts";
 import { previewHosts, type MarkdownBlock } from "../lib/markdown.ts";
 import { knownPreview, parsePreviewOffThread } from "../lib/markdownPreview.ts";
 import { hasPreview, readTextStart, TEXT_START_HEADERS, type LoadedText, type TextViewMode } from "../lib/textPreview.ts";
@@ -61,8 +60,6 @@ function useMarkdownPreview(text: string | null): Preview {
 
 export interface FileViewerProps {
   connected: boolean;
-  /** Render inside the workspace viewer, without a second modal or focus trap. */
-  embedded?: boolean;
   /** absolute, `~/…`, or relative to the pane's folder */
   path: string;
   paneId: string | null;
@@ -73,7 +70,7 @@ export interface FileViewerProps {
   onClose: () => void;
   /** Settings can open above this preview; its Escape must not also close the file. */
   keyboardActive?: boolean;
-  /** a file chosen in a folder's listing: opened as the preview, so history and a reload keep it */
+  /** Navigate within the enclosing workspace browser. */
   onOpen?: (path: string) => void;
   /** a file comment of the pane to open at (the composer's walk): its view shows, and the walk stops at it */
   commentId?: string | null;
@@ -111,7 +108,7 @@ function CopyFileButton({ text, sourceRef, onShowSource }: { text: string; sourc
  * file endpoint). Each opens whole in a new tab (a text file raw), and anything can be downloaded:
  * an installed app on a phone opens a new tab in an in-app view, which does not always offer to save it.
  */
-export function FileViewer({ connected, path: asked, paneId, machineId, paneFolder, onClose, onOpen, commentId = null, keyboardActive = true, embedded = false }: FileViewerProps) {
+export function FileViewer({ connected, path: asked, paneId, machineId, paneFolder, onClose, onOpen, commentId = null, keyboardActive = true }: FileViewerProps) {
   const t = useT();
   const { fetchFileInfo, fileUrl, fetchDirectories } = useMachineApi();
   // a remote PC's bridge reads a relative folder from the pane's folder only from its next bundle
@@ -122,9 +119,8 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
   const [path, setPath] = useState(asked);
   const [info, setInfo] = useState<FileInfo | null>(null);
   const [candidates, setCandidates] = useState<string[] | null>(null);
-  // Escape closes it, Tab stays in it, and the focus goes back to the row that opened it
-  const surface = useFocusTrap<HTMLElement>(!embedded);
-  useSheetSwipe(surface, embedded ? null : onClose);
+  // The enclosing Files dialog owns focus, sheet gestures and closing.
+  const surface = useRef<HTMLElement>(null);
   // Settings → Chat width, Default: the Preview is as wide as the chat of the pane that opened it
   useOpeningPaneLane(surface, paneId === null ? null : paneStorageId(machineId, paneId));
   // a kind, not a message: it is said in the language of the moment it shows
@@ -196,18 +192,16 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
   const commentEscape = useRef<() => boolean>(() => false);
   const walkDialogOpen = useRef(false);
   useEffect(() => {
-    if (!keyboardActive || embedded) return;
-    // the FilesDialog beneath listens on window too (and stands down while this is open); this
-    // one is the topmost overlay, so it takes the key, unless a native modal (Add PC) is over it
-    /** Escape closes the open comment popover, else the viewer, from anywhere in it, unless something in it took the key. */
+    if (!keyboardActive) return;
+    // Embedded comments still own Escape before the enclosing Files dialog does.
+    /** A popover gets Escape first; otherwise the enclosing browser handles it. */
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229 || walkDialogOpen.current || nativeModalOver(surface.current)) return;
-      if (commentEscape.current()) return;
-      onClose();
+      if (commentEscape.current()) { event.preventDefault(); return; }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, keyboardActive, embedded]);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [keyboardActive]);
 
   // the file found (a bare name may have been found deeper in the folder), else as asked
   const url = fileUrl(info?.path ?? path, paneId);
@@ -348,8 +342,8 @@ export function FileViewer({ connected, path: asked, paneId, machineId, paneFold
   })();
 
   return (
-    <div className={embedded ? "file-viewer-embedded" : "modal-scrim file-viewer-scrim"} onMouseDown={(event) => !embedded && event.target === event.currentTarget && onClose()}>
-      <section className="modal file-viewer" role={embedded ? "region" : "dialog"} aria-modal={embedded ? undefined : true} aria-label={info?.name ?? path} ref={surface} tabIndex={-1}>
+    <div className="file-viewer-embedded">
+      <section className="modal file-viewer" role="region" aria-label={info?.name ?? path} ref={surface} tabIndex={-1}>
         {/* three groups, spaced apart: how the text shows, the file itself, the window */}
         <header className={stacked ? "modal-header file-viewer-header file-viewer-header-stacked" : "modal-header file-viewer-header"}>
           <div className="file-viewer-title">

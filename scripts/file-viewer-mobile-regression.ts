@@ -1,23 +1,24 @@
 /** Self-contained mobile/desktop file viewer layout matrix; no live herdr session. */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { sheetsSettled } from "./sheets-settled.ts";
 
-/** The viewer alone with its source CSS, at phone sizes: the dialog fits, a long name is cut in its stem, no control is covered. */
+/** Integrated Files browser with source CSS: the dialog fits, long names truncate and no control is covered. */
 async function checkLayout(): Promise<void> {
   const fixture = mkdtempSync(join(tmpdir(), "herdr-web-ui-viewer-layout-"));
   const repo = join(import.meta.dir, "..");
   const sharedCss = readFileSync(join(repo, "src/styles.css"), "utf8");
   const viewerCss = readFileSync(process.env.FILE_VIEWER_CSS ?? join(repo, "src/components/FileViewer.css"), "utf8");
+  const browserCss = ["FilesDialog", "ChangesView", "WorkspaceFileTree"].map((name) => readFileSync(join(repo, `src/components/${name}.css`), "utf8")).join("\n");
   const entry = join(fixture, "entry.ts");
   // Render the actual component, with only its HTTP file data supplied by the fixture.
   writeFileSync(entry, `
     import React from ${JSON.stringify(join(repo, "node_modules/react/index.js"))};
     import { createRoot } from ${JSON.stringify(join(repo, "node_modules/react-dom/client.js"))};
-    import { FileViewer } from ${JSON.stringify(join(repo, "src/components/FileViewer.tsx"))};
+    import { FilesDialog } from ${JSON.stringify(join(repo, "src/components/FilesDialog.tsx"))};
     import { SettingsProvider } from ${JSON.stringify(join(repo, "src/lib/settings.ts"))};
     // This Bun-only fixture checks geometry, not the Vite worker pipeline.
     localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ highlightCode: false }));
@@ -25,12 +26,16 @@ async function checkLayout(): Promise<void> {
     const name = query.get("kind") === "text" ? "notes-" + "very-long-unbroken-name-".repeat(30) + ".ts" : "image-" + "very-long-unbroken-name-".repeat(30) + ".svg";
     const path = "/workspace/" + "long-directory/".repeat(40) + name;
     const height = query.get("height");
-    if (height) document.documentElement.style.setProperty("--app-height", height + "px");
+    if (height) {
+      // Match viewport.ts: the visual height and keyboard flag change together.
+      document.documentElement.style.setProperty("--app-height", height + "px");
+      document.documentElement.setAttribute("data-keyboard", "");
+    }
     /** The viewer as the app mounts it, so Close unmounts it as it would there. */
     function Demo() {
       const [open, setOpen] = React.useState(true);
       return React.createElement(SettingsProvider, null, open
-        ? React.createElement(FileViewer, { path, paneId: null, onClose: () => setOpen(false) })
+        ? React.createElement(FilesDialog, { start: "/workspace", initialPath: path, paneId: "fixture-pane", connected: true, onClose: () => setOpen(false) })
         : React.createElement("p", { id: "closed" }, "Viewer closed"));
     }
     createRoot(document.getElementById("root")).render(React.createElement(Demo));
@@ -42,8 +47,12 @@ async function checkLayout(): Promise<void> {
       // Vite emits the worklet in production; this non-capture fixture never loads it.
       external: ["*?worker&url"], entrypoints: [entry], target: "browser", define: { "process.env.NODE_ENV": JSON.stringify("development") },
       plugins: [{ name: "fixture-styles", setup(build) {
-        // Serve the two real stylesheets explicitly, including optional pre-fix CSS.
+        // Serve the real stylesheets explicitly, including optional pre-fix viewer CSS.
         build.onLoad({ filter: /\.css$/ }, () => ({ contents: "", loader: "css" }));
+        // This geometry fixture has no Git diffs; Vite's diff-worker transform is
+        // covered by git-diff-demo-regression, not this Bun-only layout bundle.
+        build.onResolve({ filter: /@pierre\/diffs\/worker\/worker\.js\?worker$/ }, () => ({ path: "layout-diff-worker", namespace: "layout" }));
+        build.onLoad({ filter: /.*/, namespace: "layout" }, () => ({ contents: 'export default class extends Worker { constructor() { super(URL.createObjectURL(new Blob([""], { type: "text/javascript" })), { type: "module" }); } }', loader: "js" }));
       } }],
     });
     assert.ok(bundle.success, String(bundle.logs));
@@ -58,10 +67,12 @@ async function checkLayout(): Promise<void> {
           : url.searchParams.get("safe") === "landscape"
             ? { top: 0, right: 59, bottom: 21, left: 59 }
             : { top: 0, right: 0, bottom: 0, left: 0 };
-        const css = `${sharedCss}\n${viewerCss}`.replace(/env\(safe-area-inset-(top|right|bottom|left),\s*0px\)/g,
+        const css = `${sharedCss}\n${browserCss}\n${viewerCss}`.replace(/env\(safe-area-inset-(top|right|bottom|left),\s*0px\)/g,
           (_, side: keyof typeof insets) => `${insets[side]}px`);
         return new Response(css, { headers: { "content-type": "text/css" } });
       }
+      if (url.pathname === "/api/workspace/changes") return Response.json({ root: "/workspace", revision: "fixture", mode: "all", files: [] });
+      if (url.pathname === "/api/workspace/directories") return Response.json({ path: "/workspace", directories: [], files: [], truncated: false });
       if (url.pathname === "/api/fs/stat") {
         const path = url.searchParams.get("path")!;
         if (new URL(request.headers.get("referer")!).searchParams.get("kind") === "text") return Response.json({ path, name: path.split("/").pop(), kind: "text", mime: "text/plain", size: 650 });
@@ -93,8 +104,8 @@ async function checkLayout(): Promise<void> {
     ];
     for (const scenario of cases.filter((item) => !process.env.FILE_VIEWER_CASE || item.name === process.env.FILE_VIEWER_CASE)) {
       const context = await browser.newContext({ viewport: { width: scenario.width, height: scenario.height }, isMobile: scenario.touch, hasTouch: scenario.touch, locale: "en-US" });
+      const page = await context.newPage();
       try {
-        const page = await context.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
         page.setDefaultTimeout(10_000);
@@ -108,6 +119,9 @@ async function checkLayout(): Promise<void> {
           });
           // a phone's viewer rises into place (styles.css): measure where it comes to rest
           await sheetsSettled(page);
+          assert.equal(await page.getByRole("dialog", { name: "Files", exact: true }).count(), 1, `${label}: one Files dialog`);
+          assert.equal(await page.locator('.file-viewer-embedded [role="region"]').count(), 1, `${label}: renderer is embedded`);
+          assert.equal(await page.locator(".file-viewer-scrim").count(), 0, `${label}: no standalone viewer scrim`);
           const geometry = await page.evaluate(() => {
             const rect = (element: Element) => {
               const { x, y, width, height, right, bottom } = element.getBoundingClientRect();
@@ -166,6 +180,13 @@ async function checkLayout(): Promise<void> {
           assert.deepEqual(errors, [], label);
           console.log(`PASS ${label}: safe, tappable controls; body-only scroll; actual close`);
         }
+      } catch (error) {
+        if (process.env.UI_EVIDENCE_DIR) {
+          mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+          await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `file-layout-${scenario.name}-failure.png`) }).catch(() => {});
+          writeFileSync(join(process.env.UI_EVIDENCE_DIR, `file-layout-${scenario.name}-failure.html`), await page.content());
+        }
+        throw error;
       } finally { await context.close(); }
     }
     // A text file adds Copy to Raw and Download: on a phone the name keeps the first row with Close in its

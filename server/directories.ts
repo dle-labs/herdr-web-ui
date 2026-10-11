@@ -7,6 +7,51 @@ import type { DirectoryListing } from "../shared/protocol.ts";
 /** A folder with more subfolders than this lists the first ones and says it stopped. */
 export const MAX_DIRECTORY_ENTRIES = 500;
 
+const GIT_IGNORE_MS = 2_000;
+const GIT_IGNORE_BYTES = 1024 * 1024;
+
+/** Best-effort metadata for the already bounded listing; never hide or remove entries. */
+export async function ignoredDirectories(path: string, directories: string[]): Promise<string[]> {
+  if (!directories.length) return [];
+  const env = { ...process.env };
+  // Inspect this directory, not a repository selected by the bridge's environment.
+  for (const key of Object.keys(env)) if (key.startsWith("GIT_")) delete env[key];
+  Object.assign(env, { GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" });
+  let proc;
+  try {
+    // Keep the index check: --no-index would incorrectly mark tracked folders ignored.
+    // NUL framing handles spaces, newlines and leading dashes without a shell or quoting.
+    proc = Bun.spawn(["git", "--no-pager", "-c", "core.fsmonitor=false", "-C", path, "check-ignore", "--stdin", "-z"], {
+      env, stdin: Buffer.from(directories.map((name) => `./${name}\0`).join("")), stdout: "pipe", stderr: "pipe",
+    });
+  } catch { return []; }
+  let failed = false;
+  let bytes = 0;
+  const timer = setTimeout(() => { failed = true; proc.kill(); }, GIT_IGNORE_MS);
+  const collect = async (stream: ReadableStream<Uint8Array>): Promise<Buffer> => {
+    const reader = stream.getReader();
+    const parts: Uint8Array[] = [];
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.length;
+        if (bytes > GIT_IGNORE_BYTES) { failed = true; proc.kill(); throw new Error("Git ignore output budget exceeded"); }
+        parts.push(value);
+      }
+      return Buffer.concat(parts);
+    } finally { reader.releaseLock(); }
+  };
+  try {
+    const [output, , code] = await Promise.all([collect(proc.stdout), collect(proc.stderr), proc.exited]);
+    // 1 means no ignored paths; 128 includes a non-Git directory or an unsafe path.
+    if (failed || code !== 0) return [];
+    const ignored = new Set(output.toString().split("\0"));
+    return directories.filter((name) => ignored.has(`./${name}`));
+  } catch { return []; }
+  finally { clearTimeout(timer); }
+}
+
 /**
  * The folders inside one directory, for the new-session dialog's folder browser. One
  * directory at a time, names only, nothing kept between calls: the cost is one readdir.

@@ -56,7 +56,6 @@ import { TelemetryNotice } from "./components/TelemetryControls.tsx";
 import { FilesDialog } from "./components/FilesDialog.tsx";
 import { WorkspaceFilesContext } from "./lib/workspaceFiles.ts";
 import { PlanButton, PlanDialog } from "./components/PlanDialog.tsx";
-import { FileViewer } from "./components/FileViewer.tsx";
 import { OpenFileContext } from "./lib/filePaths.ts";
 import { FileCommentNavContext } from "./lib/fileCommentNav.ts";
 import type { FileComment } from "./lib/fileComments.ts";
@@ -261,7 +260,7 @@ export function App() {
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
   }, [moreOpen]);
-  // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
+  // One Files browser, whether opened from its button, a path link or a comment.
   const [filesOpen, setFilesOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [movingPane, setMovingPane] = useState<{ machineId: string; paneId: string; anchor: HTMLElement } | null>(null);
@@ -1045,6 +1044,16 @@ export function App() {
   }
   if (locked) return <AccessGate reason={lockReason} initialCode={pairCode} onUnlocked={unlock} />;
 
+  const browserMachineId = viewing?.machineId ?? diffCommentView?.machineId ?? selectedMachineId;
+  const browserPaneId = viewing ? viewing.paneId : diffCommentView?.paneId ?? selectedPaneId;
+  const browserPane = machines.find((machine) => machine.id === browserMachineId)?.snapshot?.panes.find((pane) => pane.pane_id === browserPaneId);
+  const browserComment = viewing ? null : diffCommentView?.comment ?? null;
+  const closeBrowser = (): void => {
+    setFilesOpen(false);
+    setDiffCommentView(null);
+    if (viewing) closeFile();
+  };
+
   return (
     <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null ? undefined : { "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties}>
       <header className={`app-header is-zoned${chatShown ? " is-chat" : ""}`}>
@@ -1263,25 +1272,14 @@ export function App() {
       {movingPane && movingLivePane && movingOwner?.snapshot && <MachineContext.Provider value={movingPane.machineId}><MovePaneMenu anchor={movingPane.anchor} snapshot={movingOwner.snapshot} pane={movingLivePane}
         paneTitle={displayPaneTitle(movingLivePane)} onMoved={(moved) => actions.paneMoved(movingPane.machineId, moved.previous_pane_id, moved.pane.pane_id)}
         onError={(reason) => setLayoutNotice(t("Move failed: {reason}", { reason }))} onClose={() => setMovingPane(null)} /></MachineContext.Provider>}
-      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={viewing !== null} />
+      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={filesOpen || viewing !== null} />
       {planOpen && selectedPane && <PlanDialog paneId={selectedPane.pane_id} title={selectedTitle ?? ""} onClose={() => setPlanOpen(false)} />}
-      {filesOpen && selectedPane && <MachineContext.Provider value={diffCommentView?.machineId ?? selectedMachineId}>
-        <FilesDialog key={`${diffCommentView?.machineId ?? selectedMachineId}:${diffCommentView?.paneId ?? selectedPane.pane_id}:${diffCommentView?.comment.id ?? "browse"}`}
-          start={diffCommentView?.comment.diff?.repository ?? selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={diffCommentView?.paneId ?? selectedPane.pane_id}
-          initialComment={diffCommentView?.comment ?? null} connected={connected && paneRole?.mode === "interact" && paneRole.machineId === (diffCommentView?.machineId ?? selectedMachineId) && paneRole.paneId === (diffCommentView?.paneId ?? selectedPane.pane_id)}
-          viewing={viewing !== null}
-          onClose={() => { setFilesOpen(false); setDiffCommentView(null); }} />
-      </MachineContext.Provider>}
-      {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
-        <FileViewer key={`${viewing.machineId}:${viewing.paneId}:${viewing.path}`} path={viewing.path} paneId={viewing.paneId} machineId={viewing.machineId} commentId={viewing.comment ?? null}
-          connected={connected && paneRole?.mode === "interact" && paneRole.machineId === viewing.machineId && paneRole.paneId === viewing.paneId && viewing.machineId === selectedMachineId && viewing.paneId === selectedPaneId}
-          paneFolder={(() => {
-            // the pane's folder is known only for the PC whose panes are listed
-            if (viewing.machineId !== selectedMachineId) return null;
-            const pane = snapshot?.panes.find((p) => p.pane_id === viewing.paneId);
-            return pane === undefined ? null : pane.foreground_cwd ?? pane.cwd ?? null;
-          })()}
-          onClose={closeFile} onOpen={(path) => openFile({ path, paneId: viewing.paneId, machineId: viewing.machineId })} keyboardActive={!settingsOpen} />
+      {(viewing !== null || filesOpen && browserPaneId !== null) && <MachineContext.Provider value={browserMachineId}>
+        <FilesDialog key={`${browserMachineId}:${browserPaneId}:${viewing?.path ?? browserComment?.id ?? "browse"}`}
+          start={browserComment?.diff?.repository ?? browserPane?.foreground_cwd ?? browserPane?.cwd ?? ""} paneId={browserPaneId}
+          initialPath={viewing?.path ?? (browserComment?.diff ? null : browserComment?.path ?? null)} initialComment={browserComment} initialCommentId={viewing?.comment ?? null}
+          connected={connected && paneRole?.mode === "interact" && paneRole.machineId === browserMachineId && paneRole.paneId === browserPaneId}
+          keyboardActive={!settingsOpen} onClose={closeBrowser} />
       </MachineContext.Provider>}
       <CommandPalette key={selectedMachineId} machines={machines} onSelect={selectTarget} open={paletteOpen} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId} view={view} actions={actions} />
     </div></MachineContext.Provider></MachineSessionsProvider>

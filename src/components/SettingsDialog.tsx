@@ -347,6 +347,10 @@ function FileViewerPage() {
   const markdownWidthLabel = { readable: t("Default"), full: t("Full width") };
   return (
     <SettingsGroup>
+      <SettingsRow label={t("Diff layout")}>
+        <Segmented label={t("Diff layout")} value={settings.splitDiff ? "split" : "unified"} onChange={(layout) => update({ splitDiff: layout === "split" })}
+          options={[{ value: "unified", label: t("Unified") }, { value: "split", label: t("Split") }]} />
+      </SettingsRow>
       <SettingsRow label={t("Wrap long lines")}>
         <Toggle label={t("Wrap long lines")} checked={settings.wrapCode} onChange={(wrapCode) => update({ wrapCode })} />
       </SettingsRow>

@@ -1036,7 +1036,7 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   }
   if (path === "/api/workspace/directories") {
     const dir = query.get("path") || "/home/demo";
-    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "docs-site", "infra", "release", "web-dashboard"] : [], truncated: false, files: [] });
+    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "docs-site", "infra", "release", "web-dashboard"] : [], truncated: false, ...(query.get("files") === "1" ? { files: [], ignored_directories: [] } : {}) });
   }
   if (path === "/api/workspace/create") {
     const body = await bodyOf(init, input);

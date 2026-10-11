@@ -15,11 +15,6 @@
   box-shadow: none;
 }
 
-.file-viewer-scrim {
-  /* above the file browser it may open from */
-  z-index: calc(var(--z-modal) + 1);
-}
-
 .file-viewer {
   width: min(96vw, 1100px);
   max-width: 100%;
@@ -306,24 +301,6 @@
 }
 
 @media (pointer: coarse) {
-  /* Override the shared desktop scrim padding even on a landscape phone. */
-  .file-viewer-scrim {
-    padding: 0;
-    bottom: auto;
-    height: var(--app-height, 100dvh);
-    align-items: stretch;
-  }
-
-  .file-viewer-scrim .file-viewer {
-    width: 100%;
-    max-height: 100%;
-    height: 100%;
-    border-radius: 0;
-    /* The modal owns all insets; its header/body remain inside the usable screen. */
-    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
-      env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
-  }
-
   .file-viewer-action {
     width: max(44px, var(--touch-target));
     height: max(44px, var(--touch-target));

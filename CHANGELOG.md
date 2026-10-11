@@ -11,7 +11,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 
 - Configure and save the Speaches backend URL and optional API key in Settings → Dictation, without editing server environment variables. Choose a recognition language or automatic detection for recording and live preview.
 - Show recorded Pi subagent and workflow evidence outside folded chat work, with expandable results and explicit last-recorded status rather than inferred live progress.
-- Browse files and current Git changes in one modal viewer with a file tree, continuous diffs, staged/unstaged/all comparisons, wrapping/highlighting preferences in Settings and optional following of edits. Open changes from the composer and add inline old/new line-range comments, with dictation, to the next chat message.
+- Browse files and all current Git changes in one modal viewer with a compact file tree, file-type icons, dimmed Git-ignored folders and continuous diffs. File links open in this same browser; diff layout, wrapping and highlighting preferences live in Settings. Open changes from the composer and add inline old/new line-range comments, with dictation, to the next chat message.
 - Use Pierre's Shiki highlighting engine across diffs, files and chat, with shared palette colors and bounded background highlighting for file/chat code.
 - Undo the last inserted dictation segment without clearing earlier takes or unrelated draft text.
 - Native conversation transcripts for Hermes Agent: turns, thinking blocks, and tool calls are read directly from its SQLite session store. ([#604](https://github.com/devswha/herdr-web-ui/pull/604) by @RikiSanjayaa)

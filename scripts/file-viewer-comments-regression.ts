@@ -342,7 +342,9 @@ async function openSync(page: Page, touch = false): Promise<Locator> {
   const link = page.getByRole("button", { name: "sync.ts", exact: true });
   if (touch) await link.tap();
   else await link.click();
-  const viewer = page.getByRole("dialog", { name: "sync.ts", exact: true });
+  const viewer = page.getByRole("dialog", { name: "Files", exact: true });
+  assert.equal(await page.getByRole("dialog").count(), 1, "file links use the single Files dialog");
+  assert.equal(await page.locator(".file-viewer-scrim").count(), 0, "no standalone viewer scrim");
   await viewer.locator(`.file-viewer-text .hl-line[data-source-line="${SYNC_LINES.length}"]`).waitFor();
   // Coordinate-based touch taps need the sheet's final position, not its opening frame.
   await sheetsSettled(page);
@@ -354,7 +356,7 @@ async function openSpec(page: Page, touch = false): Promise<Locator> {
   const link = page.getByRole("button", { name: "spec.md", exact: true });
   if (touch) await link.tap();
   else await link.click();
-  const viewer = page.getByRole("dialog", { name: "spec.md", exact: true });
+  const viewer = page.getByRole("dialog", { name: "Files", exact: true });
   await viewer.locator(`.file-viewer-markdown .hl-line[data-source-line="${FOLD_HEAD_LAST}"]`).waitFor();
   await sheetsSettled(page);
   return viewer;
@@ -838,7 +840,7 @@ const cases: Record<string, Case> = {
     await viewer.getByRole("button", { name: "Close file", exact: true }).click();
     await viewer.waitFor({ state: "detached" });
     await page.getByRole("button", { name: "big.txt", exact: true }).click();
-    viewer = page.getByRole("dialog", { name: "big.txt", exact: true });
+    viewer = page.getByRole("dialog", { name: "Files", exact: true });
     body = viewer.locator(".file-viewer-body");
     const last = viewer.locator(".file-viewer-text .hl-line").last();
     await last.waitFor();
@@ -852,7 +854,7 @@ const cases: Record<string, Case> = {
     await viewer.getByRole("button", { name: "Close file", exact: true }).click();
     await viewer.waitFor({ state: "detached" });
     await page.getByRole("button", { name: "long.txt", exact: true }).click();
-    viewer = page.getByRole("dialog", { name: "long.txt", exact: true });
+    viewer = page.getByRole("dialog", { name: "Files", exact: true });
     const cut = lineOf(viewer, 1);
     await cut.waitFor();
     assert.equal(await viewer.locator(".file-viewer-meta .file-viewer-notice").count(), 1, "long.txt opens cut short");
@@ -868,7 +870,7 @@ const cases: Record<string, Case> = {
     await viewer.getByRole("button", { name: "Close file", exact: true }).click();
     await viewer.waitFor({ state: "detached" });
     await page.getByRole("button", { name: "wide.ts", exact: true }).click();
-    viewer = page.getByRole("dialog", { name: "wide.ts", exact: true });
+    viewer = page.getByRole("dialog", { name: "Files", exact: true });
     body = viewer.locator(".file-viewer-body");
     await lineOf(viewer, WIDE_LINES.length).waitFor();
     const code = viewer.locator("pre.file-viewer-text");
@@ -1008,7 +1010,7 @@ const cases: Record<string, Case> = {
     await viewer.getByRole("button", { name: "Close file", exact: true }).tap();
     await viewer.waitFor({ state: "detached" });
     await page.getByRole("button", { name: "big.txt", exact: true }).tap();
-    const big = page.getByRole("dialog", { name: "big.txt", exact: true });
+    const big = page.getByRole("dialog", { name: "Files", exact: true });
     await big.locator(".file-viewer-text .hl-line").first().waitFor();
     assert.equal(await big.locator(".file-viewer-meta .file-viewer-notice").count(), 1, "big.txt opens cut short");
     assert.equal(await big.locator(".file-viewer-body[data-comment-surface]").count(), 1, "a file cut short takes comments");
@@ -1017,7 +1019,7 @@ const cases: Record<string, Case> = {
     // as the app opens a file with no pane selected (App.tsx `viewFile`): the preview's history entry, read on load
     await page.evaluate((path) => history.replaceState({ ...history.state, "herdr-web-ui:file-preview": { path, paneId: null, machineId: "local" } }, ""), join(root, "src", "sync.ts"));
     await page.reload();
-    const paneless = page.getByRole("dialog", { name: "sync.ts", exact: true });
+    const paneless = page.getByRole("dialog", { name: "Files", exact: true });
     await paneless.locator(`.file-viewer-text .hl-line:nth-of-type(${SYNC_LINES.length})`).waitFor();
     assert.equal(await paneless.locator(".file-viewer-body[data-comment-surface]").count(), 0, "no comments without a pane");
     const lone = await pointOn(paneless.locator('.file-viewer-text .hl-line:nth-of-type(3)'));
@@ -1449,7 +1451,7 @@ const cases: Record<string, Case> = {
 
     // tap 2: the viewer opens docs/spec.md in the preview, at its comment
     await walk.click();
-    const spec = page.getByRole("dialog", { name: "spec.md", exact: true });
+    const spec = page.getByRole("dialog", { name: "Files", exact: true });
     await spec.locator(".file-viewer-markdown").waitFor();
     await eventually("the viewer to open the spec's comment", () => openedInViewer(spec, table, "Also return the stored revision."));
     assert.equal(await spec.getByRole("button", { name: "Show source", exact: true }).getAttribute("aria-pressed"), "false", "the preview shows");
@@ -1464,7 +1466,7 @@ const cases: Record<string, Case> = {
 
     // tap 3: on after the comment the viewer showed last, to src/sync.ts in the code view at line 8
     await walk.click();
-    const sync = page.getByRole("dialog", { name: "sync.ts", exact: true });
+    const sync = page.getByRole("dialog", { name: "Files", exact: true });
     await lineOf(sync, SYNC_LINES.length).waitFor();
     await eventually("the viewer to open the comment on line 8", () => openedInViewer(sync, line8, "Compare with <=."));
     await assertPinAtLineEnd(sync.locator(".file-viewer-body"), `.comment-pin[data-comment-id="${line8}"]`, '.hl-line[data-source-line="8"]', "line 8's comment");
@@ -1573,7 +1575,7 @@ const cases: Record<string, Case> = {
 
     // the code view: a tap on a line at the view's bottom edge
     await page.getByRole("button", { name: "big.txt", exact: true }).tap();
-    const viewer = page.getByRole("dialog", { name: "big.txt", exact: true });
+    const viewer = page.getByRole("dialog", { name: "Files", exact: true });
     await lineOf(viewer, 40).waitFor();
     assert.ok(await tapFocuses(lineOf(viewer, 40), "end"), "the code view's sheet takes the focus inside the tap on a line");
     await sheet.waitFor();
@@ -1608,6 +1610,7 @@ let workspace: string | undefined;
 let server: ReturnType<typeof createServer> | undefined;
 let browser: Browser | undefined;
 const failed: string[] = [];
+let activePage: Page | undefined;
 
 try {
   const created = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-file-comments" });
@@ -1629,6 +1632,7 @@ try {
   const open = async (options: BrowserContextOptions, seed: readonly object[] = []): Promise<Opened> => {
     const context = await launched.newContext(options);
     const page = await context.newPage();
+    activePage = page;
     await page.addInitScript((id) => {
       localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
       localStorage.setItem(`herdr-web-ui:view:${id.pane}`, "chat");
@@ -1658,6 +1662,11 @@ try {
     } catch (error) {
       failed.push(name);
       console.log(`FAIL case ${name}: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+      if (process.env.UI_EVIDENCE_DIR && activePage && !activePage.isClosed()) {
+        mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
+        await activePage.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `file-comments-${name}-failure.png`) }).catch(() => {});
+        await activePage.content().then((html) => writeFileSync(join(process.env.UI_EVIDENCE_DIR!, `file-comments-${name}-failure.html`), html)).catch(() => {});
+      }
     }
   }
 } finally {

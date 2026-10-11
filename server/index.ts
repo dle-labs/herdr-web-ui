@@ -37,7 +37,7 @@ import { codexOpenRollout, paneCodexHome } from "./codex.ts";
 import { CompletionTracker, type OmoRest } from "./completion.ts";
 import { freeAgentName } from "./agent-name.ts";
 import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent } from "./shell-agent.ts";
-import { listDirectories } from "./directories.ts";
+import { ignoredDirectories, listDirectories } from "./directories.ts";
 import { fileResponse, locateFile } from "./file-view.ts";
 import {
   agentManifests,
@@ -1962,7 +1962,9 @@ export function createServer(
           if (base === undefined && path !== "" && path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) return badRequest("invalid_cwd", "the pane a relative path belongs to is gone");
         }
         const listing = listDirectories(url.searchParams.get("path") ?? "", url.searchParams.get("hidden") === "1", url.searchParams.get("files") === "1", base);
-        return listing === null ? badRequest("invalid_cwd", "path must be a directory this user can read") : jsonResponse(listing);
+        if (listing === null) return badRequest("invalid_cwd", "path must be a directory this user can read");
+        if (url.searchParams.get("files") === "1") listing.ignored_directories = await ignoredDirectories(listing.path, listing.directories);
+        return jsonResponse(listing);
       }
 
       // A tab is made the way a workspace is: herdr opens it with a shell in its root pane, and

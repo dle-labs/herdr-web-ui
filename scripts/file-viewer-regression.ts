@@ -81,6 +81,17 @@ try {
   // Georgia font at 17px. Record long tasks from the first paint: nothing an agent writes may
   // hold the page for a second.
   await page.addInitScript(() => {
+    // Shiki handles the old pathological Markdown input efficiently. Exercise
+    // the worker deadline deterministically instead of relying on machine speed.
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      postMessage(message: unknown, options?: Transferable[] | StructuredSerializeOptions): void {
+        const job = message as { request?: { language?: string; source?: string } };
+        if (job?.request?.language === "markdown" && job.request.source?.startsWith("Notes on a slow file.")) return;
+        if (Array.isArray(options)) super.postMessage(message, options);
+        else super.postMessage(message, options);
+      }
+    };
     if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", chatFontSize: 17, chatFontFamily: "Georgia" }));
     const record = window as unknown as { longTasks: number[] };
     record.longTasks = [];
@@ -139,9 +150,17 @@ try {
     (window as unknown as { testDocument: string }).testDocument = "same-document";
   });
   const baseline = await page.evaluate(() => history.length);
-  const preview = page.getByRole("dialog", { name: "preview.webm", exact: true });
+  const preview = page.getByRole("dialog", { name: "Files", exact: true });
   await videoLink.click();
-  await preview.locator("video").waitFor();
+  await preview.locator(".file-viewer-embedded video").waitFor();
+  assert.equal(await page.getByRole("dialog").count(), 1, "chat file links open the single Files dialog");
+  assert.equal(await page.locator(".file-viewer-scrim, .file-viewer-modal").count(), 0, "no standalone file viewer surface remains");
+  await preview.locator('.file-viewer-embedded [role="region"]').waitFor();
+  await preview.getByRole("button", { name: "Back to files", exact: true }).click();
+  await preview.locator(".workspace-file-tree").waitFor();
+  assert.equal(await preview.locator(".changes-detail").isVisible(), false, "Back to files returns to the phone tree");
+  await preview.locator('.workspace-tree-row[title="preview.webm"]').click();
+  await preview.locator(".file-viewer-embedded video").waitFor();
   await page.waitForFunction(() => (document.querySelector("video")?.readyState ?? 0) >= 1);
   assert.equal(await page.evaluate(() => history.length), baseline + 1);
   if (process.env.UI_EVIDENCE_DIR) {
@@ -171,10 +190,9 @@ try {
   await preview.waitFor({ state: "hidden" });
   await videoLink.click();
   await preview.waitFor();
-  // A press on the backdrop itself closes the viewer. On a touch device the viewer fills the
-  // scrim edge to edge, so the press is sent to the scrim rather than aimed at an exposed pixel.
+  // The integrated Files backdrop owns dismissal, not a second viewer scrim.
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.locator(".file-viewer-scrim").evaluate((scrim) => scrim.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+  await page.locator(".workspace-files-scrim").evaluate((scrim) => scrim.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
   await preview.waitFor({ state: "hidden" });
   await page.setViewportSize({ width: 390, height: 844 });
   console.log("PASS Forward restores the viewer; X, Escape and scrim close consume its entry");
@@ -330,7 +348,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
 
   await page.getByRole("button", { name: "notes", exact: true }).click();
-  const notes = page.getByRole("dialog", { name: "notes.txt", exact: true });
+  const notes = preview;
   await notes.getByText("File preview history regression", { exact: true }).waitFor();
   await page.reload();
   await notes.getByText("File preview history regression", { exact: true }).waitFor();
@@ -368,7 +386,7 @@ try {
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // Markdown: Show source (a toggle: off is the Preview), Raw, Download, Copy; no Wrap (a setting)
-  const guide = page.getByRole("dialog", { name: "guide.md", exact: true });
+  const guide = preview;
   await page.getByRole("button", { name: "guide", exact: true }).click();
   await guide.getByRole("heading", { name: "Guide", exact: true }).waitFor();
   await guide.locator(".hl-keyword", { hasText: "const" }).waitFor();
@@ -443,7 +461,7 @@ try {
   console.log("PASS When both clipboard paths refuse, Copy selects the Markdown source (switching a Preview to Code)");
   await guide.getByRole("button", { name: "Show source", exact: true }).click();
   await guide.getByRole("button", { name: "notes", exact: true }).click();
-  const linked = page.getByRole("dialog", { name: "notes.txt", exact: true });
+  const linked = preview;
   await linked.waitFor();
   assert.doesNotMatch(await linked.locator(".file-viewer-meta").getAttribute("title") ?? "", /\/docs\//);
   console.log("PASS A link in a Markdown preview opens the file it names");
@@ -452,7 +470,7 @@ try {
 
   // Upstream diagrams and pane-local images also work through the fork's parsed preview.
   await page.getByRole("button", { name: "diagram", exact: true }).click();
-  const diagram = page.getByRole("dialog", { name: "diagram.md", exact: true });
+  const diagram = preview;
   await diagram.locator(".markdown-mermaid svg").waitFor({ timeout: 15_000 });
   const image = diagram.getByRole("img", { name: "Local dot", exact: true });
   await image.scrollIntoViewIfNeeded();
@@ -474,7 +492,7 @@ try {
 
   // a text file past the load limit: shown in part, so it cannot be copied whole
   await page.getByRole("button", { name: "big", exact: true }).click();
-  const big = page.getByRole("dialog", { name: "big.txt", exact: true });
+  const big = preview;
   // the note is the header's size, where it is seen before the text: "256 KB of …"
   const cut = big.locator(".file-viewer-meta .file-viewer-notice");
   await cut.waitFor();
@@ -494,7 +512,7 @@ try {
   await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
   await page.locator(".conn-live").waitFor();
   await page.getByRole("button", { name: "big code", exact: true }).click();
-  const bigCode = page.getByRole("dialog", { name: "big.ts", exact: true });
+  const bigCode = preview;
   await bigCode.locator(".file-viewer-text .hl-keyword", { hasText: "export" }).first().waitFor();
   assert.match(await bigCode.locator(".file-viewer-meta .file-viewer-notice").getAttribute("title") ?? "", /^Showing the first 256 KB$/);
   assert.equal(await bigCode.getByRole("button", { name: "Copy file", exact: true }).count(), 0);
@@ -506,7 +524,7 @@ try {
 
   // a quote nested 20 000 deep renders as a quote nested to the parser's limit, the rest its text
   await page.getByRole("button", { name: "deep quotes", exact: true }).click();
-  const deep = page.getByRole("dialog", { name: "deep.md", exact: true });
+  const deep = preview;
   // one paragraph, in the innermost quote: the markers past the limit, then the text. At 390px the
   // quotes' padding and rails leave it no width, as the same quote does in the chat, so the step
   // checks that it is there and how deep, not that it can be read.
@@ -526,7 +544,7 @@ try {
 
   // an empty file opens empty, whole, with Copy: not as an error
   await page.getByRole("button", { name: "empty", exact: true }).click();
-  const empty = page.getByRole("dialog", { name: "empty.txt", exact: true });
+  const empty = preview;
   await empty.getByRole("button", { name: "Copy file", exact: true }).waitFor();
   assert.equal(await empty.getByRole("alert").count(), 0);
   assert.equal(await empty.locator(".file-viewer-notice").count(), 0, "an empty file is not cut short");
@@ -551,11 +569,18 @@ try {
   // a Markdown file the highlighter is slow on: its Preview shows, and its source stays plain with a
   // notice, while the page runs on
   await page.getByRole("button", { name: "slow preview", exact: true }).click();
-  const slow = page.getByRole("dialog", { name: "slow.md", exact: true });
+  const slow = preview;
   await slow.locator(".file-viewer-markdown p").first().waitFor({ timeout: 15_000 });
   await slow.getByRole("button", { name: "Show source", exact: true }).click();
   const slowNote = slow.locator(".file-viewer-meta .file-viewer-notice");
-  await page.waitForFunction(() => document.querySelector(".file-viewer-notice")?.getAttribute("title") === "Too long to highlight", undefined, { timeout: 15_000 });
+  await page.waitForFunction(() => document.querySelector(".file-viewer-notice")?.getAttribute("title") === "Too long to highlight", undefined, { timeout: 15_000 }).catch(async (error) => {
+    console.error("Slow Markdown diagnostic:", await slow.evaluate((node) => ({ notices: [...node.querySelectorAll(".file-viewer-notice")].map((notice) => ({ title: notice.getAttribute("title"), text: notice.textContent })), sourceLines: node.querySelectorAll(".file-viewer-text .hl-line").length, coloredSpans: node.querySelectorAll(".file-viewer-text code span:not(.hl-line)").length })));
+    if (process.env.UI_EVIDENCE_DIR) {
+      await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "slow-markdown-failure.png") });
+      writeFileSync(join(process.env.UI_EVIDENCE_DIR, "slow-markdown-failure.html"), await slow.evaluate((node) => node.outerHTML));
+    }
+    throw error;
+  });
   assert.equal(await slowNote.locator(".visually-hidden").innerText(), "Too long to highlight", "a screen reader still hears it");
   assert.equal(await slow.locator(".hl-note").count(), 0, "the note is not repeated under the code");
   await slow.locator(".file-viewer-text .hl-line").first().waitFor();
@@ -567,7 +592,7 @@ try {
 
   // a Markdown file past the load limit: its first 256 KB, previewed, and the header says it is cut
   await page.getByRole("button", { name: "long notes", exact: true }).click();
-  const long = page.getByRole("dialog", { name: "long.md", exact: true });
+  const long = preview;
   await long.locator(".file-viewer-markdown .markdown-h1").first().waitFor();
   assert.match(await long.locator(".file-viewer-meta .file-viewer-notice").getAttribute("title") ?? "", /^Showing the first 256 KB$/);
   await long.getByRole("button", { name: "Show source", exact: true }).waitFor();
@@ -587,7 +612,7 @@ try {
   assert.equal(await page.locator(".markdown-code .hl-note").count(), 0, "plain by choice is not too long");
   await checkCodeFidelity("highlight-off");
   await page.getByRole("button", { name: "guide", exact: true }).click();
-  const plainGuide = page.getByRole("dialog", { name: "guide.md", exact: true });
+  const plainGuide = preview;
   await plainGuide.getByRole("heading", { name: "Guide", exact: true }).waitFor();
   await plainGuide.getByRole("button", { name: "Show source", exact: true }).click();
   await plainGuide.locator(".file-viewer-text .hl-line").first().waitFor();
@@ -601,7 +626,7 @@ try {
   // JSON must never show as the file's text
   await page.route("**/api/fs/file?**", (route) => route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: { code: "machine_unavailable", message: "The PC connection was interrupted" } }) }), { times: 1 });
   await page.getByRole("button", { name: "notes", exact: true }).click();
-  const refused = page.getByRole("dialog", { name: "notes.txt", exact: true });
+  const refused = preview;
   await refused.getByRole("alert").waitFor();
   assert.equal(await refused.getByRole("alert").innerText(), "The file could not be opened.");
   assert.equal(await refused.getByText("machine_unavailable").count(), 0);
