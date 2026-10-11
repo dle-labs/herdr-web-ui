@@ -8,7 +8,6 @@ import type { FileComment } from "../lib/fileComments.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
 import { paneStorageId } from "../../shared/machines.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
-import { useSettings } from "../lib/settings.ts";
 import { PIERRE_THEME } from "../lib/pierreTheme.ts";
 import { firstEditedLine } from "../lib/workspaceFollow.ts";
 import { useT } from "../lib/i18n.ts";
@@ -101,7 +100,6 @@ export default function ChangesView({ paneId, start, connected, initialComment =
   const t = useT();
   const machineId = useMachineId();
   const { fetchGitChanges } = useMachineApi();
-  const { settings, update } = useSettings();
   const [mode, setMode] = useState<GitDiffMode>(initialComment?.diff?.mode ?? "all");
   const [inventory, setInventory] = useState<GitChangesResponse | null>(null);
   const [path, setPath] = useState<string | null>(initialComment?.diff?.path ?? null);
@@ -235,8 +233,6 @@ export default function ChangesView({ paneId, start, connected, initialComment =
       </label>
       <button type="button" className="icon-button" aria-label={t("Refresh changes")} disabled={loading} onClick={() => void refresh()}><RefreshCw aria-hidden="true" /></button>
       <button type="button" className="btn" aria-pressed={follow} disabled={!connected} onClick={() => { if (canLeave()) { setPreview(null); setFollow((value) => !value); } }}>{t("Follow edits")}</button>
-      <button type="button" className="btn" aria-pressed={settings.wrapCode} onClick={() => update({ wrapCode: !settings.wrapCode })}>{t("Wrap long lines")}</button>
-      <button type="button" className="btn" aria-pressed={settings.highlightCode} onClick={() => update({ highlightCode: !settings.highlightCode })}>{t("Highlight code")}</button>
       <span className="changes-root" title={root}>{root}</span>
       {!narrow && <button type="button" className="btn" aria-pressed={split} onClick={() => setSplit((value) => !value)}>{split ? t("Unified") : t("Split")}</button>}
     </div>

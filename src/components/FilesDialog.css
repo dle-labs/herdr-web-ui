@@ -1,12 +1,15 @@
-.workspace-files-scrim {
-  padding: 0;
-}
 .files-dialog-changes {
-  width: 100%;
+  width: min(96vw, 1100px);
   max-width: 100%;
   height: var(--app-height, 100dvh);
-  max-height: 100%;
-  border-radius: 0;
+  max-height: min(92vh, 100%);
+}
+
+@media (max-width: 640px) {
+  .files-dialog-changes {
+    width: 100%;
+    max-height: 92%;
+  }
 }
 .files-dialog-changes .modal-body {
   flex: 1;
