@@ -178,7 +178,9 @@ export type MarkdownWidth = (typeof MARKDOWN_WIDTHS)[number];
  * Settings field in the projection makes a new field require an explicit collection decision. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
-  | "quickReplies" | "usageOrder" | "usageHidden">;
+  | "quickReplies" | "usageOrder" | "usageHidden"
+  // New review-surface preferences are deliberately not collected by the existing telemetry schema.
+  | "comments" | "splitDiff">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {

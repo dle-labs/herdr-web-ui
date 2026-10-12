@@ -200,6 +200,13 @@ describe("telemetry settings snapshot", () => {
     }
   });
 
+  it("does not expand telemetry collection to the new review-surface preferences", () => {
+    const snapshot = telemetrySettingsSnapshot(sanitizeSettings({ comments: false, splitDiff: false }));
+    expect(snapshot).not.toHaveProperty("comments");
+    expect(snapshot).not.toHaveProperty("splitDiff");
+    expect(telemetrySettings(snapshot)).toEqual(snapshot);
+  });
+
   it("requires a complete, valid schema and reconstructs a clean own-key snapshot", () => {
     const snapshot = telemetrySettingsSnapshot(DEFAULT_SETTINGS);
     const clean = telemetrySettings(snapshot);
