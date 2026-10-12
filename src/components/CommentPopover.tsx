@@ -99,7 +99,7 @@ function Frame({ placement, surface, focusable, changed, onKeyDown, dismiss, chi
     trap.current = node;
   }, [surface, trap]);
   useEffect(() => {
-    if (placement !== "popover") return;
+    if (placement === "dialog") return;
     // a press the popover kept (text typed) gave the focus back to its field: its `mousedown`, which comes after, would
     // move it to what was pressed (or the body), so its default is held back
     let kept = false;
@@ -160,15 +160,19 @@ function Frame({ placement, surface, focusable, changed, onKeyDown, dismiss, chi
  * scrolling past about five lines; none where the highlighted text beside it already shows it), and its `actions`
  * (a dialog's ✕) at the right, level with the first line.
  */
-function Top({ quote, reference, note, actions }: Pick<CommentPopoverProps, "reference" | "note"> & {
+function Top({ quote, reference, note, actions, collapsible = false }: Pick<CommentPopoverProps, "reference" | "note"> & {
   quote: CommentPopoverProps["quote"] | null;
   actions: ReactNode | null;
+  collapsible?: boolean;
 }): JSX.Element {
+  const t = useT();
   return <div className="comment-popover-top">
     <div className="comment-popover-context">
       {reference !== undefined && <p className="comment-popover-reference"><FileReferenceLabel reference={reference} /></p>}
       {note !== undefined && <p className="comment-popover-note">{note}</p>}
-      {quote !== null && <Quote quote={quote} reference={reference} />}
+      {quote !== null && (collapsible
+        ? <details className="comment-popover-quote-toggle"><summary>{t("Quoted text")}</summary><Quote quote={quote} reference={reference} /></details>
+        : <Quote quote={quote} reference={reference} />)}
     </div>
     {actions !== null && <div className="comment-popover-actions">{actions}</div>}
   </div>;
@@ -194,7 +198,8 @@ function Quote({ quote, reference }: Pick<CommentPopoverProps, "quote" | "refere
 export function CommentPopover({ owner, connected, placement, quote, reference, note, comment, startValue, onText, onSave, onDelete, onClose, opener, fallback }: CommentPopoverProps): JSX.Element {
   const t = useT();
   const saved = comment !== "";
-  const inline = placement === "popover";
+  const floating = placement === "popover";
+  const inline = placement !== "dialog";
   // decided as it opens: a saved comment tapped open on a touch screen raises no keyboard (`popoverFocusesField`)
   const [focusField] = useState(() => popoverFocusesField(saved, window.matchMedia("(pointer: coarse)").matches));
   const draft = useCommentDraft(comment, onSave, onClose, { owner, connected, opener, fallback, inline, focusField, startValue, onText });
@@ -204,16 +209,16 @@ export function CommentPopover({ owner, connected, placement, quote, reference, 
   // it only puts the focus back in the field
   // beside its pin the card is the input box alone, new or saved: what it is on is
   // the highlighted text beside it. A dialog and a sheet, with that text out of view or under them, quote it
-  const quoted = inline ? null : quote;
-  const actions = inline ? null : <button type="button" className="icon-button comment-popover-action" aria-label={t("Close")} title={t("Close")} onClick={draft.leave}>
+  const quoted = floating ? null : quote;
+  const actions = floating ? null : <button type="button" className="icon-button comment-popover-action" aria-label={t("Close")} title={t("Close")} onClick={draft.leave}>
     <X aria-hidden="true" />
   </button>;
   return <Frame placement={placement} surface={draft.surface} focusable={!focusField} changed={draft.changed} onKeyDown={draft.onKeyDown} dismiss={draft.leave}>
     {/* beside its pin the card is the field alone: a file comment's file and lines are no matter while it is written (the
         pin stands on the text), so they are only said to assistive tech; a dialog and a sheet show them over the quote */}
-    {inline
+    {floating
       ? reference !== undefined && <p className="comment-popover-reference visually-hidden"><FileReferenceLabel reference={reference} /></p>
-      : <Top quote={quoted} reference={reference} note={note} actions={actions} />}
+      : <Top quote={quoted} reference={reference} note={note} actions={actions} collapsible={placement === "docked"} />}
     <div className="comment-popover-edit">
       <CommentField draft={draft} />
       <div className="comment-popover-edit-footer">

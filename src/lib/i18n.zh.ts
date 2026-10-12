@@ -1037,6 +1037,7 @@ export const ZH: Record<string, string> = {
   "Changed files": "已更改的文件",
   "Close comment": "关闭评论",
   "Colors code in the chat and the file viewer. Off, code is plain text.": "为聊天和文件查看器中的代码着色。关闭后代码以纯文本显示。",
+  "Quoted text": "引用文本",
   "Comment": "评论",
   "Comment on an agent's reply and on files by selecting text or clicking a block. Turning this off deletes every comment on this device.": "选中文本或点击某个块，即可对代理的回复和文件发表评论。关闭后，此设备上的所有评论都会被删除。",
   "Comment on “{quote}”: {comment}": "对“{quote}”的评论：{comment}",

@@ -214,6 +214,14 @@ or **Discard**. A message is never pasted over text typed in Claude Code's own i
 that box holds a draft the message stays in the list with the reason, and **Send now** delivers it
 once the draft is sent or cleared in the terminal.
 
+### Commenting without covering the source
+
+Click a reply block or file line, or select text and choose **Comment**. On desktop the editor
+tries positions outside the whole commented text, not beside the point you clicked. If none fits,
+it docks below the reading area and reserves space; you can still scroll the source independently.
+A docked editor offers expandable **Quoted text**. Growing a draft or resizing a pane preserves its
+text, focus and caret. Phones continue to use the comment sheet.
+
 ## Subscription usage
 
 On a local desktop pane, the composer shows a compact read-only limit for the agent's provider:

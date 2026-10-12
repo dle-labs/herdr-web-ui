@@ -1033,6 +1033,7 @@ export const KO: Record<string, string> = {
   "Changed files": "변경된 파일",
   "Close comment": "댓글 닫기",
   "Colors code in the chat and the file viewer. Off, code is plain text.": "채팅과 파일 뷰어의 코드에 색을 입힙니다. 끄면 코드가 일반 텍스트로 표시됩니다.",
+  "Quoted text": "인용한 텍스트",
   "Comment": "댓글",
   "Comment on an agent's reply and on files by selecting text or clicking a block. Turning this off deletes every comment on this device.": "텍스트를 선택하거나 블록을 클릭해 에이전트의 답변과 파일에 댓글을 달 수 있습니다. 끄면 이 기기의 모든 댓글이 삭제됩니다.",
   "Comment on “{quote}”: {comment}": "“{quote}”에 단 댓글: {comment}",

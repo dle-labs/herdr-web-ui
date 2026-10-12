@@ -1035,6 +1035,7 @@ export const JA: Record<string, string> = {
   "Changed files": "変更されたファイル",
   "Close comment": "コメントを閉じる",
   "Colors code in the chat and the file viewer. Off, code is plain text.": "チャットとファイルビューアのコードを色分けします。オフにするとコードはプレーンテキストで表示されます。",
+  "Quoted text": "引用テキスト",
   "Comment": "コメント",
   "Comment on an agent's reply and on files by selecting text or clicking a block. Turning this off deletes every comment on this device.": "テキストを選択するかブロックをクリックして、エージェントの応答やファイルにコメントできます。オフにすると、このデバイスのコメントがすべて削除されます。",
   "Comment on “{quote}”: {comment}": "「{quote}」へのコメント: {comment}",

@@ -156,6 +156,16 @@
   border-width: 0 0 var(--hairline) 0;
 }
 
+.comment-popover-quote-toggle summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.comment-popover-quote-toggle[open] summary {
+  margin-bottom: var(--space-2);
+}
+
 .comment-popover-plain {
   margin: 0;
   white-space: pre-wrap;

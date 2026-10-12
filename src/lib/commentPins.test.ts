@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { besidePlace, endTip, focusAfter, isCommentPoint, lastLine, nearestScroller, pinRightMargin, placePins, pointAt, pointIn, POINT_BOUNDS, scrollsSideways, unionBox, visibleAnchor, visiblePoint } from "./commentPins.ts";
+import { endTip, focusAfter, isCommentPoint, lastLine, nearestScroller, pinRightMargin, placePins, pointAt, pointIn, POINT_BOUNDS, scrollsSideways, unionBox, visibleAnchor, visiblePoint } from "./commentPins.ts";
 
 const column = { right: 600, size: 24, gap: 4 };
 /** a pin whose tip is at (x, y) */
@@ -191,47 +191,6 @@ describe("pinRightMargin", () => {
   it("keeps a touch hit area inside the column", () => {
     expect(pinRightMargin(8, 24, 44)).toBe(10);
     expect(pinRightMargin(8, 24, 49)).toBe(13);
-  });
-});
-
-describe("besidePlace", () => {
-  const view = { width: 800, height: 600 };
-  const size = { width: 300, height: 200 };
-  const options = { pinSize: 28, gap: 8, margin: 8 };
-  it("puts the popover right of its pin, a gap away, its top level with the pin's", () => {
-    expect(besidePlace({ left: 100, top: 150 }, view, size, options)).toEqual({ left: 136, top: 150, side: "right" });
-  });
-  it("takes the right side while it fits to the margin exactly", () => {
-    expect(besidePlace({ left: 456, top: 150 }, view, size, options)).toEqual({ left: 492, top: 150, side: "right" });
-  });
-  it("shifts it up as far as it would run past the view's bottom", () => {
-    expect(besidePlace({ left: 100, top: 500 }, view, size, options)).toEqual({ left: 136, top: 392, side: "right" });
-  });
-  it("never shifts it up past the pin's bottom, nor above the view's top margin", () => {
-    // taller than the room above the pin's bottom: it still reaches the pin
-    expect(besidePlace({ left: 100, top: 580 }, view, { width: 300, height: 500 }, options).top).toBe(108);
-    expect(besidePlace({ left: 100, top: 100 }, { width: 800, height: 300 }, { width: 300, height: 400 }, options).top).toBe(8);
-  });
-  it("leaves it level with a pin above the view's top", () => {
-    expect(besidePlace({ left: 100, top: -40 }, view, size, options).top).toBe(-40);
-  });
-  it("goes to the pin's left where the right has no room", () => {
-    expect(besidePlace({ left: 600, top: 150 }, view, size, options)).toEqual({ left: 292, top: 150, side: "left" });
-  });
-  it("goes below the pin where neither side has room, as before", () => {
-    const narrow = { width: 400, height: 600 };
-    expect(besidePlace({ left: 200, top: 150 }, narrow, size, options)).toEqual({ left: 64, top: 186, side: "below" });
-  });
-  it("keeps it inside the view's sides below the pin", () => {
-    const tight = { width: 320, height: 600 };
-    expect(besidePlace({ left: 10, top: 150 }, tight, size, options)).toEqual({ left: 8, top: 186, side: "below" });
-    expect(besidePlace({ left: 300, top: 150 }, tight, size, options)).toEqual({ left: 12, top: 186, side: "below" });
-  });
-  it("goes above the pin where there is no room below it and there is above", () => {
-    expect(besidePlace({ left: 150, top: 450 }, { width: 320, height: 600 }, size, options)).toEqual({ left: 12, top: 242, side: "below" });
-  });
-  it("stays below the pin where neither has room", () => {
-    expect(besidePlace({ left: 150, top: 150 }, { width: 320, height: 300 }, size, options)).toEqual({ left: 12, top: 186, side: "below" });
   });
 });
 

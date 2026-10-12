@@ -1,6 +1,6 @@
 /* The pin layer of a comment surface (CommentPins.tsx): a pin on each comment's text (where it was
-   made, else after its end) and the open comment's popover beside its pin. The layer lies in the scrolling content at its
-   top left, so both scroll with the text; it has no height of its own and covers nothing. The positions the
+   made, else after its end). The layer lies in the scrolling content at its top left and has no height.
+   The editor lives in the sibling host (CommentSurfaceLayout.css), not in this layer. The positions the
    component writes are in the surface's scrolled content coordinates. No stacking context of its
    own: a pin scrolls under the chat's top fade and its "New messages" button. */
 .comment-pins {
@@ -76,7 +76,7 @@
   }
 }
 
-/* the desktop popover's place beside its pin, over the text and the pins */
+/* the desktop editor's floating place; the shared layout switches this to normal flow when docked */
 .comment-popover-place {
   position: absolute;
   z-index: var(--z-popover);

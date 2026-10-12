@@ -1,9 +1,8 @@
 /**
  * The pin layer of a comment surface (the chat's scroller, the file viewer's body): a small speech
- * bubble on each comment's text, and the open comment's popover beside its pin, its text kept up
- * meanwhile (`showOpenComment`). The layer
- * lies in the scrolling content, so pins and popover scroll
- * with the text. It is a sibling of the transcript (of the file's content root), never inside it:
+ * bubble on each comment's text, kept up while its editor is open (`showOpenComment`). Pins lie in
+ * the scrolling content. The desktop editor has a stable sibling host: floated outside the source
+ * where it fits, otherwise docked in a row that reserves reading space. It is a sibling of the transcript (of the file's content root), never inside it:
  * the highlights watch only that, so a pin drawn or moved never makes them rebuild.
  *
  * Pins are placed from the ranges the surface's highlights publish (`watchSurfaceRanges`), through
@@ -14,14 +13,16 @@
  * view without wrapping, a chat code block or table) has scrolled out of view sideways
  * (`visiblePoint`, `visibleAnchor`).
  */
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent, type ReactNode, type RefObject } from "react";
+import { Fragment, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent, type PointerEvent, type ReactNode, type RefObject } from "react";
 import { MessageSquare } from "lucide-react";
+import { createPortal } from "react-dom";
+import { CommentEditorHost } from "./CommentSurfaceLayout.tsx";
 
 import "./CommentPins.css";
 
 import { activateComment, PENDING_COMMENT_ID, showOpenComment, watchSurfaceRanges } from "../lib/commentHighlight.ts";
-import { PENDING_PIN_CLASS, PIN_CLASS, PINS_CLASS, pinAttrs } from "../lib/commentDom.ts";
-import { besidePlace, endTip, lastLine, nearestScroller, pinRightMargin, placePins, pointAt, scrollsSideways, visibleAnchor, visiblePoint, type CommentPoint, type PinAnchor, type PinBox, type PinPlace } from "../lib/commentPins.ts";
+import { commentTabTarget, PENDING_PIN_CLASS, PIN_CLASS, PINS_CLASS, pinAttrs } from "../lib/commentDom.ts";
+import { commentPlace, endTip, lastLine, nearestScroller, pinRightMargin, placePins, pointAt, scrollsSideways, visibleAnchor, visiblePoint, type CommentPoint, type PinAnchor, type PinBox, type PinPlace } from "../lib/commentPins.ts";
 import { textBox, textRects } from "../lib/commentSelection.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 
@@ -35,8 +36,8 @@ export interface PinnedComment {
   point?: CommentPoint;
 }
 
-/** Where the open comment's popover is drawn: next to its pin, or as a dialog of its own (centred; a sheet on a phone). */
-export type PopoverPlacement = "popover" | "dialog";
+/** Outside its text, in a space-reserving dock, or as a dialog (a sheet on a phone). */
+export type PopoverPlacement = "popover" | "docked" | "dialog";
 
 /** A pin's side (`var(--space-5)` in CommentPins.css). */
 const PIN_SIZE_PX = 20;
@@ -50,10 +51,6 @@ const PIN_HIT_MIN_PX = 44;
 const POPOVER_GAP_PX = 8;
 /** The least room between the popover and the surface's sides. */
 const POPOVER_MARGIN_PX = 8;
-/** Frames the surface's scroll stays put before an opened popover brings itself into view, and the longest it waits for that. */
-const SCROLL_STILL_FRAMES = 2;
-const SCROLL_SETTLE_MS = 1500;
-
 const NO_RANGES: ReadonlyMap<string, readonly Range[]> = new Map();
 
 /** One opening of a popover: a new object each time `openId` changes, so the same id opened again is a new one. */
@@ -165,6 +162,7 @@ export function CommentPins({ surface, comments, openId, pendingPoint, popover, 
   popover: ((placement: PopoverPlacement) => ReactNode) | null;
   onPin: (id: string, pin: HTMLButtonElement) => void;
 }): JSX.Element {
+  const editorHost = useContext(CommentEditorHost);
   const narrow = useMediaQuery("(max-width: 640px)");
   const coarse = useMediaQuery("(pointer: coarse)");
   const coarseRef = useRef(coarse);
@@ -182,6 +180,9 @@ export function CommentPins({ surface, comments, openId, pendingPoint, popover, 
   // next. The measures still to hold its popover back for it: one, then it settles without the highlight
   const awaitingRanges = useRef(0);
   const schedule = useRef<() => void>(() => {});
+  const reposition = useRef<(pin: MeasuredPin | null) => void>(() => {});
+  // Reservation changes available geometry. Once docked, stay docked until this opening ends.
+  const [dockedFor, setDockedFor] = useState<Opening | null>(null);
 
   useEffect(() => {
     const node = surface.current;
@@ -234,17 +235,18 @@ export function CommentPins({ surface, comments, openId, pendingPoint, popover, 
         return keptPins && keptHidden && settled === current.settled ? current
           : { pins: keptPins ? current.pins : pins, hidden: keptHidden ? current.hidden : hidden, settled };
       });
+      // Never combine freshly reflowed ranges with the previous render's pin: that can falsely latch docking.
+      reposition.current(pins.find((pin) => pin.id === openingRef.current.id) ?? null);
     };
     const scheduleMeasure = (): void => {
       if (frame === 0) frame = window.requestAnimationFrame(() => { frame = 0; measure(); });
     };
     schedule.current = scheduleMeasure;
-    // an element inside the surface scrolled sideways (a code view without wrapping, a chat code block or table): the
-    // text in it moved under the pins. Not the surface's own scroll, which the pins follow by lying in its content
-    const onInnerScroll = (event: Event): void => {
-      if (event.target !== node) scheduleMeasure();
-    };
-    node.addEventListener("scroll", onInnerScroll, { capture: true, passive: true });
+    // Pins follow the content; the sibling editor must also re-evaluate the newly visible source and viewport.
+    node.addEventListener("scroll", scheduleMeasure, { capture: true, passive: true });
+    window.addEventListener("resize", scheduleMeasure);
+    window.visualViewport?.addEventListener("resize", scheduleMeasure);
+    window.visualViewport?.addEventListener("scroll", scheduleMeasure);
     const unwatch = watchSurfaceRanges(node, (next) => {
       ranges.current = next;
       awaitingRanges.current = 0;
@@ -256,7 +258,10 @@ export function CommentPins({ surface, comments, openId, pendingPoint, popover, 
     scheduleMeasure();
     return () => {
       window.cancelAnimationFrame(frame);
-      node.removeEventListener("scroll", onInnerScroll, { capture: true });
+      node.removeEventListener("scroll", scheduleMeasure, { capture: true });
+      window.removeEventListener("resize", scheduleMeasure);
+      window.visualViewport?.removeEventListener("resize", scheduleMeasure);
+      window.visualViewport?.removeEventListener("scroll", scheduleMeasure);
       unwatch();
       resized.disconnect();
       schedule.current = () => {};
@@ -272,6 +277,12 @@ export function CommentPins({ surface, comments, openId, pendingPoint, popover, 
     awaitingRanges.current = opening.id === PENDING_COMMENT_ID && !ranges.current.has(PENDING_COMMENT_ID) ? 1 : 0;
     schedule.current();
   }, [opening]);
+  useLayoutEffect(() => {
+    const node = surface.current;
+    if (node === null || openId === null) return;
+    node.dataset.commentEditing = "";
+    return () => { delete node.dataset.commentEditing; };
+  }, [surface, openId]);
   // a saved comment's text stays up while its popover is open, in every placement, wherever the focus or the pointer
   // goes (lib/commentHighlight.ts `showOpenComment`): the pin's own pointer and focus no longer hold it once the field
   // has the focus. A new comment shows its pending highlight instead
@@ -300,68 +311,127 @@ export function CommentPins({ surface, comments, openId, pendingPoint, popover, 
   // a narrow screen draws every popover as a dialog (the sheet): there is no pin to wait for, so it is drawn in the
   // commit that opens it, and its field takes the focus inside the tap that opened it, where iOS raises its keyboard
   const placement: PopoverPlacement | null = openId === null || popover === null ? null
-    : narrow ? "dialog" : !settled ? null : openPin !== undefined ? "popover" : "dialog";
+    : narrow ? "dialog" : !settled ? null : dockedFor === opening ? "docked" : openPin !== undefined ? "popover" : "dialog";
 
-  // the popover beside its pin (`besidePlace`: to its right, top-aligned, else to its left, else below it), placed before
-  // paint: against the visible box, shifted by the scroll
+  // The desktop editor has one stable sibling host in float and dock mode; its draft never remounts.
   const place = useRef<HTMLDivElement>(null);
-  const scrolledFor = useRef<Opening | null>(null);
   const pinLeft = openPin?.left;
   const pinTop = openPin?.top;
   useLayoutEffect(() => {
     const node = place.current;
     const scroller = surface.current;
-    if (placement !== "popover" || pinLeft === undefined || pinTop === undefined || node === null || scroller === null) return;
-    let size = { width: -1, height: -1 };
-    const put = (): void => {
-      const next = { width: node.offsetWidth, height: node.offsetHeight };
-      if (next.width === size.width && next.height === size.height) return;
-      size = next;
-      const pin = { left: pinLeft - scroller.scrollLeft, top: pinTop - scroller.scrollTop };
-      const at = besidePlace(pin, { width: scroller.clientWidth, height: scroller.clientHeight }, size, { pinSize: PIN_SIZE_PX, gap: POPOVER_GAP_PX, margin: POPOVER_MARGIN_PX });
-      node.dataset.side = at.side;
-      node.style.left = `${at.left + scroller.scrollLeft}px`;
-      node.style.top = `${at.top + scroller.scrollTop}px`;
-    };
-    put();
-    // once per opening: a pin that moved later, or a popover that grew, does not pull the reader back to it. Once the
-    // surface has stopped scrolling: the composer's walk opens a pin as it scrolls its text into the middle, smoothly,
-    // and a scroll of this one's own would cut that short halfway (bounded: a reader who keeps scrolling is not waited for)
-    let frame = 0;
-    if (scrolledFor.current !== opening) {
-      scrolledFor.current = opening;
-      const deadline = performance.now() + SCROLL_SETTLE_MS;
-      let seen = scroller.scrollTop;
-      let still = 0;
-      const settle = (): void => {
-        frame = 0;
-        const now = scroller.scrollTop;
-        still = now === seen ? still + 1 : 0;
-        seen = now;
-        if (still < SCROLL_STILL_FRAMES && performance.now() < deadline) { frame = window.requestAnimationFrame(settle); return; }
-        node.scrollIntoView({ block: "nearest" });
+    const host = editorHost?.current;
+    if ((placement !== "popover" && placement !== "docked") || node === null || scroller === null || host == null) return;
+    host.dataset.commentId = openId ?? "";
+    const put = (freshPin: MeasuredPin | null): void => {
+      host.style.setProperty("--comment-dock-max", `${(host.parentElement?.clientHeight ?? 0) * 0.45}px`);
+      if (placement === "docked") {
+        host.dataset.docked = "";
+        node.dataset.side = "docked";
+        return;
+      }
+      delete host.dataset.docked;
+      const box = scroller.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const style = getComputedStyle(scroller);
+      const header = Number.parseFloat(style.getPropertyValue("--header-over")) || 0;
+      const composer = Number.parseFloat(style.getPropertyValue("--composer-over")) || 0;
+      const view = {
+        left: Math.max(box.left + scroller.clientLeft, viewport?.offsetLeft ?? 0),
+        top: Math.max(box.top + scroller.clientTop + header, viewport?.offsetTop ?? 0),
+        right: Math.min(box.left + scroller.clientLeft + scroller.clientWidth, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? window.innerWidth)),
+        bottom: Math.min(box.top + scroller.clientTop + scroller.clientHeight - composer, (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)),
       };
-      frame = window.requestAnimationFrame(settle);
-    }
-    // it changed size (a field that grew): placed again, with the side that fits now
-    const resized = new ResizeObserver(put);
+      const rects: PinBox[] = [];
+      for (const range of ranges.current.get(openId ?? "") ?? []) {
+        const inner = sidewaysBox(range, scroller);
+        for (const rect of textRects(range)) {
+          const clipped = {
+            left: Math.max(rect.left, view.left, inner?.left ?? -Infinity),
+            top: Math.max(rect.top, view.top, inner?.top ?? -Infinity),
+            right: Math.min(rect.right, view.right, inner?.right ?? Infinity),
+            bottom: Math.min(rect.bottom, view.bottom, inner?.bottom ?? Infinity),
+          };
+          if (clipped.right > clipped.left && clipped.bottom > clipped.top) rects.push(clipped);
+        }
+      }
+      const pin = freshPin === null ? { left: rects[0]?.left ?? view.left, top: rects[0]?.top ?? view.top }
+        : { left: box.left + scroller.clientLeft + freshPin.left - scroller.scrollLeft,
+          top: box.top + scroller.clientTop + freshPin.top - scroller.scrollTop };
+      const at = commentPlace(rects, pin, view, { width: node.offsetWidth, height: node.offsetHeight },
+        { pinSize: PIN_SIZE_PX, gap: POPOVER_GAP_PX, margin: POPOVER_MARGIN_PX });
+      if (at === null) {
+        // Latch before reservation shrinks the source viewport; no float/dock oscillation.
+        host.dataset.docked = "";
+        setDockedFor(opening);
+        return;
+      }
+      const outer = host.getBoundingClientRect();
+      node.dataset.side = at.side;
+      node.style.left = `${at.left - outer.left}px`;
+      node.style.top = `${at.top - outer.top}px`;
+    };
+    reposition.current = put;
+    put(openPin ?? null);
+    const resized = new ResizeObserver(() => schedule.current());
     resized.observe(node);
     return () => {
       resized.disconnect();
-      // placed again before it was brought into view: the next placement does it
-      if (frame !== 0) {
-        window.cancelAnimationFrame(frame);
-        scrolledFor.current = null;
-      }
+      reposition.current = () => {};
+      delete host.dataset.docked;
+      delete host.dataset.commentId;
     };
-  }, [placement, pinLeft, pinTop, opening, surface]);
+  }, [placement, pinLeft, pinTop, opening, openId, surface, editorHost]);
 
-  // the popover beside its pin comes right after that pin, so Tab goes from the pin into it and on to the next pin,
-  // and Shift+Tab from it back to its pin. It is placed absolutely: where it lies in the document moves nothing
-  const beside = placement === "popover" && popover !== null ? <div ref={place} className="comment-popover-place">{popover("popover")}</div> : null;
-  const besideOf = (id: string): ReactNode => (beside !== null && id === openId ? beside : null);
-  // each pin with the popover's place after it, keyed as the pin is: the open comment's keeps the popover where it is
-  // in the document while its pin is hidden (scrolled out of view sideways), so the popover is not drawn anew
+  // Reserving space can leave the source's pin below the new viewport. Reveal it once, after a walk's
+  // smooth scroll settles; later editor growth and source scrolling must not keep pulling the reader back.
+  const revealedDock = useRef<Opening | null>(null);
+  const latestPin = useRef(openPin);
+  latestPin.current = openPin;
+  useLayoutEffect(() => {
+    const scroller = surface.current;
+    if (placement !== "docked" || scroller === null || revealedDock.current === opening) return;
+    let frame = 0;
+    let seen = scroller.scrollTop;
+    let still = 0;
+    const deadline = performance.now() + 1500;
+    const reveal = (): void => {
+      const now = scroller.scrollTop;
+      still = now === seen ? still + 1 : 0;
+      seen = now;
+      if (still < 2 && performance.now() < deadline) { frame = requestAnimationFrame(reveal); return; }
+      revealedDock.current = opening;
+      const pin = latestPin.current;
+      if (pin === undefined) return;
+      const header = Number.parseFloat(getComputedStyle(scroller).getPropertyValue("--header-over")) || 0;
+      const top = pin.top - scroller.scrollTop;
+      if (top < header) scroller.scrollTop += top - header;
+      else if (top + PIN_SIZE_PX > scroller.clientHeight) scroller.scrollTop += top + PIN_SIZE_PX - scroller.clientHeight;
+    };
+    frame = requestAnimationFrame(reveal);
+    return () => cancelAnimationFrame(frame);
+  }, [placement, opening, surface]);
+
+  // Keep the logical pin → editor → next-pin keyboard order even though the editor's stable host is a sibling.
+  useEffect(() => {
+    const host = editorHost?.current;
+    const scroller = surface.current;
+    const layout = host?.parentElement;
+    if (host == null || scroller === null || layout == null || placement === "dialog" || openId === null) return;
+    const onTab = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== "Tab" || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+      const to = commentTabTarget(layout, document.activeElement, event.shiftKey);
+      if (to === null) return;
+      event.preventDefault();
+      to.focus({ preventScroll: true });
+    };
+    layout.addEventListener("keydown", onTab);
+    return () => layout.removeEventListener("keydown", onTab);
+  }, [editorHost, surface, placement, openId]);
+
+  const desktop = (placement === "popover" || placement === "docked") && popover !== null && editorHost?.current
+    ? createPortal(<div ref={place} className="comment-popover-place">{popover(placement)}</div>, editorHost.current) : null;
+  // Pins stay keyed by their saved anchor; the editor is independent of a pin disappearing sideways.
   const keyOf = (pin: MeasuredPin): string => {
     if (pin.id === PENDING_COMMENT_ID) return "pending";
     const comment = commentOf(pin);
@@ -372,13 +442,13 @@ export function CommentPins({ surface, comments, openId, pendingPoint, popover, 
     // measured for a comment that has gone since: the next measure, already scheduled, drops it
     const drawn = pin.id === PENDING_COMMENT_ID ? <PendingPin left={pin.left} top={pin.top} />
       : comment === undefined ? null : <Pin comment={comment} left={pin.left} top={pin.top} onPin={onPin} />;
-    return <Fragment key={keyOf(pin)}>{drawn}{besideOf(pin.id)}</Fragment>;
+    return <Fragment key={keyOf(pin)}>{drawn}</Fragment>;
   });
-  if (heldOpenPin !== undefined) entries.push(<Fragment key={keyOf(heldOpenPin)}>{null}{besideOf(heldOpenPin.id)}</Fragment>);
 
   // not announced: the chat's transcript is a live log (`role="log"`), and a pin or a popover is no entry of it
   return <div className={PINS_CLASS} aria-live="off">
     {entries}
+    {desktop}
     {placement === "dialog" && popover !== null && popover("dialog")}
   </div>;
 }

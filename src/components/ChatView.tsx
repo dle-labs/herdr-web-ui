@@ -5,11 +5,11 @@ import {
   type LucideProps,
 } from "lucide-react";
 
-import "./ChatView.css";
-
 import { AgentMark } from "./AgentMark.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { useCommentSurface, type SurfaceComment } from "./useCommentSurface.tsx";
+import { CommentSurfaceLayout } from "./CommentSurfaceLayout.tsx";
+import "./ChatView.css";
 import { PromptCard } from "./PromptCard.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { turnRevision } from "../lib/turnRevision.ts";
@@ -38,6 +38,7 @@ import { machinePath, paneStorageId } from "../../shared/machines.ts";
 import { BlockCommentContext, blockComments, blockContent, commentTarget, isReplyComment, quoteExcerpt, replyPart, selectionTarget, useBlockComments, type CommentTarget, type ReplyPart } from "../lib/blockComments.ts";
 import { commentPartOf, paneComposer, pointOnText, selectionComment, type SelectionComment } from "../lib/commentSelection.ts";
 import { draftRanges, showPendingComment, watchCommentHighlights } from "../lib/commentHighlight.ts";
+import { hasOpenComment } from "../lib/commentDom.ts";
 import { fileUrl } from "../lib/api.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { lineDiff } from "../lib/diff.ts";
@@ -960,7 +961,7 @@ export const ChatView = memo(function ChatView({ paneId, pageScroll, refreshKey,
   // instead of scrolling there from the top.
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (node !== null && stickToBottom.current) node.scrollTop = node.scrollHeight;
+    if (node !== null && stickToBottom.current && !hasOpenComment(node)) node.scrollTop = node.scrollHeight;
   }, [state, prompt, agentStatus, connected, ended]);
 
   // A resized composer, a raised keyboard or a narrower window shrinks the view
@@ -981,7 +982,8 @@ export const ChatView = memo(function ChatView({ paneId, pageScroll, refreshKey,
         const next = `${entry.contentRect.width}|${style.fontSize}|${style.fontFamily}`;
         if (next !== lane) { lane = next; follow = true; }
       }
-      if (follow && stickToBottom.current) node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
+      // Reserving comment-editor space is reading intent, not a request to jump to the latest turn.
+      if (follow && stickToBottom.current && !hasOpenComment(node)) node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
     });
     observer.observe(node);
     if (node.firstElementChild !== null) observer.observe(node.firstElementChild);
@@ -993,7 +995,7 @@ export const ChatView = memo(function ChatView({ paneId, pageScroll, refreshKey,
   const faces = useFacesArrived();
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (node !== null && stickToBottom.current) node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
+    if (node !== null && stickToBottom.current && !hasOpenComment(node)) node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
   }, [faces]);
   // the text of each selection comment shown here is highlighted, this view's ranges only (lib/commentHighlight.ts); with
   // comments turned off none is, even one another tab that still has them on stores meanwhile
@@ -1140,7 +1142,7 @@ export const ChatView = memo(function ChatView({ paneId, pageScroll, refreshKey,
     },
   });
 
-  return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><div className="chat-view" {...commentSurface.surfaceProps} ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
+  return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><CommentSurfaceLayout className="chat-surface-layout"><div className="chat-view" {...commentSurface.surfaceProps} ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
     <div className="chat-transcript" data-conversation-source={state.conversationSource}>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
           its leaf without writing anything, so nothing here could say they were ever there. First
@@ -1189,7 +1191,7 @@ export const ChatView = memo(function ChatView({ paneId, pageScroll, refreshKey,
     {commentSurface.overlay}
     {newMessages ? <button type="button" className="btn chat-new-messages" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
       : away && <button type="button" className="btn chat-new-messages is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>}
-  </div>
+  </div></CommentSurfaceLayout>
   {/* The prompt card is not part of the transcript: it is drawn on the composer's column, over the
       input card, where PaneTerminal keeps its place. The prompt itself (its poll, the answer, the
       re-read) stays here. */}

@@ -43,7 +43,7 @@
    framed, while comments are on (`data-comments`) and no popover is open: quietly, a faint accent fill reaching 2px
    past the block and a hairline edge of the accent at 55% around it, nearly square. Drawn by the background, a shadow and an outline, which take no room, so nothing moves */
 @media (hover: hover) {
-  .chat-view[data-comments]:not(:has(.comment-popover)) .is-commentable:hover {
+  .chat-view[data-comments]:not([data-comment-editing]) .is-commentable:hover {
     border-radius: calc(var(--radius-sm) / 3);
     background-color: color-mix(in srgb, var(--accent) 5%, transparent);
     box-shadow: 0 0 0 calc(var(--space-1) / 2) color-mix(in srgb, var(--accent) 5%, transparent);

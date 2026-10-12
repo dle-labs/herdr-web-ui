@@ -84,6 +84,12 @@ describe("changedField", () => {
   it("finds a changed popover's field in the scope first", () => {
     expect(changedField(scopeWith({ ".comment-popover[data-comment-changed] textarea": here }, { ".modal.comment-popover[data-comment-changed] textarea": sheet }))).toBe(here as unknown as HTMLTextAreaElement);
   });
+  it("finds a sibling docked editor in the surface's layout", () => {
+    const scope = scopeWith({}, {});
+    const layout = scopeWith({ ".comment-popover[data-comment-changed] textarea": here }, {});
+    scope.closest = (selector: string) => selector === ".comment-surface-layout" ? layout : null;
+    expect(changedField(scope)).toBe(here as unknown as HTMLTextAreaElement);
+  });
   it("finds a changed dialog's field portalled to the document's body", () => {
     expect(changedField(scopeWith({}, { ".modal.comment-popover[data-comment-changed] textarea": sheet }))).toBe(sheet as unknown as HTMLTextAreaElement);
   });
@@ -117,6 +123,14 @@ describe("focusOpenField", () => {
     expect(sheet).toEqual([]);
     focusOpenField(scopeWith({}, { ".modal.comment-popover textarea": focusable(sheet) }));
     expect(sheet).toEqual([{ preventScroll: true }]);
+  });
+  it("refocuses a sibling docked editor without scrolling the source", () => {
+    const calls: unknown[] = [];
+    const scope = scopeWith({}, {});
+    const layout = scopeWith({ ".comment-popover textarea": focusable(calls) }, {});
+    scope.closest = () => layout;
+    focusOpenField(scope);
+    expect(calls).toEqual([{ preventScroll: true }]);
   });
   it("does nothing without one", () => {
     expect(() => focusOpenField(scopeWith({}, {}))).not.toThrow();

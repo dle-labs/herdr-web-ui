@@ -229,12 +229,12 @@
    A code line (the preview's code blocks' too) takes the accent's tint; another element of the preview the frame the
    chat's blocks take (BlockComments.css), a paragraph whole, as a click takes it. Neither takes room, so nothing moves */
 @media (hover: hover) {
-  .file-viewer-body[data-comments]:not(:has(.comment-popover)) .hl-line:hover {
+  .file-viewer-body[data-comments]:not([data-comment-editing]) .hl-line:hover {
     background: var(--accent-tint);
   }
 
-  .file-viewer-body[data-comments]:not(:has(.comment-popover)) .markdown [data-source-line]:not(.hl-line):not(p > [data-source-line]):hover,
-  .file-viewer-body[data-comments]:not(:has(.comment-popover)) .markdown p:has(> [data-source-line]):hover {
+  .file-viewer-body[data-comments]:not([data-comment-editing]) .markdown [data-source-line]:not(.hl-line):not(p > [data-source-line]):hover,
+  .file-viewer-body[data-comments]:not([data-comment-editing]) .markdown p:has(> [data-source-line]):hover {
     border-radius: calc(var(--radius-sm) / 3);
     background-color: color-mix(in srgb, var(--accent) 5%, transparent);
     box-shadow: 0 0 0 calc(var(--space-1) / 2) color-mix(in srgb, var(--accent) 5%, transparent);

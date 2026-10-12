@@ -74,6 +74,32 @@ export function hasCommentDialog(root: Pick<ParentNode, "querySelector">): boole
   return root.querySelector(`.${POPOVER_SCRIM_CLASS}`) !== null;
 }
 
+/** A surface is being read/commented on; desktop editors are siblings and a sheet is portalled. */
+export function hasOpenComment(scope: Element | null): boolean {
+  if (scope === null) return false;
+  const within = scope.closest?.(".comment-surface-layout") ?? scope;
+  return scope.hasAttribute?.("data-comment-editing") === true
+    || within.querySelector(POPOVER) !== null || scope.ownerDocument.querySelector(DIALOG) !== null;
+}
+
+/** Logical pin → editor → next-pin order, shared with enclosing modal traps as well as nonmodal surfaces. */
+export function commentTabTarget(scope: Element, active: Element | null, backwards: boolean): HTMLElement | null {
+  const layout = active?.closest?.(".comment-surface-layout");
+  if (layout == null || !scope.contains(layout)) return null;
+  const host = layout.querySelector<HTMLElement>(".comment-editor-host[data-comment-id]");
+  if (host === null) return null;
+  const pins = [...layout.querySelectorAll<HTMLElement>(".comment-pin:not(.is-pending)")];
+  const index = pins.findIndex((pin) => pin.dataset.commentId === host.dataset.commentId);
+  if (index < 0) return null;
+  const stops = [...host.querySelectorAll<HTMLElement>("textarea, button:not(:disabled), summary, a[href], input:not(:disabled), [tabindex='0']")]
+    .filter((node) => node.tabIndex >= 0 && node.getClientRects().length > 0);
+  const own = pins[index], next = pins[index + 1], first = stops[0], last = stops.at(-1);
+  return (!backwards && active === own ? first
+    : backwards && active === first ? own
+    : !backwards && active === last ? next
+    : backwards && active === next ? last : null) ?? null;
+}
+
 /**
  * The field of a comment popover in `scope` (a pane's stack, a surface) whose text is changed (`commentChanged`), else
  * of one drawn as a dialog anywhere in `scope`'s document (a phone's sheet; a comment the file viewer opened on another
@@ -82,7 +108,8 @@ export function hasCommentDialog(root: Pick<ParentNode, "querySelector">): boole
  */
 export function changedField(scope: Element | null): HTMLTextAreaElement | null {
   if (scope === null) return null;
-  return scope.querySelector<HTMLTextAreaElement>(`${POPOVER}${CHANGED} textarea`)
+  const within = scope.closest?.(".comment-surface-layout") ?? scope;
+  return within.querySelector<HTMLTextAreaElement>(`${POPOVER}${CHANGED} textarea`)
     ?? scope.ownerDocument.querySelector<HTMLTextAreaElement>(`${DIALOG}${CHANGED} textarea`);
 }
 
@@ -100,7 +127,8 @@ export function hasChangedComment(root: Pick<ParentNode, "querySelector">): bool
  */
 export function focusOpenField(scope: Element | null): void {
   if (scope === null) return;
-  const field = scope.querySelector<HTMLTextAreaElement>(`${POPOVER} textarea`) ?? scope.ownerDocument.querySelector<HTMLTextAreaElement>(`${DIALOG} textarea`);
+  const within = scope.closest?.(".comment-surface-layout") ?? scope;
+  const field = within.querySelector<HTMLTextAreaElement>(`${POPOVER} textarea`) ?? scope.ownerDocument.querySelector<HTMLTextAreaElement>(`${DIALOG} textarea`);
   field?.focus({ preventScroll: true });
 }
 

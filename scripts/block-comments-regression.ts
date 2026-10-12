@@ -3,7 +3,7 @@
  * text selection (drag, keyboard, touch, double or triple click) activated with Comment, or by clicking or tapping a
  * block. Selection alone preserves focus and copying without opening an editor; its pin's tip is where it was
  * clicked or the drag let go, else (a comment stored without a point) after the end of its text (the text highlighted),
- * the popover beside the pin, to its right (a bottom sheet on a phone), a saved comment opened straight into its field
+ * the editor outside the commented text, docked when necessary (a bottom sheet on a phone), a saved comment opened straight into its field
  * (its text highlighted meanwhile) with Delete beside ↑, the keys and the focus, the composer's walk and send, the text
  * moving under the pins, and the setting that turns comments off.
  *
@@ -14,13 +14,14 @@
 import "./test-herdr.ts";
 import assert from "node:assert/strict";
 import { Database } from "bun:sqlite";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, devices, type Browser, type BrowserContext, type BrowserContextOptions, type Locator, type Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { openSettingsPage } from "./settings-page.ts";
+import { commentClearOfSource } from "./comment-placement-assertions.ts";
 
 const INTRO = "Intro paragraph about the state.";
 const LONG_PARAGRAPH = "A longer paragraph that runs across several lines on a phone, so its first line reaches the right edge where the comment button sits.";
@@ -110,7 +111,7 @@ const pendingPinOf = (page: Page): Locator => page.locator(".chat-view .comment-
 /** The open comment's popover, wherever it is drawn. */
 const popoverOf = (page: Page): Locator => page.locator(".comment-popover");
 /** The popover beside its pin, in the chat's scrolling content. */
-const besidePinOf = (page: Page): Locator => page.locator(".chat-view .comment-popover");
+const besidePinOf = (page: Page): Locator => page.locator(".chat-surface-layout .comment-popover");
 /** The popover as a dialog of its own (the shared modal: a bottom sheet on a phone), portalled to the body. */
 const dialogOf = (page: Page): Locator => page.locator(".modal-scrim > .modal.comment-popover");
 const fieldOf = (page: Page): Locator => popoverOf(page).getByRole("textbox", { name: "Comment", exact: true });
@@ -470,17 +471,10 @@ async function assertBubble(pin: Locator): Promise<void> {
   assert.ok(radii[0] === 0 && radii.slice(1).every((radius) => radius >= 10), `the pin is a bubble with a square top left corner (${radii.join(", ")})`);
 }
 
-/** The popover beside its pin lies to the pin's right, 8px from it, its top level with the pin's top: polled. */
-async function assertBesideRight(page: Page, pin: Locator, what: string): Promise<void> {
-  let seen: unknown = null;
-  await eventually(`${what}: the popover right of its pin, top-aligned`, async () => {
-    const pinBox = await pin.boundingBox();
-    const place = page.locator(".chat-view .comment-popover-place");
-    const box = await place.boundingBox().catch(() => null);
-    const side = await place.getAttribute("data-side").catch(() => null);
-    seen = { pinBox, box, side };
-    return pinBox !== null && box !== null && side === "right" && Math.abs(box.x - (pinBox.x + pinBox.width + 8)) <= 1 && Math.abs(box.y - pinBox.y) <= 1;
-  }).catch((error: Error) => { throw new Error(`${error.message} (${JSON.stringify(seen)})`); });
+/** The editor fits the view without hiding the commented text, regardless of the pin's click point. */
+async function assertSourceClear(page: Page, pin: Locator, what: string): Promise<void> {
+  await eventually(`${what}: the editor leaves its source uncovered`, async () =>
+    await pin.isVisible() && await commentClearOfSource(page.locator(".chat-view")));
 }
 
 /** The stored point of the comment whose text is `comment`. */
@@ -490,7 +484,8 @@ const storedPoint = async (page: Page, comment: string): Promise<{ x: number; y:
 /** Where a box lies against the chat view's visible box: whether it is inside it (1px of slack). */
 const inView = (page: Page, selector: string): Promise<boolean> => page.evaluate((wanted) => {
   const node = document.querySelector(wanted);
-  const view = document.querySelector(".chat-view")!;
+  const source = document.querySelector(".chat-view")!;
+  const view = wanted.includes(".comment-popover") ? source.closest(".comment-surface-layout")! : source;
   if (node === null) return false;
   const box = node.getBoundingClientRect();
   const outer = view.getBoundingClientRect();
@@ -526,6 +521,93 @@ const UNLOADED = {
 };
 
 const cases: Record<string, Case> = {
+  async placement(open) {
+    const { page, errors, close } = await open({ viewport: { width: 1000, height: 900 } });
+    // A short split-pane-sized reading area: an empty editor fits below this multiline paragraph,
+    // but a six-line draft does not fit on any side. Geometry must fall back without hiding source.
+    await page.locator(".chat-surface-layout").evaluate((node) => {
+      (node as HTMLElement).style.height = "500px";
+      (node as HTMLElement).style.bottom = "auto";
+    });
+    const source = partOf(page, LONG_PARAGRAPH);
+    await source.evaluate((node) => node.scrollIntoView({ block: "center", behavior: "instant" }));
+    await scrollSettled(page);
+    const view = page.locator(".chat-view");
+    await clickWord(page, source, "several");
+    await fieldFocused(page);
+    await assertSourceClear(page, pendingPinOf(page), "a multiline paragraph clicked in the middle");
+    assert.equal(await page.locator(".comment-editor-host[data-docked]").count(), 0, "the empty editor has a clear floating candidate");
+    const editor = await fieldOf(page).elementHandle();
+    const draft = Array.from({ length: 8 }, (_, n) => `Review line ${n + 1}`).join("\n");
+    await fieldOf(page).fill(draft);
+    // This branch's compact voice controls leave more floating room than next's
+    // dictation footer. Constrain the reading lane to exercise the same no-fit path.
+    await page.locator(".chat-surface-layout").evaluate((node) => { (node as HTMLElement).style.height = "200px"; });
+    await page.locator(".comment-editor-host[data-docked]").waitFor();
+    assert.ok(await view.evaluate((node) => node.clientHeight < 180), "dock reserves real reading space within the 200px lane");
+    assert.equal(await fieldOf(page).evaluate((node, previous) => node === previous, editor), true, "growth does not remount the textarea");
+    assert.equal(await fieldOf(page).inputValue(), draft);
+    assert.ok(await focusedMatches(page, ".comment-popover textarea"), "docking preserves focus");
+    await eventually("the docked editor to leave its source uncovered", () => commentClearOfSource(view));
+    // The reader can scroll the source independently without their caret or editor being moved.
+    await fieldOf(page).evaluate((node) => (node as HTMLTextAreaElement).setSelectionRange(4, 8));
+    await view.evaluate((node) => { node.scrollTop += 30; });
+    await scrollSettled(page);
+    const at = await view.evaluate((node) => node.scrollTop);
+    await frames(page);
+    assert.equal(await view.evaluate((node) => node.scrollTop), at, "the editor does not pull scrolling back");
+    await page.setViewportSize({ width: 900, height: 900 });
+    await page.locator(".chat-surface-layout").evaluate((node) => { (node as HTMLElement).style.width = "320px"; });
+    await frames(page);
+    assert.equal(await fieldOf(page).evaluate((node, previous) => node === previous, editor), true, "reflow retains the same textarea");
+    assert.deepEqual(await fieldOf(page).evaluate((node) => [(node as HTMLTextAreaElement).selectionStart, (node as HTMLTextAreaElement).selectionEnd]), [4, 8]);
+    assert.equal(await fieldOf(page).inputValue(), draft);
+    assert.equal(await page.locator(".comment-editor-host[data-docked]").count(), 1, "reservation cannot oscillate back to floating");
+    const quoted = popoverOf(page).locator(".comment-popover-quote-toggle");
+    await quoted.locator("summary").click();
+    assert.equal(await quoted.locator(".comment-popover-quote").innerText(), LONG_PARAGRAPH);
+    await quoted.locator("summary").click();
+    await fieldOf(page).focus();
+    await page.keyboard.press("Control+Enter");
+    await popoverOf(page).waitFor({ state: "detached" });
+    await eventually("the dock to release its space", async () => await view.evaluate((node) => node.clientHeight) === 200);
+    assert.deepEqual(errors, []);
+    await close();
+    console.log("PASS placement: multiline source stays uncovered; growth docks with reserved space, stable draft/caret/focus and independent scrolling");
+  },
+  async streaming(open) {
+    const { page, errors, close } = await open(DESKTOP);
+    const original = readFileSync(transcript, "utf8");
+    try {
+      // A narrow desktop split forces docking while the reader is following the conversation end.
+      await page.locator(".chat-surface-layout").evaluate((node) => { (node as HTMLElement).style.width = "320px"; });
+      const view = page.locator(".chat-view");
+      await view.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+      await scrollSettled(page);
+      await clickWord(page, partOf(page, "Step 14 of the rollout"), "rollout");
+      await page.locator(".comment-editor-host[data-docked]").waitFor();
+      await fieldFocused(page);
+      await fieldOf(page).fill("Keep the source in view");
+      await scrollSettled(page);
+      const before = await view.evaluate((node) => node.scrollTop);
+      const field = await fieldOf(page).elementHandle();
+      const marker = "A new response arrived while the comment was being written.";
+      writeFileSync(transcript, `${original}\n${JSON.stringify({ timestamp: "2026-10-04T10:00:10.000Z", type: "response_item", payload: {
+        type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `${marker}\n${"More incoming text.\n".repeat(40)}` }],
+      } })}\n`);
+      await page.waitForFunction((text) => document.querySelector(".chat-transcript")?.textContent?.includes(text), marker, { timeout: 10_000 });
+      await frames(page);
+      assert.ok(Math.abs(await view.evaluate((node) => node.scrollTop) - before) <= 1, "incoming turns cannot pull a docked comment away from its source");
+      assert.equal(await fieldOf(page).evaluate((node, previous) => node === previous, field), true);
+      assert.equal(await fieldOf(page).inputValue(), "Keep the source in view");
+      assert.ok(await focusedMatches(page, ".comment-popover textarea"));
+      assert.deepEqual(errors, []);
+      console.log("PASS streaming: incoming turns leave the comment's source scroll and draft alone");
+    } finally {
+      writeFileSync(transcript, original);
+      await close();
+    }
+  },
   async selection(open) {
     const { page, errors, close } = await open(DESKTOP);
     const intro = partOf(page, INTRO);
@@ -538,7 +620,7 @@ const cases: Record<string, Case> = {
     assert.ok(await popoverOf(page).getByRole("button", { name: "Dictate (hold)", exact: true }).isVisible(), "the desktop comment microphone is shown by default, even when unavailable");
     await assertTipAt(page, pendingPinOf(page), release, "the provisional pin of a dragged selection");
     await assertBubble(pendingPinOf(page));
-    await assertBesideRight(page, pendingPinOf(page), "a dragged selection's new comment");
+    await assertSourceClear(page, pendingPinOf(page), "a dragged selection's new comment");
     await fieldOf(page).fill("Say which state.");
     await page.keyboard.press("Control+Enter");
     await popoverOf(page).waitFor({ state: "detached" });
@@ -553,14 +635,14 @@ const cases: Record<string, Case> = {
     assert.equal(await pinsOf(page).first().getAttribute("aria-label"), "Comment on “paragraph about the state”: Say which state.");
     await pinsOf(page).first().click();
     await besidePinOf(page).waitFor();
-    await assertBesideRight(page, pinsOf(page).first(), "a saved comment opened by its pin");
+    await assertSourceClear(page, pinsOf(page).first(), "a saved comment opened by its pin");
     await fieldFocused(page);
     assert.equal(await fieldOf(page).inputValue(), "Say which state.", "the pin opens the comment in its field");
     await page.mouse.move(2, 2);
     await assertUp(page, "paragraph about the state", "a selection's comment opened by its pin");
     await page.keyboard.press("Escape");
     await popoverOf(page).waitFor({ state: "detached" });
-    console.log("PASS selection: Comment on a mouse's drag opens the popover, right of a provisional bubble whose tip is where it let go, the field focused; Ctrl+Enter leaves one pin there, no card");
+    console.log("PASS selection: Comment on a mouse's drag opens an editor clear of its text, with a provisional bubble whose tip is where it let go, the field focused; Ctrl+Enter leaves one pin there, no card");
 
     // a keyboard's selection offers Comment without opening an editor
     const long = partOf(page, "A longer paragraph");
@@ -688,7 +770,7 @@ const cases: Record<string, Case> = {
     // the provisional bubble's tip is where the paragraph was clicked, not at its end; the popover right of it
     await assertTipAt(page, pendingPinOf(page), clicked, "the provisional pin of a clicked block");
     await assertBubble(pendingPinOf(page));
-    await assertBesideRight(page, pendingPinOf(page), "a clicked block's new comment");
+    await assertSourceClear(page, pendingPinOf(page), "a clicked block's new comment");
     await fieldOf(page).fill("Too long for a phone?");
     await page.keyboard.press("Control+Enter");
     await popoverOf(page).waitFor({ state: "detached" });
@@ -704,7 +786,7 @@ const cases: Record<string, Case> = {
     await clickWord(page, long, "paragraph");
     await besidePinOf(page).waitFor();
     await assertTipAt(page, pinsOf(page).first(), clicked, "a block clicked again elsewhere");
-    await assertBesideRight(page, pinsOf(page).first(), "a clicked block's comment opened again");
+    await assertSourceClear(page, pinsOf(page).first(), "a clicked block's comment opened again");
     assert.deepEqual((await storedOf(page)).map((entry) => entry.point), [stored[0]!.point], "the second click moves no point");
     await fieldFocused(page);
     assert.equal(await fieldOf(page).inputValue(), "Too long for a phone?", "the click opens the comment in its field");
@@ -713,7 +795,7 @@ const cases: Record<string, Case> = {
     await assertUp(page, "A longer paragraph", "a block's comment opened by a click");
     await page.keyboard.press("Escape");
     await popoverOf(page).waitFor({ state: "detached" });
-    console.log("PASS block-click: a pointer over a paragraph frames it, and the frame goes while a popover is open; a click on a paragraph opens a new comment right of a provisional bubble whose tip is where it was clicked; saved, the pin stays there; clicked again elsewhere, its comment opens in its field, its text up, the pin unmoved");
+    console.log("PASS block-click: a pointer over a paragraph frames it, and the frame goes while a popover is open; a click on a paragraph opens a new comment clear of its text, with a provisional bubble whose tip is where it was clicked; saved, the pin stays there; clicked again elsewhere, its comment opens in its field, its text up, the pin unmoved");
 
     // with a popover open, a press outside it only closes it: a click on another block opens nothing there, and the
     // next click does
@@ -989,9 +1071,9 @@ const cases: Record<string, Case> = {
     await besidePinOf(page).waitFor();
     await fieldFocused(page);
     assert.ok(await page.evaluate(() => {
-      const place = document.querySelector(".chat-view .comment-popover-place");
-      return place?.previousElementSibling?.matches(".comment-pin") === true && place.nextElementSibling?.matches(".comment-pin") === true;
-    }), "the popover's place lies between its pin and the next one");
+      const place = document.querySelector(".chat-surface-layout .comment-popover-place");
+      return place?.parentElement?.matches(".comment-editor-host") === true;
+    }), "the editor has a stable sibling host while keeping its pin's logical tab order");
     await page.keyboard.press("Shift+Tab");
     assert.equal(await focusedName(), `Comment on “${INTRO}”: Keys one. Edited.`, "Shift+Tab from the popover goes back to its own pin");
     assert.equal(await besidePinOf(page).count(), 1, "the popover stays open");
@@ -1044,7 +1126,7 @@ const cases: Record<string, Case> = {
     // text, its pin and the popover are all on screen
     await scrollSettled(page);
     assert.ok(await inView(page, ".chat-view .comment-pin.is-current"), "the pin is in view");
-    assert.ok(await inView(page, ".chat-view .comment-popover"), "the popover is in view");
+    assert.ok(await inView(page, ".chat-surface-layout .comment-popover"), "the popover is in view");
     assert.ok(await page.evaluate(() => {
       const marks = (CSS as unknown as { highlights: { get(key: string): Iterable<Range> | undefined } }).highlights.get("block-comment-current");
       const range = marks === undefined ? undefined : [...marks][0];

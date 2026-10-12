@@ -27,6 +27,7 @@ import { createServer } from "../server/index.ts";
 import { TEXT_LOAD_LIMIT } from "../src/lib/textPreview.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { openSettingsPage } from "./settings-page.ts";
+import { commentClearOfSource } from "./comment-placement-assertions.ts";
 import { sheetsSettled } from "./sheets-settled.ts";
 
 /** `src/sync.ts`: line 8 is the comparison a comment questions. */
@@ -303,23 +304,10 @@ async function assertTipAt(viewer: Locator, pin: Locator, at: Pointed, what: str
   }).catch((error: Error) => { throw new Error(`${error.message} (${JSON.stringify(seen)})`); });
 }
 
-/**
- * The popover beside its pin in `body` lies to the pin's right, 8px from it, its top level with the pin's top where
- * the body has room below for it; else shifted up just enough to end 8px above the body's visible bottom: polled.
- */
-async function assertBesideRight(body: Locator, pin: Locator, what: string): Promise<void> {
-  let seen: unknown = null;
-  await eventually(`${what}: the popover right of its pin, top-aligned where there is room`, async () => {
-    const pinBox = await pin.boundingBox().catch(() => null);
-    const place = body.locator(".comment-popover-place");
-    const box = await place.boundingBox().catch(() => null);
-    const side = await place.getAttribute("data-side").catch(() => null);
-    const bottom = await body.evaluate((node) => node.getBoundingClientRect().top + node.clientTop + node.clientHeight);
-    seen = { pinBox, box, side, bottom };
-    if (pinBox === null || box === null || side !== "right" || Math.abs(box.x - (pinBox.x + pinBox.width + 8)) > 1) return false;
-    const room = bottom - 8 - pinBox.y >= box.height;
-    return room ? Math.abs(box.y - pinBox.y) <= 1 : box.y < pinBox.y && Math.abs(box.y + box.height - (bottom - 8)) <= 1;
-  }).catch((error: Error) => { throw new Error(`${error.message} (${JSON.stringify(seen)})`); });
+/** The editor fits the visible file body without covering any line of the commented text. */
+async function assertSourceClear(body: Locator, pin: Locator, what: string): Promise<void> {
+  await eventually(`${what}: the editor leaves its source uncovered`, async () =>
+    await pin.isVisible() && await commentClearOfSource(body));
 }
 
 /** The context and page of a case: the pane's chat, its reply drawn, with an empty comment store; `errors` collects the page's, `sent` the texts it submitted to the pane. */
@@ -387,7 +375,7 @@ const pendingPinIn = (scope: Locator): Locator => scope.locator(".comment-pin.is
 /** The open comment's popover, wherever it is drawn. */
 const popoverOf = (page: Page): Locator => page.locator(".comment-popover");
 /** The popover beside its pin, inside `scope` (a viewer's body, the chat). */
-const besidePinIn = (scope: Locator): Locator => scope.locator(".comment-popover");
+const besidePinIn = (scope: Locator): Locator => scope.locator(".comment-popover").or(scope.locator("..").locator(".comment-editor-host .comment-popover"));
 /** The popover as a dialog of its own (the shared modal: a bottom sheet on a phone), portalled to the body. */
 const dialogOf = (page: Page): Locator => page.locator(".modal-scrim > .modal.comment-popover");
 const fieldOf = (page: Page): Locator => popoverOf(page).getByRole("textbox", { name: "Comment", exact: true });
@@ -450,7 +438,7 @@ const inBody = (viewer: Locator, selector: string): Promise<boolean> => viewer.e
   const body = node.querySelector(".file-viewer-body");
   if (found === null || body === null) return false;
   const box = found.getBoundingClientRect();
-  const outer = body.getBoundingClientRect();
+  const outer = (wanted.includes(".comment-popover") ? body.closest(".comment-surface-layout") ?? body : body).getBoundingClientRect();
   return box.height > 0 && box.top >= outer.top - 1 && box.bottom <= outer.bottom + 1;
 }, selector);
 
@@ -623,7 +611,7 @@ const cases: Record<string, Case> = {
     await assertNoButton(page, "a drag over lines 7–9");
     assert.equal(await popoverReference(page), "sync.ts · Lines 7–9");
     await assertTipAt(viewer, pendingPinIn(body), release, "the provisional pin of a dragged selection");
-    await assertBesideRight(body, pendingPinIn(body), "a dragged selection's new comment");
+    await assertSourceClear(body, pendingPinIn(body), "a dragged selection's new comment");
     await saveTyped(page, "Range note");
     await eventually("both pins", async () => (await pinsIn(body).count()) === 2);
     const rangePin = '.comment-pin[aria-label$=": Range note"]';
@@ -637,12 +625,32 @@ const cases: Record<string, Case> = {
     assert.equal(await popoverOf(page).locator(".comment-popover-quote").count(), 0, "beside its pin it quotes nothing");
     assert.equal(await closeOf(page).count(), 0, "no ✕ beside its pin");
     assert.equal(await deleteOf(page).count(), 1, "its Delete is in view");
-    await assertBesideRight(body, body.locator(rangePin), "the dragged selection's comment opened by its pin");
+    await assertSourceClear(body, body.locator(rangePin), "the dragged selection's comment opened by its pin");
     // its text stays up while the field has the focus, the pointer off the pin; line 8's comment goes (focus mode)
     await page.mouse.move(2, 2);
     await assertUp(body, "return", "the comment on lines 7–9 opened by its pin");
     await escapePopover(page);
     console.log("PASS code: Comment on a mouse's drag over lines 7–9 opens the popover, right of a provisional pin whose tip is where it let go; saved, the pin stays there, highlighted; the pin opens it in its field, its text up");
+
+    // The enclosing Files focus trap must respect pin → editor → next-pin order, not the sibling host's DOM order.
+    const firstPin = pinsIn(body).first();
+    const firstNode = await firstPin.elementHandle();
+    await firstPin.click();
+    await fieldFocused(page);
+    await page.keyboard.press("Shift+Tab");
+    assert.ok(await page.evaluate((node) => document.activeElement === node, firstNode), "Shift+Tab returns to the editor's own pin inside Files");
+    await page.keyboard.press("Tab");
+    await fieldFocused(page);
+    await page.keyboard.press("Tab");
+    assert.ok(await focusedMatches(page, ".comment-popover-delete"), "Tab reaches Delete in the editor");
+    await page.keyboard.press("Tab");
+    assert.ok(await pinsIn(body).last().evaluate((node) => document.activeElement === node), "Tab out reaches the next pin, not a viewer control");
+    await page.keyboard.press("Shift+Tab");
+    assert.ok(await focusedMatches(page, ".comment-popover-delete"));
+    await page.keyboard.press("Shift+Tab");
+    await fieldFocused(page);
+    await escapePopover(page);
+    console.log("PASS code: the enclosing Files focus trap keeps the editor's logical pin order");
 
     // 4. a copy over the commented lines is the browser's own: the code alone, nothing of the pins
     const copied = await lineOf(viewer, 6).evaluate((first) => {
@@ -759,7 +767,7 @@ const cases: Record<string, Case> = {
     assert.equal(await popoverOf(page).locator(".comment-popover-quote").count(), 0, "beside its pin the popover quotes nothing");
     assert.equal((await highlightText(page)).replace(/\s+/g, " ").trim(), (SYNC_LINES[7]).replace(/\s+/g, " ").trim(), "the quote is line 8");
     await assertTipAt(viewer, pendingPinIn(body), clicked8, "the provisional pin of a clicked line");
-    await assertBesideRight(body, pendingPinIn(body), "a clicked line's new comment");
+    await assertSourceClear(body, pendingPinIn(body), "a clicked line's new comment");
     await saveTyped(page, "Click note");
     await eventually("its pin", async () => (await pinsIn(body).count()) === 1);
     await assertTipAt(viewer, pinsIn(body), clicked8, "the clicked line's comment");
@@ -891,24 +899,8 @@ const cases: Record<string, Case> = {
     // its popover open beside it: the popover follows the pin, placed against it as on opening
     await pinsIn(body).click();
     await besidePinIn(body).waitFor();
-    /**
-     * How far the popover lies from where it is placed beside its pin (`besidePlace`: right of it, a gap of 8px,
-     * top-aligned, or shifted up to end 8px above the body's visible bottom where it has no room below). This file's
-     * body is shorter than the popover: there it only has to reach the pin from above and below.
-     */
-    const offPlace = (): Promise<number> => viewer.evaluate((node) => {
-      const surface = node.querySelector(".file-viewer-body")!;
-      const pin = surface.querySelector(".comment-pin:not(.is-pending)")!.getBoundingClientRect();
-      const place = surface.querySelector<HTMLElement>(".comment-popover-place")!;
-      const popover = place.getBoundingClientRect();
-      const bottom = surface.getBoundingClientRect().top + surface.clientTop + surface.clientHeight - 8;
-      const top = Math.max(Math.min(pin.top, bottom - popover.height), pin.bottom - popover.height);
-      const level = popover.height + 16 > surface.clientHeight
-        ? (popover.top <= pin.top + 1 && popover.bottom >= pin.bottom - 1 ? 0 : Infinity)
-        : Math.abs(popover.top - top);
-      return place.dataset.side !== "right" ? Infinity : Math.max(Math.abs(popover.left - (pin.right + 8)), level);
-    });
-    assert.ok((await offPlace()) <= 2, "the popover is placed against its pin");
+    const offPlace = async (): Promise<number> => await commentClearOfSource(body) ? 0 : Infinity;
+    assert.ok((await offPlace()) <= 2, "the editor leaves the visible source uncovered");
     await code.evaluate((node) => { node.scrollLeft = 40; });
     await eventually("the pin to follow its line back", async () => Math.abs((await pinX()) - (start - 40)) <= 2);
     await eventually("the popover to follow its pin", async () => (await offPlace()) <= 2);
@@ -1176,7 +1168,7 @@ const cases: Record<string, Case> = {
     await pendingPinIn(body).waitFor();
     assert.equal(await popoverReference(page), "spec.md · Lines 3–4");
     await assertTipAt(viewer, pendingPinIn(body), clicked3, "the provisional pin of a clicked paragraph");
-    await assertBesideRight(body, pendingPinIn(body), "a clicked paragraph's new comment");
+    await assertSourceClear(body, pendingPinIn(body), "a clicked paragraph's new comment");
     assert.equal(await popoverOf(page).locator(".comment-popover-quote").count(), 0, "beside its pin the popover quotes nothing");
     assert.equal((await highlightText(page)).replace(/\s+/g, " ").trim(), (`${SPEC_LINES[2]}\n${SPEC_LINES[3]}`).replace(/\s+/g, " ").trim(), "the quote is the paragraph's lines");
     await saveTyped(page, "Paragraph note");
@@ -1469,7 +1461,8 @@ const cases: Record<string, Case> = {
     await walk.click();
     const sync = page.getByRole("dialog", { name: "Files", exact: true });
     await lineOf(sync, SYNC_LINES.length).waitFor();
-    await eventually("the viewer to open the comment on line 8", () => openedInViewer(sync, line8, "Compare with <=."));
+    await eventually("the viewer to open the comment on line 8", () => openedInViewer(sync, line8, "Compare with <=."))
+      .catch(async (error: Error) => { throw new Error(`${error.message}: ${JSON.stringify(await page.evaluate(() => ({ fields: [...document.querySelectorAll<HTMLTextAreaElement>(".comment-popover textarea")].map((node) => node.value), pins: [...document.querySelectorAll(".file-viewer .comment-pin")].map((node) => ({ id: (node as HTMLElement).dataset.commentId, current: node.classList.contains("is-current") })), dialogs: document.querySelectorAll(".modal.comment-popover").length })))}`); });
     await assertPinAtLineEnd(sync.locator(".file-viewer-body"), `.comment-pin[data-comment-id="${line8}"]`, '.hl-line[data-source-line="8"]', "line 8's comment");
     await sync.getByRole("button", { name: "Close file", exact: true }).click();
     await sync.waitFor({ state: "detached" });

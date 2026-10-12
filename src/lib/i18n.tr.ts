@@ -988,6 +988,7 @@ export const TR: Record<string, string> = {
   "Changed files": "Değişen dosyalar",
   "Close comment": "Yorumu kapat",
   "Colors code in the chat and the file viewer. Off, code is plain text.": "Sohbetteki ve dosya görüntüleyicideki kodu renklendirir. Kapalıyken kod düz metin olarak gösterilir.",
+  "Quoted text": "Alıntılanan metin",
   "Comment": "Yorum",
   "Comment on an agent's reply and on files by selecting text or clicking a block. Turning this off deletes every comment on this device.": "Metin seçerek veya bir bloğa tıklayarak bir ajanın yanıtına ve dosyalara yorum ekleyin. Bunu kapatmak, bu cihazdaki tüm yorumları siler.",
   "Comment on “{quote}”: {comment}": "“{quote}” hakkındaki yorum: {comment}",

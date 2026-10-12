@@ -177,47 +177,37 @@ export function pinRightMargin(margin: number, size: number, hit: number): numbe
   return Math.max(margin, Math.ceil((hit - size) / 2));
 }
 
-/**
- * Where a box of `size` goes under a line `anchor`, both in the coordinates of the visible `view`: centred on the
- * anchor's `right`, `gap` below it, above it instead when there is no room below and there is above, and `margin`
- * inside the view's sides. A popover with no room beside its pin goes under it this way (`besidePlace`).
- */
-function belowPlace(
-  anchor: { top: number; bottom: number; right: number },
-  view: { width: number; height: number },
-  size: { width: number; height: number },
-  { gap, margin }: { gap: number; margin: number },
-): { left: number; top: number } {
-  const left = Math.max(margin, Math.min(anchor.right - size.width / 2, view.width - size.width - margin));
-  const above = anchor.top - gap - size.height;
-  const under = anchor.bottom + gap;
-  const top = under + size.height > view.height && above >= 0 ? above : under;
-  return { left, top };
-}
-
-/** The side of its pin a comment's popover opens on (`besidePlace`). */
-export type PopoverSide = "right" | "left" | "below";
+/** The side of the commented text a popover opens on. */
+export type PopoverSide = "right" | "left" | "below" | "above";
 
 /**
- * Where a comment's popover of `size` goes beside its pin (`pin`: the pin's top left corner and its side `pinSize`),
- * all in the coordinates of the visible `view`. First to the right of the pin, `gap` from it, its top level with the
- * pin's top; else to its left, the same way; else below it (`belowPlace`, centred on the pin). Beside the pin it is
- * shifted up as far as it would run past the view's bottom (`margin` inside it), but never so far that it no longer
- * reaches the pin's bottom, nor above the view's top `margin` while the pin is below that.
+ * Keep the editor outside the whole commented text, not merely its pin (which can be inside a paragraph).
+ * All inputs use the same coordinates. Candidates must fit the visible surface with a margin; never clamp
+ * an overflowing candidate back over the source. No fit means the caller must reserve space for an editor.
  */
-export function besidePlace(
+export function commentPlace(
+  rects: readonly PinBox[],
   pin: { left: number; top: number },
-  view: { width: number; height: number },
+  view: PinBox,
   size: { width: number; height: number },
   { pinSize, gap, margin }: { pinSize: number; gap: number; margin: number },
-): { left: number; top: number; side: PopoverSide } {
-  const top = Math.max(Math.min(pin.top, view.height - margin - size.height), pin.top + pinSize - size.height, Math.min(pin.top, margin));
-  const right = pin.left + pinSize + gap;
-  if (right + size.width <= view.width - margin) return { left: right, top, side: "right" };
-  const left = pin.left - gap - size.width;
-  if (left >= margin) return { left, top, side: "left" };
-  const below = belowPlace({ top: pin.top, bottom: pin.top + pinSize, right: pin.left + pinSize / 2 }, view, size, { gap, margin });
-  return { ...below, side: "below" };
+): { left: number; top: number; side: PopoverSide } | null {
+  const text = unionBox(rects);
+  if (text === undefined || size.width <= 0 || size.height <= 0) return null;
+  const inside = { left: view.left + margin, top: view.top + margin, right: view.right - margin, bottom: view.bottom - margin };
+  if (size.width > inside.right - inside.left || size.height > inside.bottom - inside.top) return null;
+  const top = clamp(pin.top, [inside.top, inside.bottom - size.height]);
+  const left = clamp(pin.left + pinSize / 2 - size.width / 2, [inside.left, inside.right - size.width]);
+  const candidates: Array<{ left: number; top: number; side: PopoverSide }> = [
+    { left: Math.max(text.right, pin.left + pinSize) + gap, top, side: "right" },
+    { left: Math.min(text.left, pin.left) - gap - size.width, top, side: "left" },
+    { left, top: Math.max(text.bottom, pin.top + pinSize) + gap, side: "below" },
+    { left, top: Math.min(text.top, pin.top) - gap - size.height, side: "above" },
+  ];
+  return candidates.find((at) => at.left >= inside.left && at.top >= inside.top
+    && at.left + size.width <= inside.right && at.top + size.height <= inside.bottom
+    && rects.every((rect) => at.left >= rect.right + gap || at.left + size.width <= rect.left - gap
+      || at.top >= rect.bottom + gap || at.top + size.height <= rect.top - gap)) ?? null;
 }
 
 /**

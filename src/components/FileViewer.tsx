@@ -4,6 +4,7 @@ import { Check, Code, Copy, Download, ExternalLink, MessageSquare, TriangleAlert
 import "./FileViewer.css";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
 import { useFileCommentLayer, useFileCommentWalk, type FileCommentScope } from "./FileComments.tsx";
+import { CommentSurfaceLayout } from "./CommentSurfaceLayout.tsx";
 import { useHighlightedLines } from "./HighlightedCode.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { TextFileView } from "./TextFileView.tsx";
@@ -433,11 +434,13 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
         </header>
         {/* with comments the body is their surface (lib/commentHighlight.ts), the place the pins and the popover
             are positioned in, and a click on a line in it comments on that line, a mouse's drag on what it selected */}
-        <div ref={bodyRef} className="file-viewer-body" {...comments.surfaceProps}>
-          {body}
-          {comments.overlay}
-          {walk.editor}
-        </div>
+        <CommentSurfaceLayout>
+          <div ref={bodyRef} className="file-viewer-body" {...comments.surfaceProps}>
+            {body}
+            {comments.overlay}
+            {walk.editor}
+          </div>
+        </CommentSurfaceLayout>
       </section>
     </div>
   );

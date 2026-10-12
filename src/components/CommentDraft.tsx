@@ -2,7 +2,7 @@
  * What the comment popover (CommentPopover.tsx, beside its pin or as a dialog) is written with: a
  * comment's text with its field and its keys, and where the focus goes when the editor closes.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 
 import "./CommentPopover.css";
 
@@ -141,13 +141,26 @@ export function useCommentDraft(
   told.current = onText;
   useLayoutEffect(() => told.current?.(value), [value]);
 
-  // one line to start, growing with the comment up to the cap in CSS, as the composer's box does
-  useLayoutEffect(() => {
+  // Reflow matters too: docking or a narrower pane can wrap the same draft onto more lines.
+  const resizeField = useCallback(() => {
     const node = field.current;
     if (!node) return;
     node.style.height = "auto";
     node.style.height = `${node.scrollHeight + node.offsetHeight - node.clientHeight}px`;
-  }, [value]);
+  }, []);
+  useLayoutEffect(resizeField, [value, resizeField]);
+  useEffect(() => {
+    const node = field.current;
+    if (!node) return;
+    let width = node.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (node.clientWidth === width) return;
+      width = node.clientWidth;
+      resizeField();
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [resizeField]);
 
   // the opener and the fallback as the editor opened: read once, they do not change while it is up
   const askFallback = useRef(fallback);
