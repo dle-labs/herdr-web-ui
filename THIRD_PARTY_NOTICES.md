@@ -9,13 +9,12 @@ Code, Markdown fences and diffs use [Shiki](https://shiki.style/) through
 licenses of its bundled runtime dependencies ship in
 [`licenses/git-diff.txt`](licenses/git-diff.txt).
 
-## Pierre Diffs and Trees
+## Pierre Diffs
 
-The Git Changes view uses [`@pierre/diffs`](https://diffs.com) and
-[`@pierre/trees`](https://trees.software), Copyright 2025 Pierre Computer Company,
-under the Apache License 2.0. Full license and attribution texts for these packages
-and their bundled runtime dependencies (including Shiki, jsdiff, Preact and the HTML
-utilities) ship in [`licenses/git-diff.txt`](licenses/git-diff.txt).
+The Git Changes view uses [`@pierre/diffs`](https://diffs.com), Copyright 2025
+Pierre Computer Company, under the Apache License 2.0. Full license and attribution
+texts for this package and its bundled runtime dependencies (including Shiki,
+jsdiff and the HTML utilities) ship in [`licenses/git-diff.txt`](licenses/git-diff.txt).
 
 ## LobeHub Icons
 
