@@ -37,6 +37,10 @@ try {
   } });
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH ?? "/opt/google/chrome/chrome", headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage(); page.setDefaultTimeout(10_000);
+  // Plain text has no Markdown preview: TextFileView shows its numbered source directly.
+  // Read the code's text, not its gutter (CSS counters) or the viewer's notices.
+  const source = page.locator(".file-viewer-content > pre.hl-code.file-viewer-text > code");
+  const partialNotice = page.locator(".file-viewer-notice");
   await page.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
   const errors: string[] = [], cancelled: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -45,22 +49,27 @@ try {
   const open = async (path: string) => { await page.evaluate((path) => window.previewQA.open(path), path); await page.getByRole("dialog").waitFor(); };
   await open("error");
   await page.getByRole("alert").filter({ hasText: "The file could not be opened." }).waitFor();
-  assert.equal(await page.locator(".file-viewer-text").count(), 0);
+  assert.equal(await source.count(), 0);
   assert.ok(!(await page.locator("body").innerText()).includes("PRIVATE ERROR BODY"));
-  await open("large"); await page.locator(".file-viewer-text").waitFor();
-  assert.equal((await page.locator(".file-viewer-text").textContent())?.length, 256 * 1024);
-  await page.getByText("Only part of this file is shown. Download it to read the rest.", { exact: true }).waitFor();
+  await open("large"); await source.waitFor();
+  assert.equal((await source.textContent())?.length, 256 * 1024);
+  assert.equal(await partialNotice.getAttribute("title"), "Only part of this file is shown. Download it to read the rest.");
+  assert.equal(await page.getByRole("button", { name: "Copy file", exact: true }).count(), 0);
+  // The rich viewer also repeats the warning for screen readers; assert its visible label.
+  const partialWarning = page.locator(".file-viewer-notice > span:not(.visually-hidden)");
+  await partialWarning.waitFor();
+  assert.equal(await partialWarning.textContent(), "Only part of this file is shown. Download it to read the rest.");
   if (process.env.UI_EVIDENCE_DIR) {
     mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByText("Only part of this file is shown. Download it to read the rest.", { exact: true }).scrollIntoViewIfNeeded();
+    await partialWarning.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "text-preview-mobile.png") });
   }
   for (const path of ["headers", "body"]) {
     const start = performance.now(); await open(path);
     await page.getByRole("alert").filter({ hasText: "The file could not be opened." }).waitFor();
     assert.ok(performance.now() - start < 6_500, `${path} has a bounded deadline`);
-    assert.equal(await page.locator(".file-viewer-text").count(), 0);
+    assert.equal(await source.count(), 0);
   }
   const closingResponse = page.waitForResponse((response) => new URL(response.url()).searchParams.get("path") === "close");
   await open("close");
@@ -68,7 +77,7 @@ try {
   await page.getByRole("button", { name: "Close file", exact: true }).click();
   await page.getByRole("dialog").waitFor({ state: "detached" });
   await open("good"); await page.getByText("한글 complete", { exact: true }).waitFor();
-  await page.waitForFunction(() => document.querySelector(".file-viewer-text")?.textContent === "한글 complete");
+  await page.waitForFunction(() => document.querySelector(".file-viewer-content > pre.hl-code.file-viewer-text > code")?.textContent === "한글 complete");
   assert.ok(cancelled.some((url) => new URL(url).searchParams.get("path") === "close"), "closing aborts the active response");
   assert.deepEqual(errors, []);
   for (const timer of timers) clearTimeout(timer);

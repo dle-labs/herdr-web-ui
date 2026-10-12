@@ -8,6 +8,14 @@ import { SHARED_SETTING_KEYS } from "../../shared/preferences.ts";
 import { NOTICE_VERSION, telemetrySettings } from "../../shared/telemetry.ts";
 import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
 
+it("shares the diff layout preference with the file browser and sanitizes saved values", () => {
+  expect(DEFAULT_SETTINGS.splitDiff).toBe(true);
+  expect(sanitizeSettings({}).splitDiff).toBe(true);
+  expect(sanitizeSettings({ splitDiff: false }).splitDiff).toBe(false);
+  expect(sanitizeSettings({ splitDiff: true }).splitDiff).toBe(true);
+  for (const splitDiff of [null, "false", 0]) expect(sanitizeSettings({ splitDiff }).splitDiff).toBe(true);
+});
+
 it("keeps a tab's pane while out of use until this device turns the pause on", () => {
   expect(DEFAULT_SETTINGS.releasePaneAway).toBe(false);
   expect(sanitizeSettings({}).releasePaneAway).toBe(false);
@@ -707,17 +715,21 @@ describe("default lens", () => {
   });
 });
 
+it("keeps the file viewer's wrap setting only when it is a boolean, and no size limits", () => {
+  expect(DEFAULT_SETTINGS.wrapCode).toBe(false);
+  expect(sanitizeSettings({ wrapCode: true }).wrapCode).toBe(true);
+  expect(sanitizeSettings({ wrapCode: "yes" }).wrapCode).toBe(false);
+  // the limits are fixed now: a record stored with them drops them
+  const stored = sanitizeSettings({ textLoadLimit: 1024 * 1024, highlightLimit: 1024 * 1024 }) as unknown as Record<string, unknown>;
+  expect("textLoadLimit" in stored).toBe(false);
+  expect("highlightLimit" in stored).toBe(false);
+});
+
 it("highlights code unless turned off, and keeps a stored choice only when it is a boolean", () => {
   expect(DEFAULT_SETTINGS.highlightCode).toBe(true);
   expect(sanitizeSettings({ highlightCode: false }).highlightCode).toBe(false);
   expect(sanitizeSettings({ highlightCode: "no" }).highlightCode).toBe(true);
   expect(sanitizeSettings({}).highlightCode).toBe(true);
-});
-
-it("keeps the file viewer's wrap setting only when it is a boolean", () => {
-  expect(DEFAULT_SETTINGS.wrapCode).toBe(false);
-  expect(sanitizeSettings({ wrapCode: true }).wrapCode).toBe(true);
-  expect(sanitizeSettings({ wrapCode: "yes" }).wrapCode).toBe(false);
 });
 
 it("keeps the Markdown preview's width to readable or full, readable by default", () => {
@@ -754,4 +766,14 @@ it("keeps plain chat paging opt-in and saves the keyboard choice on this device"
     expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ chatPageKeys })))).chatPageKeys).toBe(chatPageKeys);
   }
   for (const chatPageKeys of [null, "true", 1]) expect(sanitizeSettings({ chatPageKeys }).chatPageKeys).toBe(false);
+});
+
+describe("comments", () => {
+  it("is on by default and keeps a stored choice", () => {
+    expect(sanitizeSettings({}).comments).toBe(true);
+    expect(sanitizeSettings({ comments: false }).comments).toBe(false);
+  });
+  it("falls back to on for a value that is not a boolean", () => {
+    expect(sanitizeSettings({ comments: "no" }).comments).toBe(true);
+  });
 });

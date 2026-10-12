@@ -7,7 +7,8 @@
 
 import type { TelemetrySettings } from "../../shared/telemetry.ts";
 import { SHARED_SETTING_KEYS, type SharedSettingKey } from "../../shared/preferences.ts";
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { blockComments } from "./blockComments.ts";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
@@ -119,6 +120,8 @@ export interface Settings {
   autoSendQueued: boolean;
   /** show the agent's folded reasoning blocks in the chat view */
   showThinking: boolean;
+  /** comment on a reply or a file by selecting text or clicking a block; off deletes every comment */
+  comments: boolean;
   /** request a screen wake lock while a pane is open in this visible tab */
   keepScreenOn: boolean;
   /** UI language; `system` follows the browser (src/lib/i18n.ts) */
@@ -160,7 +163,9 @@ export interface Settings {
   voicePolishTerminal: boolean;
   /** the file viewer wraps long lines instead of scrolling sideways */
   wrapCode: boolean;
-  /** code is colored by its language; off, it is plain text */
+  /** Side-by-side diffs on wide screens; narrow browsers always use unified. */
+  splitDiff: boolean;
+  /** code in the chat and the file viewer is colored by syntax; off, it is plain text */
   highlightCode: boolean;
   /** the width of a Markdown preview: the chat's lane (--chat-w), centered, or the viewer's width */
   markdownWidth: MarkdownWidth;
@@ -257,7 +262,7 @@ export const SETTING_SCOPE = {
   keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertInApp: "device", alertSound: "device",
   voiceInput: "device", voiceLanguage: "device", voicePolishChat: "device", voicePolishTerminal: "device",
   // Viewer layout follows this screen, as chatWidth does; highlighting remains shared.
-  wrapCode: "device", markdownWidth: "device",
+  wrapCode: "device", splitDiff: "device", comments: "device", markdownWidth: "device",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 /** The shared part of `settings`, by the names shared/preferences.ts lists. */
@@ -296,6 +301,7 @@ export const DEFAULT_SETTINGS: Settings = {
   attachLimit: 20,
   autoSendQueued: true,
   showThinking: false,
+  comments: true,
   keepScreenOn: false,
   language: "system",
   alertsOn: true,
@@ -318,6 +324,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voicePolishChat: true,
   voicePolishTerminal: false,
   wrapCode: false,
+  splitDiff: true,
   highlightCode: true,
   markdownWidth: "readable",
 };
@@ -343,8 +350,8 @@ function voiceButton(value: unknown): VoiceButton {
 }
 
 /** Whether an input asks for dictation at all: auto leaves the terminal input line and a phone's composer alone. */
-export function wantsVoiceInput(setting: VoiceButton, mode: "chat" | "terminal", phone: boolean): boolean {
-  return setting === "on" || (setting === "auto" && mode === "chat" && !phone);
+export function wantsVoiceInput(setting: VoiceButton, mode: "chat" | "terminal" | "comment", phone: boolean): boolean {
+  return mode === "comment" ? setting !== "off" : setting === "on" || (setting === "auto" && mode === "chat" && !phone);
 }
 
 /** The replies worth a button: what the list holds, without the blank ones still being written. */
@@ -471,6 +478,7 @@ export function sanitizeSettings(raw: unknown): Settings {
       : DEFAULT_SETTINGS.attachLimit,
     autoSendQueued: typeof record["autoSendQueued"] === "boolean" ? record["autoSendQueued"] : DEFAULT_SETTINGS.autoSendQueued,
     showThinking: typeof record["showThinking"] === "boolean" ? record["showThinking"] : DEFAULT_SETTINGS.showThinking,
+    comments: typeof record["comments"] === "boolean" ? record["comments"] : DEFAULT_SETTINGS.comments,
     keepScreenOn: typeof record["keepScreenOn"] === "boolean" ? record["keepScreenOn"] : DEFAULT_SETTINGS.keepScreenOn,
     language: LANGUAGE_SETTINGS.includes(record["language"] as LanguageSetting) ? record["language"] as LanguageSetting : DEFAULT_SETTINGS.language,
     alertsOn: typeof record["alertsOn"] === "boolean" ? record["alertsOn"] : DEFAULT_SETTINGS.alertsOn,
@@ -496,6 +504,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     voicePolishChat: typeof record["voicePolishChat"] === "boolean" ? record["voicePolishChat"] : DEFAULT_SETTINGS.voicePolishChat,
     voicePolishTerminal: typeof record["voicePolishTerminal"] === "boolean" ? record["voicePolishTerminal"] : DEFAULT_SETTINGS.voicePolishTerminal,
     wrapCode: typeof record["wrapCode"] === "boolean" ? record["wrapCode"] : DEFAULT_SETTINGS.wrapCode,
+    splitDiff: typeof record["splitDiff"] === "boolean" ? record["splitDiff"] : DEFAULT_SETTINGS.splitDiff,
     highlightCode: typeof record["highlightCode"] === "boolean" ? record["highlightCode"] : DEFAULT_SETTINGS.highlightCode,
     markdownWidth: MARKDOWN_WIDTHS.find((width) => width === record["markdownWidth"]) ?? DEFAULT_SETTINGS.markdownWidth,
   };
@@ -600,7 +609,14 @@ interface SettingsContextValue {
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<Settings>(loadSettings);
+  // the Comments setting decides what the comment store lists (`BlockCommentStore.setEnabled`): applied as the settings
+  // load, before anything reads the store, and on every change before paint, so what read it in that commit draws again
+  const [settings, setSettings] = useState<Settings>(() => {
+    const loaded = loadSettings();
+    blockComments.setEnabled(loaded.comments);
+    return loaded;
+  });
+  useLayoutEffect(() => blockComments.setEnabled(settings.comments), [settings.comments]);
   const [systemDark, setSystemDark] = useState(() => resolveTheme("system") === "dark");
 
   useEffect(() => {

@@ -23,6 +23,8 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   halves. A press in a half makes it the one the header, the palette and the shortcuts act on.
   The split is kept across a reload, and a narrower window shows the active half alone. Drag
   guide by @flam-ing. ([#861](https://github.com/devswha/herdr-web-ui/pull/861) by @Yoonwoo-Ha)
+- Browse files and all current Git changes in one modal viewer with a compact file tree, colorful file-type icons, dimmed Git-ignored folders and continuous diffs. File links open in this same browser; diff layout, wrapping and highlighting preferences live in Settings. Open changes from the composer and add inline old/new line-range comments, with dictation, to the next chat message.
+- Use Pierre's Shiki highlighting engine across diffs, files and chat, with shared palette colors and bounded background highlighting for file/chat code.
 - The file viewer and Markdown reader page offer **Show source**, highlighted source with
   CSS-counter line numbers, and **Copy file**, which selects the source when copying is unavailable.
   **Settings → Chat → File viewer** controls line wrapping and Markdown width; previews inherit
@@ -64,6 +66,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   identifiers stay out; custom choices use flags or counts. The expanded notice is shown again
   before sending, and existing opt-outs and install/update-only delivery stay unchanged.
   ([#866](https://github.com/devswha/herdr-web-ui/pull/866))
+- Selecting text offers a Comment quick action instead of immediately opening and focusing the editor, preserving native copying on desktop and mobile.
 - Markdown file previews are parsed in a worker with a 2 s budget and a 60 000-element limit,
   keeping the existing HTML blocks, images and reader-page navigation. A preview that cannot
   be drawn offers its source. Partial text and preview, highlighting or line-number limits are
@@ -87,6 +90,9 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - One paste, pick or drop attaches up to 20 files instead of silently keeping the first four, and
   the message box says how many it left out. **Settings → Chat → Files at once** sets the number
   for the device, from 1 to 50.
+- Comment editors no longer stop at 2,000 characters; the combined message is still checked against the send limit.
+- Chat selection comments keep list bullets, numbering and task checkbox markers in their quotes.
+- Comments sent from chat or file selections stay outside the quoted text in terminal Markdown renderers.
 - Web UI SSH connections no longer open extra tunnels configured in the account’s SSH config.
   ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
 - **Send now** on a working Codex pane sends the message at once. Codex kept it until its next

@@ -20,6 +20,7 @@ import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLa
 import { rollupStatus } from "../../src/lib/status.ts";
 import { CHATS, PROMPT, SPECS } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
+import { demoGitChanges, demoGitDiff } from "./gitDiff.ts";
 import machinesFixture from "./fixtures/machines.json";
 import agentsFixture from "./fixtures/agents.json";
 import commandsFixture from "./fixtures/commands.json";
@@ -451,6 +452,12 @@ const now = () => new Date().toISOString();
 /** the id a pane answers to after a move took it to another workspace, for a mock turn begun under the old one */
 const movedPaneIds = new Map<string, string>();
 
+/** The demo agent's chat in a pane; a pane without one has no agent to take a message. */
+function chatOf(paneId: string) {
+  const key = keyOfPane.get(paneId);
+  return key ? chats.get(key) : undefined;
+}
+
 /** The bridge takes one accepted pending message when the current mock turn finishes. */
 function finishDemoTurn(paneId: string, status: "idle" | "done" = "done"): void {
   while (movedPaneIds.has(paneId)) paneId = movedPaneIds.get(paneId)!;
@@ -464,8 +471,7 @@ function finishDemoTurn(paneId: string, status: "idle" | "done" = "done"): void 
 
 /** A sent Enter joins the conversation now; another Enter steers the current mock turn. */
 function submitToChat(paneId: string, text: string): void {
-  const key = keyOfPane.get(paneId);
-  const chat = key ? chats.get(key) : undefined;
+  const chat = chatOf(paneId);
   if (!chat) return;
   chat.turns.push({ role: "user", ts: now(), parts: [{ kind: "text", text }] });
   conversationChanged(paneId);
@@ -1021,9 +1027,19 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     structureChanged();
     return json({ ok: true });
   }
+  if (path === "/api/workspace/changes" || path === "/api/workspace/diff") {
+    const pane = snapshot().panes.find((pane) => pane.pane_id === query.get("pane_id"));
+    if (!pane) return error("pane_not_found", "no such demo pane", 404);
+    const mode = query.get("mode") ?? "all";
+    if (mode !== "all" && mode !== "unstaged" && mode !== "staged") return error("invalid_mode", "unknown comparison", 400);
+    const root = pane.foreground_cwd ?? pane.cwd ?? "/home/demo/project";
+    if (path === "/api/workspace/changes") return json(demoGitChanges(root, mode));
+    const diff = demoGitDiff(root, mode, query.get("path") ?? "");
+    return diff === null ? error("git_path_not_changed", "no such changed demo file", 404) : json(diff);
+  }
   if (path === "/api/workspace/directories") {
     const dir = query.get("path") || "/home/demo";
-    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "docs-site", "infra", "release", "web-dashboard"] : [], truncated: false, files: [] });
+    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "docs-site", "infra", "release", "web-dashboard"] : [], truncated: false, ...(query.get("files") === "1" ? { files: [], ignored_directories: [] } : {}) });
   }
   if (path === "/api/workspace/create") {
     const body = await bodyOf(init, input);
@@ -1184,7 +1200,7 @@ class DemoSocket extends EventTarget {
       const open = new Event("open");
       this.onopen?.(open);
       this.dispatchEvent(open);
-      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch"] });
+      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "submit-agent-only"] });
     }, 20);
     this.timers.add(opening);
   }
@@ -1217,10 +1233,10 @@ class DemoSocket extends EventTarget {
 
   send(raw: string): void {
     if (this.readyState !== 1) return;
-    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; pending_id?: string; action?: unknown; enabled?: boolean };
+    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; pending_id?: string; action?: unknown; enabled?: boolean; agent_only?: boolean };
     try { message = JSON.parse(raw); } catch { return; }
     if ((message.type === "submit" || message.type === "pending-action") && Number.isSafeInteger(message.id)) {
-      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, pending_id: message.pending_id, action: message.action });
+      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, agent_only: message.agent_only, pending_id: message.pending_id, action: message.action });
       const previous = this.requests.get(message.id!);
       if (previous) {
         if (previous.signature !== signature) {
@@ -1311,7 +1327,12 @@ class DemoSocket extends EventTarget {
           else if (queued && (text.trim().length === 0 || text.length > 20_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text))) code = "invalid_submit_text";
           else if (queued) code = this.pendingTargetError(message.pane_id);
           if (code) {
-            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission." });
+            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission.", typed: false });
+            break;
+          }
+          // like the bridge: a message only an agent may get is refused where none runs
+          if (message.agent_only && !chatOf(message.pane_id)) {
+            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code: "agent_not_found", message: "no agent runs in this pane, and this message is only sent to one; nothing was typed", typed: false });
             break;
           }
           if (queued && (message.delivery === "hold" || paneOf(message.pane_id)?.agent_status === "working")) {
@@ -1390,7 +1411,7 @@ class DemoSocket extends EventTarget {
     if (!this.attached.has(paneId)) return "not_attached";
     const pane = paneOf(paneId);
     if (!pane) return "pane_not_found";
-    if (!(pane.agent ?? pane.agent_session?.agent)) return "agent_not_ready";
+    if (!(pane.agent ?? pane.agent_session?.agent)) return "agent_not_found";
     if (keyOfPane.get(paneId) === "web" && promptOpen) return "agent_blocked";
     if (pane.agent_status === "blocked") return "agent_blocked";
     if (!["working", "idle", "done"].includes(pane.agent_status)) return "agent_not_ready";

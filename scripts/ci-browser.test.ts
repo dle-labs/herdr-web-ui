@@ -60,7 +60,7 @@ describe("browser lane", () => {
   it("summarizes every script and exits zero on success without enabling local evidence", async () => {
     const { text, code, evidence } = await lane();
     expect(code).toBe(0);
-    expect(rows(text)).toHaveLength(44);
+    expect(rows(text)).toHaveLength(47);
     expect(rows(text).map((row) => row.script)).toContain("scripts/portal-regression.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/agy-chat-browser-qa.ts");
     expect(rows(text).map((row) => row.script)).toContain("scripts/pending-pane-switch-regression.ts");

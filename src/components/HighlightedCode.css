@@ -46,6 +46,13 @@
   user-select: none;
 }
 
+/* a line with a comment on all of it (the file viewer, lib/fileCommentHighlight.ts): its number in
+   the accent; its text carries the comment's highlight */
+.hl-code[data-line-numbers] .hl-line.is-commented::before {
+  color: var(--accent);
+  font-weight: var(--fw-semibold);
+}
+
 .hl-keyword { color: var(--syntax-keyword); }
 .hl-string { color: var(--syntax-string); }
 .hl-number { color: var(--syntax-number); }

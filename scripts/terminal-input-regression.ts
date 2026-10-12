@@ -10,7 +10,7 @@ export async function checkTerminalInput(browser: Browser, origin: string, pane:
   page.on("pageerror", (error) => errors.push(error.message));
   page.setDefaultTimeout(10_000);
   await context.addInitScript(() => {
-    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "line" }));
+    if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", terminalInputMode: "line", voiceInput: "off" }));
   });
   const sent: any[] = [];
   let acknowledge: (() => void) | undefined;
