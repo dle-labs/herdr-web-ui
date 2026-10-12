@@ -186,8 +186,8 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 
 - Browse files opens a full-viewport workspace viewer directly, with a file tree beside the
   document. Changed paths open their Git diff, except Markdown opened through ordinary browsing
-  or a file link: even a new or staged Markdown file opens its rendered preview. The composer's
-  changes shortcut and diff-comment links keep Markdown in Diff. A changed Markdown document
+  or a file link: even a new or staged Markdown file opens its rendered preview. The
+  pane-menu Changed files action and diff-comment links keep Markdown in Diff. A changed Markdown document
   offers **Preview | Diff** above the tree/document; deleted and binary paths offer no preview.
   Switching keeps saved comments and is refused while a comment field is dirty. Unchanged paths
   open the existing file preview in the same surface. Diffs form one continuous scroll region, with the tree selection following
@@ -197,8 +197,9 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   desktop detail says **Select a file to view.** until another file is selected; refresh does not
   reopen the closed document. **Close files**, Escape without an open comment, the scrim and
   system Back dismiss the whole browser. Both close buttons protect dirty comment drafts.
-- A changes shortcut immediately before the composer's agent mark appears when the visible pane
-  has changes. Follow edits is opt-in, refreshes only while visible and connected, and preserves
+- **Changed files** lives in the pane's right-click menu beside its split actions (and in the
+  phone's tab actions), targeting that pane rather than the focused pane. The composer has no
+  changes button or background inventory polling. Follow edits is opt-in, refreshes only while visible and connected, and preserves
   dirty comment drafts. Wrap and highlight controls share the file viewer's settings.
 - Pierre's shadow-root variables map to existing surfaces, text, fonts and focus tokens. Added
   lines use `--status-done`, deleted lines `--status-blocked`, and renamed paths `--notice`;

@@ -175,10 +175,15 @@ try {
         page.on("console", (message) => { if (message.type() === "error") console.error(message.text()); });
         await page.goto(url);
         await page.locator(".conn-live").waitFor({ state: "attached" });
-        const shortcut = page.locator(".composer-changes").first();
-        await shortcut.waitFor();
-        assert.equal(await shortcut.evaluate((node) => node.nextElementSibling?.classList.contains("agent-mark")), true, "changes shortcut is immediately before the agent mark");
-        await shortcut.click();
+        assert.equal(await page.locator(".composer-changes").count(), 0, "the input field has no changes shortcut");
+        const openPaneChanges = async () => {
+          if (mobile) await page.locator(".tab-strip-menu").first().click();
+          else await page.locator(".pane-frame.is-current").first().click({ button: "right", position: { x: 12, y: 12 } });
+          const role = mobile ? "button" : "menuitem";
+          await page.getByRole(role, { name: "Split right", exact: true }).waitFor();
+          await page.getByRole(role, { name: "Changed files", exact: true }).click();
+        };
+        await openPaneChanges();
         await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
         const dialog = await openChanges(page);
         await dialog.locator(".workspace-file-tree").waitFor();
@@ -420,13 +425,13 @@ try {
         assert.equal(await reopened.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Diff", exact: true }).getAttribute("aria-pressed"), "true", "composer comment navigation forces Diff rather than browse Preview");
         await reopened.getByRole("button", { name: "Close files", exact: true }).click();
 
-        await shortcut.click();
+        await openPaneChanges();
         const explicit = page.getByRole("dialog", { name: "Files", exact: true });
         // Mobile opens the navigation tree first, but selecting a changed Markdown
         // file must keep the explicit changes intent rather than switch to Preview.
         await treeFile(explicit, "docs/added.md").click();
         await section(explicit, "docs/added.md").locator("[data-diff-type]").waitFor();
-        assert.equal(await explicit.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Diff", exact: true }).getAttribute("aria-pressed"), "true", "composer Changes entry defaults changed Markdown to Diff");
+        assert.equal(await explicit.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Diff", exact: true }).getAttribute("aria-pressed"), "true", "pane-menu Changed files defaults changed Markdown to Diff");
         await explicit.getByRole("button", { name: "Close files", exact: true }).click();
 
         // A plain source file's comments remain separate from Markdown diff cards.

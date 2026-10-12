@@ -80,6 +80,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#860](https://github.com/devswha/herdr-web-ui/pull/860))
 
 ### Fixed
+- Changed files moves from beside the composer's model selector to the pane's right-click menu and phone tab actions.
 - Comment editors stay clear of the text being commented on. When no floating position fits,
   a desktop editor reserves space below the reading area without losing the draft, focus or caret.
 - Closing an embedded file returns to file navigation without closing the workspace browser; the outer Close files button still dismisses the browser, and unsaved comments block both actions.
