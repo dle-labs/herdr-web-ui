@@ -9,7 +9,7 @@ import { paneStorageId } from "../../shared/machines.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useSettings } from "../lib/settings.ts";
 import { PIERRE_THEME } from "../lib/pierreTheme.ts";
-import { changedWorkspacePath } from "../lib/workspaceBrowser.ts";
+import { changedMarkdownPreviewPath, changedWorkspacePath, workspacePreviewPath, type WorkspaceFileIntent } from "../lib/workspaceBrowser.ts";
 import { useT } from "../lib/i18n.ts";
 import { WorkspaceFileTree } from "./WorkspaceFileTree.tsx";
 import { DiffOrphanComments, DiffViewer } from "./DiffViewer.tsx";
@@ -86,8 +86,8 @@ function DiffSection({ paneId, inventory, path, owner, connected, split, scrollR
   </section>;
 }
 
-export default function ChangesView({ paneId, start, connected, initialComment = null, initialPath = null, initialCommentId = null, showFile, onShowFile, refreshToken, keyboardActive, onClose }: {
-  paneId: string | null; start: string; connected: boolean; initialComment?: FileComment | null;
+export default function ChangesView({ paneId, start, connected, initialIntent = "browse", initialComment = null, initialPath = null, initialCommentId = null, showFile, onShowFile, refreshToken, keyboardActive, onClose }: {
+  paneId: string | null; start: string; connected: boolean; initialIntent?: WorkspaceFileIntent; initialComment?: FileComment | null;
   initialPath?: string | null; initialCommentId?: string | null; showFile: boolean; onShowFile: () => void; refreshToken: number; keyboardActive: boolean; onClose: () => void;
 }) {
   const t = useT();
@@ -128,11 +128,12 @@ export default function ChangesView({ paneId, start, connected, initialComment =
   const resolvedInitial = useRef(false);
   useEffect(() => {
     if (!initialPath || !inventory || resolvedInitial.current || initialComment?.diff) return;
-    const direct = changedWorkspacePath(inventory, initialPath)
-      ?? (/^(?:[A-Za-z]:|\/|~)/.test(initialPath) ? null : changedWorkspacePath(inventory, absolutePath(start, initialPath)));
+    const candidate = /^(?:[A-Za-z]:|\/|~)/.test(initialPath) ? initialPath : absolutePath(start, initialPath);
+    const direct = changedWorkspacePath(inventory, candidate);
     if (direct && !initialComment && !initialCommentId && canLeave()) {
       resolvedInitial.current = true;
-      setPreview(null); setPath(direct); setJump(direct);
+      const document = workspacePreviewPath(inventory, candidate, initialIntent);
+      setPreview(document); setPath(direct); setJump(document === null ? direct : null);
       return;
     }
     let live = true;
@@ -140,11 +141,13 @@ export default function ChangesView({ paneId, start, connected, initialComment =
       if (!live || resolvedInitial.current || "candidates" in info || !canLeave()) return;
       resolvedInitial.current = true;
       const changed = changedWorkspacePath(inventory, info.path);
-      if (changed && !initialComment && !initialCommentId) { setPreview(null); setPath(changed); setJump(changed); }
-      else setPreview(info.path);
+      if (changed && !initialComment && !initialCommentId) {
+        const document = workspacePreviewPath(inventory, info.path, initialIntent);
+        setPreview(document); setPath(changed); setJump(document === null ? changed : null);
+      } else setPreview(info.path);
     }).catch(() => { /* The embedded reader shows the file error or candidate choices. */ });
     return () => { live = false; };
-  }, [initialPath, start, inventory, fetchFileInfo, paneId, initialComment, initialCommentId, canLeave]);
+  }, [initialPath, start, inventory, fetchFileInfo, paneId, initialIntent, initialComment, initialCommentId, canLeave]);
   useEffect(() => {
     if (!jump || preview || !showFile && narrow) return;
     const element = [...documentRef.current?.querySelectorAll<HTMLElement>("[data-diff-path]") ?? []].find((node) => node.dataset.diffPath === jump);
@@ -155,30 +158,50 @@ export default function ChangesView({ paneId, start, connected, initialComment =
     resolvedInitial.current = true;
     onShowFile();
     const changed = inventory ? changedWorkspacePath(inventory, absolute) : null;
-    if (changed) { setPreview(null); setPath(changed); setJump(changed); }
-    else setPreview(absolute);
+    const document = inventory ? workspacePreviewPath(inventory, absolute, initialIntent) : absolute;
+    setPreview(document); setPath(changed); setJump(document === null ? changed : null);
   }
   const root = inventory?.root ?? start;
+  const selectedChanged = preview && inventory ? changedWorkspacePath(inventory, preview) : path;
+  const markdownPath = inventory && selectedChanged ? changedMarkdownPreviewPath(inventory, selectedChanged) : null;
+  function showMarkdown(mode: "preview" | "diff") {
+    if (!markdownPath || !selectedChanged || !canLeave()) return;
+    resolvedInitial.current = true;
+    setPath(selectedChanged);
+    setPreview(mode === "preview" ? markdownPath : null);
+    setJump(mode === "diff" ? selectedChanged : null);
+    onShowFile();
+  }
   const owner = paneId === null ? null : paneStorageId(machineId, paneId);
   return <div ref={surface} className={`changes-view${narrow && showFile ? " is-showing-file" : ""}`}>
+    {markdownPath !== null && (!narrow || showFile) && <div className="changes-markdown-mode">
+      <div className="segmented" role="group" aria-label={t("Markdown view")}>
+        <button type="button" aria-pressed={preview !== null} onClick={() => showMarkdown("preview")}>{t("Preview")}</button>
+        <button type="button" aria-pressed={preview === null} onClick={() => showMarkdown("diff")}>{t("Diff")}</button>
+      </div>
+    </div>}
     <div className="changes-layout">
       <aside className="changes-navigation"><WorkspaceFileTree root={root} paneId={paneId} files={inventory?.files ?? []} refreshToken={refreshToken} selected={preview ?? (path ? absolutePath(root, path) : null)} onSelect={select} /></aside>
       <div className="changes-detail" ref={documentRef} aria-label={t("File diff")} onScroll={() => {
         if (preview) return;
         const container = documentRef.current;
-        if (!container) return;
+        // When every section fits, layout/scrollIntoView events are not navigation:
+        // keep the explicitly selected document for Preview instead of picking the first diff.
+        if (!container || container.scrollHeight <= container.clientHeight) return;
         const top = container.getBoundingClientRect().top;
         const nodes = [...container.querySelectorAll<HTMLElement>("[data-diff-path]")];
         const active = nodes.find((node) => node.getBoundingClientRect().bottom > top + 60);
-        if (active?.dataset.diffPath) setPath(active.dataset.diffPath);
+        // Loading placeholders can briefly overflow and then collapse, producing a
+        // programmatic scroll. They must not change which document Preview will open.
+        if (active?.dataset.diffPath && !active.querySelector(".changes-diff-placeholder")) setPath(active.dataset.diffPath);
       }}>
-        {preview ? <FileViewer key={preview} keyboardActive={keyboardActive} path={preview} paneId={paneId} machineId={machineId} paneFolder={start} connected={connected}
+        {preview ? <FileViewer key={`${preview}:${refreshToken}`} keyboardActive={keyboardActive} path={preview} paneId={paneId} machineId={machineId} paneFolder={start} connected={connected}
           commentId={initialComment?.diff ? null : initialComment?.id ?? initialCommentId} onOpen={select} onClose={onClose} /> : <>
           {loading && !inventory && <p className="changes-note" role="status">{t("Loading…")}</p>}
           {error !== null && <p className="changes-note" role="alert">{error}</p>}
           {inventory?.files.length === 0 && <p className="changes-note" role="status">{t("No changes in this comparison.")}</p>}
           <WorkerPoolContextProvider poolOptions={poolOptions} highlighterOptions={highlighterOptions}>
-            {paneId !== null && owner !== null && inventory?.files.map((file) => <DiffSection key={`${owner}:${inventory.root}:${inventory.revision}:${file.path}`} paneId={paneId} inventory={inventory} path={file.path} owner={owner} connected={connected} split={settings.splitDiff && !narrow} scrollRoot={documentRef} queue={queue} selected={path === file.path} onActive={setPath} />)}
+            {paneId !== null && owner !== null && inventory?.files.map((file) => <DiffSection key={`${owner}:${inventory.root}:${inventory.revision}:${file.path}`} paneId={paneId} inventory={inventory} path={file.path} owner={owner} connected={connected} split={settings.splitDiff && !narrow} scrollRoot={documentRef} queue={queue} selected={path === file.path} onActive={(next) => { if (!narrow) setPath(next); }} />)}
           </WorkerPoolContextProvider>
         </>}
       </div>

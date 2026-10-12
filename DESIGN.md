@@ -185,8 +185,12 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 ### Git Changes view
 
 - Browse files opens a full-viewport workspace viewer directly, with a file tree beside the
-  document. Changed paths open their Git diff; unchanged paths open the existing file preview
-  in the same surface. Diffs form one continuous scroll region, with the tree selection following
+  document. Changed paths open their Git diff, except Markdown opened through ordinary browsing
+  or a file link: even a new or staged Markdown file opens its rendered preview. The composer's
+  changes shortcut and diff-comment links keep Markdown in Diff. A changed Markdown document
+  offers **Preview | Diff** above the tree/document; deleted and binary paths offer no preview.
+  Switching keeps saved comments and is refused while a comment field is dirty. Unchanged paths
+  open the existing file preview in the same surface. Diffs form one continuous scroll region, with the tree selection following
   the viewed file. On narrow screens the tree and document are separate steps.
 - A changes shortcut immediately before the composer's agent mark appears when the visible pane
   has changes. Follow edits is opt-in, refreshes only while visible and connected, and preserves
@@ -869,7 +873,9 @@ One set for both themes: the card is island black wherever it shows.
   The reader page and dialog share **Show source** (Braces glyph, pressed while the source shows, so it
   never looks like Open raw file), highlighted source with CSS-counter line
   numbers, and **Copy file** for complete text (selecting the source if clipboard copy fails).
-  There is no separate Raw action. HTML blocks in Markdown files are parsed in the preview worker
+  There is no separate Raw action. A Markdown preview refused by the worker's bounds or parsing
+  shows source with an explicit **Markdown preview is unavailable. Showing source.** status.
+  HTML blocks in Markdown files are parsed in the preview worker
   with HTML enabled; local images still pass through the file endpoint's image-size check.
   The page has an h1 and no Close or new-tab action; the dialog keeps its focus trap and sheet swipe.
   Actions use the existing header icon-button primitive, labels and focus states. On a phone the

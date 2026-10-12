@@ -244,7 +244,7 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
     cutShort && (loaded.size !== null && loaded.size > loaded.limit
       ? t("Showing the first {shown} of {total}.", { shown: formatBytes(loaded.limit), total: formatBytes(loaded.size) })
       : t("Only part of this file is shown. Download it to read the rest.")),
-    textFile && loaded !== null && previewRefused && t("Too long to preview"),
+    textFile && loaded !== null && previewRefused && t("Markdown preview is unavailable. Showing source."),
     codeShown && code.tooLong && t("Too long to highlight"),
     codeShown && code.lines.length > LINE_ELEMENT_LIMIT && t("Too many lines to number"),
   ].filter((note): note is string => typeof note === "string");
@@ -341,7 +341,9 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
           ? <p className="file-viewer-note">{t("Opening…")}</p>
           // a text the renderer cannot draw fails here, not the app: the header (Show source, Raw,
           // Close) stays, and a Preview that fails offers its source
-          : <RenderBoundary key={view} resetKey={loaded} fallback={() => view === "markdown"
+          : <>
+          {previewRefused && <p className="file-viewer-note" role="status">{t("Markdown preview is unavailable. Showing source.")}</p>}
+          <RenderBoundary key={view} resetKey={loaded} fallback={() => view === "markdown"
             ? <div className="file-viewer-note" role="alert">
               <p>{t("This preview can't be shown.")}</p>
               <button type="button" className="btn btn-ghost" onClick={() => setChosen({ path, mode: "code" })}>{t("Show source")}</button>
@@ -350,7 +352,7 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
             <MarkdownImageContext.Provider value={imagePreview}>
               {htmlPage && modes}<TextFileView path={info.path} blocks={view === "markdown" && preview.status === "ready" ? preview.blocks : null} lines={code.lines} onOpen={onOpen ?? setPath} sourceRef={sourceRef} previewRef={previewRef} />
             </MarkdownImageContext.Provider>
-          </RenderBoundary>;
+          </RenderBoundary></>;
       default:
         return <p className="file-viewer-note">{info.mime}, {formatBytes(info.size)}. This file can't be shown here; download it instead.</p>;
     }

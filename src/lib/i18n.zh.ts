@@ -559,7 +559,6 @@ export const ZH: Record<string, string> = {
   "Show all {n} lines": "显示全部 {n} 行",
   "Too long to highlight": "内容过长，未做语法高亮",
   "Empty task": "空任务",
-  "Too long to preview": "内容过长，未显示预览",
 
   // ---- composer ----
   "Reconnecting… message held here, never queued": "正在重连… 消息保留在此处，不会加入队列",
@@ -1055,6 +1054,10 @@ export const ZH: Record<string, string> = {
   "Diff layout": "差异布局",
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "此设备上聊天和文件查看器中的所有评论都将被删除，且无法撤销。",
   "File diff": "文件差异",
+  "Markdown view": "Markdown 视图",
+  "Preview": "预览",
+  "Diff": "差异",
+  "Markdown preview is unavailable. Showing source.": "Markdown 预览不可用，正在显示源代码。",
   "Files changed while this diff was loading. Refresh to review the latest changes.": "加载差异时文件发生了变化。请刷新以查看最新更改。",
   "Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs.": "无法加载 Git 更改。请确认此窗格位于 Git 仓库中，且桥接服务支持差异查看。",
   "Go to the next comment": "跳到下一条评论",

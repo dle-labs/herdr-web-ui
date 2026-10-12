@@ -80,6 +80,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#860](https://github.com/devswha/herdr-web-ui/pull/860))
 
 ### Fixed
+- New, staged and modified Markdown files open as rendered previews when browsed or followed from file links, with Preview/Diff switching that preserves comments. Explicit changes and diff-comment navigation still opens the diff; unavailable Markdown previews explain their source fallback.
 - A message another Claude Code session sends into a pane (its `peer` messages) shows in the chat as
   a folded **Message from another session: {name}** that opens its own turn, instead of being skipped so the work it
   started was appended to the answer before it.

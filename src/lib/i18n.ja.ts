@@ -557,7 +557,6 @@ export const JA: Record<string, string> = {
   "Show all {n} lines": "{n} 行すべて表示",
   "Too long to highlight": "長すぎるため構文ハイライトを省略しました",
   "Empty task": "空のタスク",
-  "Too long to preview": "長すぎるためプレビューを省略しました",
 
   // ---- composer ----
   "Reconnecting… message held here, never queued": "再接続しています… メッセージはここに保持され、キューには入りません",
@@ -1053,6 +1052,10 @@ export const JA: Record<string, string> = {
   "Diff layout": "差分レイアウト",
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "このデバイスのチャットとファイルビューアにあるコメントがすべて削除されます。この操作は元に戻せません。",
   "File diff": "ファイル差分",
+  "Markdown view": "Markdown 表示",
+  "Preview": "プレビュー",
+  "Diff": "差分",
+  "Markdown preview is unavailable. Showing source.": "Markdown プレビューを表示できないため、ソースを表示しています。",
   "Files changed while this diff was loading. Refresh to review the latest changes.": "差分の読み込み中にファイルが変更されました。更新して最新の変更を確認してください。",
   "Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs.": "Git の変更を読み込めませんでした。このペインが Git リポジトリ内にあり、ブリッジが差分に対応していることを確認してください。",
   "Go to the next comment": "次のコメントへ移動",

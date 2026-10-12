@@ -803,7 +803,8 @@ try {
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "long list", exact: true }).click();
   const longList = preview;
-  await page.waitForFunction(() => (document.querySelector(".file-viewer-notice")?.getAttribute("title") ?? "").includes("Too long to preview"), undefined, { timeout: 15_000 });
+  await page.waitForFunction(() => (document.querySelector(".file-viewer-notice")?.getAttribute("title") ?? "").includes("Markdown preview is unavailable. Showing source."), undefined, { timeout: 15_000 });
+  await page.getByRole("status").filter({ hasText: "Markdown preview is unavailable. Showing source." }).waitFor();
   await longList.locator(".file-viewer-text").waitFor();
   assert.equal(await longList.locator(".file-viewer-markdown").count(), 0, "the Preview is not drawn");
   assert.deepEqual(await frozen(), [], "no task held the page for a second");

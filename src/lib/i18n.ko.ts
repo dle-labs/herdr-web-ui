@@ -555,7 +555,6 @@ export const KO: Record<string, string> = {
   "Show all {n} lines": "{n}줄 모두 보기",
   "Too long to highlight": "너무 길어 강조 표시를 생략했습니다",
   "Empty task": "빈 할 일",
-  "Too long to preview": "너무 길어 미리보기를 생략했습니다",
 
   // ---- composer ----
   "Reconnecting… message held here, never queued": "재연결 중… 메시지는 여기에 보관되고 대기열에 넣지 않습니다",
@@ -1051,6 +1050,10 @@ export const KO: Record<string, string> = {
   "Diff layout": "파일 비교 레이아웃",
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "이 기기의 채팅과 파일 뷰어에 있는 모든 댓글이 삭제됩니다. 되돌릴 수 없습니다.",
   "File diff": "파일 비교",
+  "Markdown view": "Markdown 보기",
+  "Preview": "미리보기",
+  "Diff": "차이",
+  "Markdown preview is unavailable. Showing source.": "Markdown 미리보기를 표시할 수 없어 소스를 보여 줍니다.",
   "Files changed while this diff was loading. Refresh to review the latest changes.": "비교를 불러오는 동안 파일이 변경되었습니다. 새로고침하여 최신 변경 사항을 확인하세요.",
   "Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs.": "Git 변경 사항을 불러오지 못했습니다. 패널이 Git 저장소에 있고 브리지가 파일 비교를 지원하는지 확인하세요.",
   "Go to the next comment": "다음 댓글로 이동",

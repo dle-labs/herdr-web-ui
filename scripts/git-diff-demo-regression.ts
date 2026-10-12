@@ -24,7 +24,10 @@ async function openChanges(page: Page): Promise<Locator> {
 }
 const treeFile = (dialog: Locator, file: string) => dialog.locator(`.workspace-tree-row[title="${file}"]`);
 const section = (dialog: Locator, path = "src/greeting.ts") => dialog.locator(`[data-diff-path="${path}"]`);
-const number = (dialog: Locator, side: "old" | "new", line: number) => dialog.locator(`[data-code][data-${side === "old" ? "deletions" : "additions"}] [data-column-number="${line}"]`).first();
+const number = (dialog: Locator, side: "old" | "new", line: number) => dialog.locator(
+  `[data-code][data-${side === "old" ? "deletions" : "additions"}] [data-column-number="${line}"], ` +
+  `[data-code][data-unified] [data-line-type="change-${side === "old" ? "deletion" : "addition"}"][data-column-number="${line}"]`,
+).first();
 const field = (dialog: Locator) => dialog.locator(".diff-comment-editor").getByRole("textbox", { name: "Comment", exact: true });
 async function selectComment(dialog: Locator, side: "old" | "new", first = 2, last = first): Promise<void> {
   const start = number(section(dialog), side, first);
@@ -63,6 +66,22 @@ try {
   writeFileSync(join(app, "regression-patch.js"), `(() => {
     const demoFetch = window.fetch;
     window.gitRequests = []; window.gitSent = [];
+    const markdownFiles = [
+      { path: "docs/untracked.md", status: "untracked", heading: "Untracked guide" },
+      { path: "docs/added.md", status: "added", heading: "Added guide" },
+      { path: "docs/modified.md", status: "modified", heading: "Modified guide" },
+    ];
+    const markdownBody = (file) => "# " + file.heading + "\\n\\nCurrent **Markdown** content.\\n";
+    const DemoWorker = window.Worker;
+    window.Worker = class extends DemoWorker {
+      constructor(url, options) { super(url, options); this.markdownPreview = String(url).includes("markdownPreview"); }
+      postMessage(message, ...rest) {
+        if (window.gitMarkdownRefuse && this.markdownPreview) {
+          window.gitMarkdownRefusals = (window.gitMarkdownRefusals || 0) + 1;
+          queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: { id: message.id, result: null } })));
+        } else super.postMessage(message, ...rest);
+      }
+    };
     window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined;
     const DemoSocket = window.WebSocket;
     window.WebSocket = function(...args) {
@@ -75,15 +94,40 @@ try {
       const url = String(typeof input === "string" ? input : input.url ?? input);
       if (url.includes("/workspace/changes") || url.includes("/workspace/diff")) window.gitRequests.push(url);
       if (url.includes("/pane/send") && init?.body) window.gitSent.push(JSON.parse(init.body));
-      const response = await demoFetch(input, init);
       const parsed = new URL(url, location.href);
+      if (window.gitMarkdownCase) {
+        const path = parsed.searchParams.get("path") || "";
+        const markdown = markdownFiles.find(file => path === file.path || path.endsWith("/" + file.path));
+        if (parsed.pathname.endsWith("/workspace/diff") && markdown) {
+          const changesUrl = new URL(parsed); changesUrl.pathname = changesUrl.pathname.replace(/diff$/, "changes");
+          const changes = await (await demoFetch(changesUrl.href)).json();
+          const body = markdownBody(markdown), modified = markdown.status === "modified";
+          const old = "# " + markdown.heading + "\\n\\nPrevious Markdown content.\\n";
+          return Response.json({ root: changes.root, revision: changes.revision + "-markdown", path: markdown.path, binary: false,
+            old_file: modified ? { name: markdown.path, contents: old } : null,
+            new_file: { name: markdown.path, contents: body },
+            patch: "diff --git a/" + markdown.path + " b/" + markdown.path + "\\n" +
+              (modified ? "--- a/" + markdown.path : "new file mode 100644\\n--- /dev/null") + "\\n+++ b/" + markdown.path + "\\n" +
+              (modified ? "@@ -1,3 +1,3 @@\\n # " + markdown.heading + "\\n \\n-Previous Markdown content.\\n+Current **Markdown** content.\\n"
+                : "@@ -0,0 +1,3 @@\\n" + body.trimEnd().split("\\n").map(line => "+" + line).join("\\n") + "\\n") });
+        }
+        if (markdown && parsed.pathname.endsWith("/fs/stat")) return Response.json({ path, name: markdown.path.split("/").pop(), size: markdownBody(markdown).length, modified: "2026-01-01T00:00:00.000Z", mime: "text/markdown", kind: "text" });
+        if (markdown && parsed.pathname.endsWith("/fs/file")) return new Response(markdownBody(markdown), { headers: { "content-type": "text/markdown" } });
+      }
+      const response = await demoFetch(input, init);
       if (parsed.pathname === "/api/voice" && response.ok) {
         const data = await response.json(); data.configured = !!window.gitVoiceConfigured; return Response.json(data);
       }
       if (url.includes("/workspace/directories") && response.ok) {
         const data = await response.json();
+        if (window.gitMarkdownCase && data.path.endsWith("/docs")) {
+          data.directories = []; data.ignored_directories = [];
+          data.files = markdownFiles.map(file => ({ name: file.path.split("/").pop(), size: markdownBody(file).length }));
+          return Response.json(data);
+        }
         const source = data.path.endsWith("/src"), ignored = data.path.endsWith("/ignored"), nested = data.path.endsWith("/ignored/nested");
         data.directories = source || nested ? [] : ignored ? ["nested"] : ["src", "ignored"];
+        if (window.gitMarkdownCase && !source && !ignored && !nested) data.directories.push("docs");
         data.ignored_directories = source || ignored || nested ? [] : ["ignored"];
         data.files = source ? [{ name: "greeting.ts", size: 90 }, { name: "new.ts", size: 3000 }]
           : ignored || nested ? [{ name: "hidden.txt", size: 35 }]
@@ -94,6 +138,11 @@ try {
       if (parsed.pathname.endsWith("/fs/file")) return new Response("export const unchanged = true;\\n", { headers: { "content-type": "text/plain" } });
       if ((url.includes("/workspace/changes") || url.includes("/workspace/diff")) && response.ok) {
         const data = await response.json();
+        if (window.gitMarkdownCase && url.includes("/workspace/changes")) {
+          data.files = markdownFiles.map(({ path, status }) => ({ path, status }));
+          data.revision += "-markdown";
+          window.gitMarkdownRoot = data.root;
+        }
         if (window.gitRevision) data.revision += "-follow-" + window.gitRevision;
         if (url.includes("/workspace/changes") && window.gitEmpty) data.files = [];
         if (data.path === "src/new.ts") {
@@ -297,6 +346,127 @@ try {
         assert.ok(requests.every((request) => new URL(request, url).searchParams.get("mode") === "all"), "every changes and diff request uses all mode");
         assert.deepEqual(errors, [], "no browser exceptions");
         console.log(`PASS Git Changes: ${mobile ? "phone" : "desktop"} empty comparison`);
+
+        // Opt in only after the original two-file continuous-diff and empty tests.
+        // The same single demo build serves both entry intents and all Markdown states.
+        await empty.getByRole("button", { name: "Close files", exact: true }).click();
+        await page.evaluate(() => { (window as any).gitEmpty = false; (window as any).gitRevision = 0; (window as any).gitMarkdownCase = true; });
+        const markdown = await openChanges(page);
+        const modes = markdown.getByRole("group", { name: "Markdown view", exact: true });
+        const preview = modes.getByRole("button", { name: "Preview", exact: true });
+        const diff = modes.getByRole("button", { name: "Diff", exact: true });
+        const markdownCases = [
+          { path: "docs/untracked.md", status: "untracked", heading: "Untracked guide" },
+          { path: "docs/added.md", status: "added", heading: "Added guide" },
+          { path: "docs/modified.md", status: "modified", heading: "Modified guide" },
+        ];
+        for (const file of markdownCases) {
+          const row = treeFile(markdown, file.path);
+          await row.waitFor();
+          assert.equal(await row.getAttribute("data-status"), file.status);
+          await row.click();
+          await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
+          assert.equal(await preview.getAttribute("aria-pressed"), "true", `${file.status}: ordinary browsing renders Markdown Preview`);
+          assert.equal(await diff.getAttribute("aria-pressed"), "false");
+          assert.equal(await markdown.locator(".file-viewer-text").count(), 0, "preview is not highlighted Markdown source");
+          await diff.click();
+          await section(markdown, file.path).locator("[data-diff-type]").waitFor();
+          await number(section(markdown, file.path), "new", 3).waitFor();
+          assert.equal(await diff.getAttribute("aria-pressed"), "true", "Diff renders real selectable Git lines");
+          if (file.status === "modified") {
+            await number(section(markdown, file.path), "new", 3).click();
+            await field(markdown).fill("Keep the Markdown diff draft");
+            await preview.click();
+            await frames(page);
+            assert.equal(await diff.getAttribute("aria-pressed"), "true", "dirty diff draft refuses Preview");
+            assert.equal(await field(markdown).inputValue(), "Keep the Markdown diff draft");
+            await saveComment(markdown, "Saved Markdown diff note");
+          }
+          await preview.click();
+          await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
+          if (file.status === "modified") {
+            await diff.click();
+            await section(markdown, file.path).getByText("Saved Markdown diff note", { exact: true }).waitFor();
+            await preview.click();
+            await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
+          }
+          if (mobile) await markdown.getByRole("button", { name: "Back to files", exact: true }).click();
+        }
+        await markdown.getByRole("button", { name: "Close files", exact: true }).click();
+        await page.locator(".composer-comments-walk").first().click();
+        const reopened = page.getByRole("dialog", { name: "Files", exact: true });
+        await section(reopened, "docs/modified.md").getByText("Saved Markdown diff note", { exact: true }).waitFor();
+        assert.equal(await reopened.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Diff", exact: true }).getAttribute("aria-pressed"), "true", "composer comment navigation forces Diff rather than browse Preview");
+        await reopened.getByRole("button", { name: "Close files", exact: true }).click();
+
+        await shortcut.click();
+        const explicit = page.getByRole("dialog", { name: "Files", exact: true });
+        // Mobile opens the navigation tree first, but selecting a changed Markdown
+        // file must keep the explicit changes intent rather than switch to Preview.
+        await treeFile(explicit, "docs/added.md").click();
+        await section(explicit, "docs/added.md").locator("[data-diff-type]").waitFor();
+        assert.equal(await explicit.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Diff", exact: true }).getAttribute("aria-pressed"), "true", "composer Changes entry defaults changed Markdown to Diff");
+        await explicit.getByRole("button", { name: "Close files", exact: true }).click();
+
+        // A plain source file's comments remain separate from Markdown diff cards.
+        const sourceDialog = await openChanges(page);
+        await treeFile(sourceDialog, "unchanged.ts").click();
+        await sourceDialog.locator('.file-viewer-text .hl-line[data-source-line="1"]').click();
+        const sourcePopover = page.locator(".comment-popover");
+        await sourcePopover.getByRole("textbox", { name: "Comment", exact: true }).fill("Saved ordinary source note");
+        await sourcePopover.getByRole("button", { name: "Save comment", exact: true }).click();
+        await sourcePopover.waitFor({ state: "detached" });
+        await sourceDialog.locator(".comment-pin:not(.is-pending)").waitFor();
+        if (mobile) await sourceDialog.getByRole("button", { name: "Back to files", exact: true }).click();
+        await treeFile(sourceDialog, "docs/modified.md").click();
+        await sourceDialog.locator(".file-viewer-markdown").getByRole("heading", { name: "Modified guide", exact: true }).waitFor();
+        if (mobile) await sourceDialog.getByRole("button", { name: "Back to files", exact: true }).click();
+        await treeFile(sourceDialog, "unchanged.ts").click();
+        await sourceDialog.locator(".comment-pin:not(.is-pending)").click();
+        await sourcePopover.getByRole("textbox", { name: "Comment", exact: true }).waitFor();
+        assert.equal(await sourcePopover.getByRole("textbox", { name: "Comment", exact: true }).inputValue(), "Saved ordinary source note", "plain source comment survives Markdown navigation");
+        await page.keyboard.press("Escape");
+        await sourcePopover.waitFor({ state: "detached" });
+        await sourceDialog.getByRole("button", { name: "Close files", exact: true }).click();
+
+        const target = await page.evaluate(() => {
+          const request = new URL((window as any).gitRequests.find((request: string) => new URL(request, location.href).searchParams.has("pane_id")), location.href);
+          return {
+            pane: request.searchParams.get("pane_id"),
+            machine: request.pathname.match(/\/api\/machines\/([^/]+)\//)?.[1] ?? "local",
+            root: (window as any).gitMarkdownRoot as string,
+          };
+        });
+        assert.ok(target.pane && target.root, "deep link uses the pane and root observed in synthetic requests");
+        await context.addInitScript(() => {
+          (window as any).gitMarkdownCase = true;
+          (window as any).gitMarkdownRefuse = new URL(location.href).searchParams.has("markdownRefuse");
+        });
+        const deepLink = new URL(url);
+        deepLink.searchParams.set("pane", target.pane);
+        deepLink.searchParams.set("machine", target.machine);
+        deepLink.searchParams.set("file", `${target.root}/docs/modified.md`);
+        await page.goto(deepLink.href);
+        const linked = page.getByRole("dialog", { name: "Files", exact: true });
+        await linked.locator(".file-viewer-markdown").getByRole("heading", { name: "Modified guide", exact: true }).waitFor();
+        assert.equal(await linked.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Preview", exact: true }).getAttribute("aria-pressed"), "true", "ordinary pane/file deep link defaults to rendered Preview");
+
+        // Refuse parsing in a fresh document so a cached successful parse cannot
+        // hide the worker failure. Highlight/diff workers still run normally.
+        deepLink.searchParams.set("markdownRefuse", "1");
+        await page.goto(deepLink.href);
+        const refused = page.getByRole("dialog", { name: "Files", exact: true });
+        const refusalNotice = refused.getByRole("status").filter({ hasText: "Markdown preview is unavailable. Showing source." });
+        await refusalNotice.waitFor();
+        assert.equal(await refusalNotice.innerText(), "Markdown preview is unavailable. Showing source.");
+        await refused.locator(".file-viewer-text .hl-line").first().waitFor();
+        assert.match(await refused.locator(".file-viewer-text").innerText(), /# Modified guide/);
+        assert.equal(await refused.locator(".file-viewer-markdown").count(), 0, "parser refusal shows source, not an empty preview");
+        assert.ok(await page.evaluate(() => (window as any).gitMarkdownRefusals > 0), "Markdown worker actually refused a parse");
+        await refused.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Diff", exact: true }).click();
+        await section(refused, "docs/modified.md").locator("[data-diff-type]").waitFor();
+        assert.deepEqual(errors, [], "Markdown intents, comments and parser refusal have no browser exceptions");
+        console.log(`PASS Git Markdown: ${mobile ? "phone" : "desktop"} browse/deep-link Preview, changes/comment Diff, dirty guard, saved comments and explicit parser fallback`);
       } catch (error) {
         if (activePage && evidence) {
           mkdirSync(evidence, { recursive: true });

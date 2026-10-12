@@ -7,6 +7,7 @@ import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { changedField, revealField } from "../lib/commentDom.ts";
 import type { FileComment } from "../lib/fileComments.ts";
+import type { WorkspaceFileIntent } from "../lib/workspaceBrowser.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { useOpeningPaneLane } from "../lib/chatLane.ts";
@@ -20,6 +21,8 @@ export interface FilesDialogProps {
   start: string;
   paneId: string | null;
   connected: boolean;
+  /** Changed Markdown opens as a document when browsing, as a diff when reviewing changes. */
+  initialIntent?: WorkspaceFileIntent;
   initialComment?: FileComment | null;
   initialPath?: string | null;
   initialCommentId?: string | null;
@@ -29,7 +32,7 @@ export interface FilesDialogProps {
 }
 
 /** One workspace surface for its file tree, current diffs and embedded file previews. */
-export function FilesDialog({ start, paneId, connected, initialComment = null, initialPath = null, initialCommentId = null, keyboardActive = true, onClose }: FilesDialogProps) {
+export function FilesDialog({ start, paneId, connected, initialIntent = "browse", initialComment = null, initialPath = null, initialCommentId = null, keyboardActive = true, onClose }: FilesDialogProps) {
   const t = useT();
   const surface = useFocusTrap<HTMLElement>(true);
   const narrow = useMediaQuery("(max-width: 768px)");
@@ -70,7 +73,7 @@ export function FilesDialog({ start, paneId, connected, initialComment = null, i
         </header>
         <div className="modal-body">
           <Suspense fallback={<p role="status">{t("Loading…")}</p>}>
-            <ChangesView start={start} paneId={paneId} connected={connected} initialComment={initialComment} initialPath={initialPath} initialCommentId={initialCommentId}
+            <ChangesView start={start} paneId={paneId} connected={connected} initialIntent={initialIntent} initialComment={initialComment} initialPath={initialPath} initialCommentId={initialCommentId}
               showFile={showFile} onShowFile={() => setShowFile(true)} refreshToken={refreshToken} keyboardActive={keyboardActive} onClose={close} />
           </Suspense>
         </div>
