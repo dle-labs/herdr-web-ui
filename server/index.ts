@@ -16,7 +16,7 @@ import { remoteAccess, TailnetIdentitySource } from "./tailscale.ts";
 import { paneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
 import { GitDiffError, gitChanges, gitFileDiff, isGitDiffMode, paneGitCwd } from "./git-diff.ts";
-import { badRequest, conflictResponse, errorResponse, isCount, isJsonObject, jsonResponse } from "./http.ts";
+import { badRequest, conflictResponse, errorResponse, isCount, isJsonObject, jsonResponse, publicErrorResponse } from "./http.ts";
 import { parseMoveRequest } from "./pane-move.ts";
 import { serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
@@ -1918,7 +1918,7 @@ export function createServer(
           const body = pathname.endsWith("/changes") ? await gitChanges(cwd, mode) : await gitFileDiff(cwd, mode, path!);
           return jsonResponse(body, 200, { "cache-control": "no-store" });
         } catch (error) {
-          if (error instanceof GitDiffError) return jsonResponse({ error: { code: error.code, message: error.message } }, error.status, { "cache-control": "no-store" });
+          if (error instanceof GitDiffError) return publicErrorResponse(error.code, error.message, error.status, { "cache-control": "no-store" });
           return errorResponse(error);
         }
       }

@@ -1,7 +1,25 @@
 import { describe, expect, it } from "bun:test";
 
 import { HerdrError } from "./herdr/client.ts";
-import { errorResponse } from "./http.ts";
+import { errorResponse, publicErrorResponse } from "./http.ts";
+
+describe("publicErrorResponse", () => {
+  it("preserves an authored Git error's status, envelope and no-store header", async () => {
+    for (const status of [400, 404, 409, 413, 415, 503]) {
+      const response = publicErrorResponse("git_error", "Git comparison unavailable", status, { "cache-control": "no-store" });
+      expect(response.status).toBe(status);
+      expect(response.headers.get("content-type")).toBe("application/json; charset=utf-8");
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual({ error: { code: "git_error", message: "Git comparison unavailable" } });
+    }
+  });
+
+  it("allows errors without additional headers", async () => {
+    const response = publicErrorResponse("not_found", "No such file", 404);
+    expect(response.headers.get("cache-control")).toBeNull();
+    expect(await response.json()).toEqual({ error: { code: "not_found", message: "No such file" } });
+  });
+});
 
 describe("errorResponse", () => {
   it("answers a 500 with a fixed message and a correlation id, never the exception's own", async () => {
