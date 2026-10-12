@@ -206,6 +206,7 @@ async function checkLayout(): Promise<void> {
       assert.ok(dialog, "text: dialog is laid out");
       const buttons = page.locator(".file-viewer-actions .icon-button");
       assert.equal(await buttons.count(), 3, "text: Open in a new tab, Download and Copy");
+      assert.equal(await page.getByRole("link", { name: "Open raw file", exact: true }).count(), 0, "plain text already opens raw in a new tab; no duplicate action");
       const title = (await page.locator(".file-viewer-title").boundingBox())!;
       const close = (await page.getByRole("button", { name: "Close file", exact: true }).boundingBox())!;
       assert.ok(close.y < title.y + title.height && close.y + close.height > title.y, "text: Close shares the name's row");

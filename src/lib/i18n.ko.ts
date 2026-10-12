@@ -1064,7 +1064,6 @@ export const KO: Record<string, string> = {
   "Not sent: update this PC to send comments.": "보내지 않음: 댓글을 보내려면 이 PC의 앱을 업데이트하세요.",
   "Old": "이전 버전",
   "Outdated comments": "이전 버전의 댓글",
-  "Raw": "원본",
   "Refresh changes": "변경 사항 새로고침",
   "Remove all comments": "댓글 모두 제거",
   "Save comment": "댓글 저장",

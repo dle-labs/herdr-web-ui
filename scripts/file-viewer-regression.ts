@@ -489,7 +489,7 @@ try {
   assert.doesNotMatch(await guide.locator(".file-viewer-text").innerText(), /^1/);
   if (process.env.UI_EVIDENCE_DIR) await guide.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "code-line-numbers.png") });
   console.log("PASS Code shows the Markdown source, one numbered line each");
-  const raw = guide.getByRole("link", { name: "Raw", exact: true });
+  const raw = guide.getByRole("link", { name: "Open raw file", exact: true });
   assert.equal(await raw.getAttribute("target"), "_blank");
   assert.match(await raw.getAttribute("href") ?? "", /\/api\/fs\/file/);
   await guide.getByRole("button", { name: "Copy file", exact: true }).waitFor();

@@ -1066,7 +1066,6 @@ export const JA: Record<string, string> = {
   "Not sent: update this PC to send comments.": "未送信: コメントを送るには、この PC のアプリを更新してください。",
   "Old": "以前の版",
   "Outdated comments": "古い版のコメント",
-  "Raw": "元のファイル",
   "Refresh changes": "変更を更新",
   "Remove all comments": "コメントをすべて削除",
   "Save comment": "コメントを保存",

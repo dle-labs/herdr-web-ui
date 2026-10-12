@@ -1068,7 +1068,6 @@ export const ZH: Record<string, string> = {
   "Not sent: update this PC to send comments.": "未发送：请更新此电脑上的应用以发送评论。",
   "Old": "旧版本",
   "Outdated comments": "旧版本评论",
-  "Raw": "原始文件",
   "Refresh changes": "刷新更改",
   "Remove all comments": "移除所有评论",
   "Save comment": "保存评论",

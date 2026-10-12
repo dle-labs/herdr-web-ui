@@ -418,11 +418,11 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
             {textFile && previewable && <div className="file-viewer-group">
               <button type="button" className="icon-button file-viewer-action" aria-pressed={mode === "code"} aria-label={t("Show source")} title={t("Show source")} onClick={() => setChosen({ path, mode: mode === "code" ? "preview" : "code" })}><Code aria-hidden="true" /></button>
             </div>}
-            {/* the file itself: a new tab shows it whole (Raw for text), except a file no tab can
-                show, and a download saves it, also where a new tab is an app's in-app view */}
+            {/* Markdown opens in the reader; its raw action keeps the original bytes.
+                Other text already opens raw in a new tab, so it needs no duplicate action. */}
             <div className="file-viewer-group">
               {info?.kind !== "binary" && <a className="icon-button file-viewer-action" href={htmlPage && !source ? pageUrl : textFile && hasPreview(language) ? readerHref(machineId, shownPath) : url} target="_blank" rel="noopener" aria-label={t("Open in a new tab")} title={t("Open in a new tab")}><ExternalLink aria-hidden="true" /></a>}
-              {textFile && <a className="icon-button file-viewer-action" href={url} target="_blank" rel="noopener" aria-label={t("Raw")} title={t("Raw")}><Code aria-hidden="true" /></a>}
+              {textFile && hasPreview(language) && <a className="icon-button file-viewer-action" href={url} target="_blank" rel="noopener" aria-label={t("Open raw file")} title={t("Open raw file")}><Code aria-hidden="true" /></a>}
               <a className="icon-button file-viewer-action" href={fileUrl(shownPath, paneId, true)} download={info?.name ?? true} aria-label={t("Download")} title={t("Download")}><Download aria-hidden="true" /></a>
               {copyable && <CopyFileButton text={loaded.text} sourceRef={sourceRef} onShowSource={showSourceToSelect} />}
             </div>

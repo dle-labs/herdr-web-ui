@@ -713,8 +713,8 @@ const cases: Record<string, Case> = {
     assert.ok(await viewer.isVisible(), "the viewer stays");
     console.log("PASS code: a changed saved comment stays on Escape and a click outside, the focus back in its field; unchanged, a click outside closes it");
 
-    // the focus elsewhere in the viewer (its Raw link) while a popover is open: Escape is the popover's first
-    const raw = viewer.getByRole("link", { name: "Raw", exact: true });
+    // the focus elsewhere in the viewer (its file link) while a popover is open: Escape is the popover's first
+    const raw = viewer.getByRole("link", { name: "Open in a new tab", exact: true });
     await body.locator(rangePin).click();
     await besidePinIn(body).waitFor();
     await fieldFocused(page);

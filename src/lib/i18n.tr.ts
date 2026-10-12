@@ -1019,7 +1019,6 @@ export const TR: Record<string, string> = {
   "Not sent: update this PC to send comments.": "Gönderilmedi: yorum göndermek için bu bilgisayarı güncelleyin.",
   "Old": "Eski",
   "Outdated comments": "Güncelliğini yitirmiş yorumlar",
-  "Raw": "Ham",
   "Refresh changes": "Değişiklikleri yenile",
   "Remove all comments": "Tüm yorumları kaldır",
   "Save comment": "Yorumu kaydet",
