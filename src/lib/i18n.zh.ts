@@ -1056,7 +1056,6 @@ export const ZH: Record<string, string> = {
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "此设备上聊天和文件查看器中的所有评论都将被删除，且无法撤销。",
   "File diff": "文件差异",
   "Files changed while this diff was loading. Refresh to review the latest changes.": "加载差异时文件发生了变化。请刷新以查看最新更改。",
-  "Filter changed files": "筛选已更改的文件",
   "Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs.": "无法加载 Git 更改。请确认此窗格位于 Git 仓库中，且桥接服务支持差异查看。",
   "Go to the next comment": "跳到下一条评论",
   "Line {line}": "第 {line} 行",

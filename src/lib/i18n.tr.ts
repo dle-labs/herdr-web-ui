@@ -1007,7 +1007,6 @@ export const TR: Record<string, string> = {
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "Bu cihazdaki sohbet ve dosya görüntüleyicide bulunan tüm yorumlar silinir. Bu işlem geri alınamaz.",
   "File diff": "Dosya farkı",
   "Files changed while this diff was loading. Refresh to review the latest changes.": "Bu fark yüklenirken dosyalar değişti. En son değişiklikleri incelemek için yenileyin.",
-  "Filter changed files": "Değişen dosyaları filtrele",
   "Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs.": "Git değişiklikleri yüklenemedi. Bu bölmenin bir Git deposunda olduğunu ve köprüsünün fark görünümünü desteklediğini kontrol edin.",
   "Go to the next comment": "Sonraki yoruma git",
   "Line {line}": "Satır {line}",

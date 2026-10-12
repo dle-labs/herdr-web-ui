@@ -14,19 +14,6 @@
 }
 .changes-layout { display: grid; grid-template-columns: minmax(180px, 26%) minmax(0, 1fr); flex: 1; min-height: 0; }
 .changes-navigation { min-height: 0; border-inline-end: var(--hairline) solid var(--border); }
-.changes-tree-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: var(--space-2); padding-block-start: var(--space-2); }
-.changes-search { width: calc(100% - var(--space-4)); margin-inline: var(--space-2); }
-.changes-tree {
-  flex: 1;
-  min-height: 0;
-  --trees-font-family-override: var(--font-ui);
-  --trees-font-size-override: var(--fs-sm);
-  --trees-accent-override: var(--accent);
-  --trees-fg-muted-override: var(--text-dim);
-  --trees-border-color-override: var(--border);
-  --trees-status-renamed-override: var(--notice);
-  --trees-status-untracked-override: var(--status-done);
-}
 .changes-detail { min-height: 0; min-width: 0; overflow: auto; padding-inline-start: var(--space-3); }
 .changes-diff-section { border-block-end: var(--hairline) solid var(--border); padding-block-end: var(--space-4); scroll-margin-block-start: var(--space-2); }
 .changes-diff-placeholder { min-height: 180px; }

@@ -1054,7 +1054,6 @@ export const JA: Record<string, string> = {
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "このデバイスのチャットとファイルビューアにあるコメントがすべて削除されます。この操作は元に戻せません。",
   "File diff": "ファイル差分",
   "Files changed while this diff was loading. Refresh to review the latest changes.": "差分の読み込み中にファイルが変更されました。更新して最新の変更を確認してください。",
-  "Filter changed files": "変更されたファイルを絞り込む",
   "Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs.": "Git の変更を読み込めませんでした。このペインが Git リポジトリ内にあり、ブリッジが差分に対応していることを確認してください。",
   "Go to the next comment": "次のコメントへ移動",
   "Line {line}": "{line} 行目",

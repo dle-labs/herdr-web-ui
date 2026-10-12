@@ -1052,7 +1052,6 @@ export const KO: Record<string, string> = {
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "이 기기의 채팅과 파일 뷰어에 있는 모든 댓글이 삭제됩니다. 되돌릴 수 없습니다.",
   "File diff": "파일 비교",
   "Files changed while this diff was loading. Refresh to review the latest changes.": "비교를 불러오는 동안 파일이 변경되었습니다. 새로고침하여 최신 변경 사항을 확인하세요.",
-  "Filter changed files": "변경된 파일 필터",
   "Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs.": "Git 변경 사항을 불러오지 못했습니다. 패널이 Git 저장소에 있고 브리지가 파일 비교를 지원하는지 확인하세요.",
   "Go to the next comment": "다음 댓글로 이동",
   "Line {line}": "{line}번째 줄",
