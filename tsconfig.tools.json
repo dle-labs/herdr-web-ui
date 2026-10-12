@@ -20,5 +20,7 @@
     "scripts/file-preview-text-fixture.tsx",
     "scripts/lan-exposure-notice-regression.ts"
   ],
-  "include": []
+  "include": [
+    "scripts/pi-delegation-regression.ts"
+  ]
 }

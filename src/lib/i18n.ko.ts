@@ -7,6 +7,12 @@
  */
 export const KO: Record<string, string> = {
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravity 채팅을 사용할 수 없습니다. 터미널을 열어 작업 상태와 도구 호출을 확인하세요.",
+  "Delegation evidence": "위임 기록",
+  "Recorded: {status}": "기록된 상태: {status}",
+  "Unknown": "알 수 없음",
+  "Last recorded evidence, not live status. A parent turn ending does not mean this task ended.": "실시간 상태가 아닌 마지막 기록입니다. 상위 턴이 끝나도 이 작업이 끝난 것은 아닙니다.",
+  "Recorded duration: {ms} ms": "기록된 소요 시간: {ms} ms",
+  "Original notification": "원본 알림",
   "Chat read timed out.": "대화 읽기 시간이 초과되었습니다.",
   "Thinking…": "생각 중…",
   "Grok chat is unavailable. Open Terminal to see activity and tool calls.": "Grok 채팅을 사용할 수 없습니다. 터미널을 열어 작업 상태와 도구 호출을 확인하세요.",

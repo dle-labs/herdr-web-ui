@@ -11,6 +11,12 @@
  */
 export const ZH: Record<string, string> = {
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravity 聊天暂不可用。请打开终端查看运行状态和工具调用。",
+  "Delegation evidence": "委派记录",
+  "Recorded: {status}": "已记录状态：{status}",
+  "Unknown": "未知",
+  "Last recorded evidence, not live status. A parent turn ending does not mean this task ended.": "这是最后记录，并非实时状态。父级轮次结束不代表此任务已结束。",
+  "Recorded duration: {ms} ms": "已记录耗时：{ms} ms",
+  "Original notification": "原始通知",
   "Chat read timed out.": "读取对话超时。",
   "Thinking…": "思考中…",
   "Grok chat is unavailable. Open Terminal to see activity and tool calls.": "Grok 聊天暂不可用。请打开终端查看运行状态和工具调用。",

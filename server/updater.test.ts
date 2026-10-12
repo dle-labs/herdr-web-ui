@@ -342,6 +342,18 @@ describe("managed source updates with real Git repositories and builds", () => {
     expect(updater.status.current_revision).toBe(target);
   });
 
+  it("follows the fork's vX.Y.Z-next.N tags, the newest by version", async () => {
+    await release("upstream", "v0.2.0");
+    await release("next one", "v0.2.0-next.1");
+    await release("next two", "v0.2.0-next.2");
+    const target = await release("next ten", "v0.2.0-next.10");
+    await updater.request("check");
+    expect(updater.status.error).toBeNull();
+    expect(updater.status.latest_version).toBe("0.2.0-next.10");
+    expect(updater.status.latest_revision).toBe(target);
+    expect(updater.status.available).toBe(true);
+  });
+
   it("treats a shallow plugin checkout ahead of the latest release as up to date", async () => {
     await git(upstream, "tag", "v0.1.0", "HEAD");
     await commit("unreleased");

@@ -669,7 +669,9 @@ describe("hermesConversationPage SQLite integration", () => {
     );
     expect(visitedToolRefs).toHaveLength(2000);
     expect(new Set(visitedToolRefs).size).toBe(2000);
-  });
+    // Building the 100 MB SQLite fixture and walking every page can exceed Bun's
+    // default 5 s on local disks; keep the same bounds and completeness assertions.
+  }, 15_000);
 
   it("measures multibyte UTF-8 characters by bytes when bounding pages", () => {
     const db = new Database(dbPath);

@@ -4,6 +4,7 @@
  * here comes from a real machine. It imports no server code, so the browser bundle can take it.
  */
 import type { ConversationTurn, InteractivePrompt } from "../../shared/protocol.ts";
+import { PI_DELEGATION_TURNS } from "./delegation-fixture.ts";
 
 export interface DemoSpec {
   key: string;
@@ -113,6 +114,7 @@ export const CHATS: Record<string, { turns: ConversationTurn[]; metadata: { mode
         tool("edit", "src/config.ts", { path: "src/config.ts" }, "Updated src/config.ts"),
         { kind: "text" as const, text: "`RELEASE_RETRIES` sets the default, and `--retries` still wins over it. The README's environment table lists it." },
       ] },
+      ...PI_DELEGATION_TURNS,
     ],
   },
 };

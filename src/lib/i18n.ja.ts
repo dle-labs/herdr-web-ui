@@ -9,6 +9,12 @@
  */
 export const JA: Record<string, string> = {
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravityのチャットを利用できません。ターミナルを開いて動作状況とツール呼び出しを確認してください。",
+  "Delegation evidence": "委任の記録",
+  "Recorded: {status}": "記録された状態: {status}",
+  "Unknown": "不明",
+  "Last recorded evidence, not live status. A parent turn ending does not mean this task ended.": "ライブ状態ではなく最後の記録です。親のターンの終了は、このタスクの終了を意味しません。",
+  "Recorded duration: {ms} ms": "記録された所要時間: {ms} ms",
+  "Original notification": "元の通知",
   "Chat read timed out.": "会話の読み込みがタイムアウトしました。",
   "Thinking…": "思考中…",
   "Grok chat is unavailable. Open Terminal to see activity and tool calls.": "Grokのチャットを利用できません。ターミナルを開いて動作状況とツール呼び出しを確認してください。",

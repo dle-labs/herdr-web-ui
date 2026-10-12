@@ -214,6 +214,19 @@ or **Discard**. A message is never pasted over text typed in Claude Code's own i
 that box holds a draft the message stays in the list with the reason, and **Send now** delivers it
 once the draft is sent or cleared in the terminal.
 
+## Pi extension visibility
+
+The chat lens can show recorded delegation evidence from
+`npm:@tintinweb/pi-subagents`: agent/tool results, completion notifications and
+available persisted workflow summaries. Expand a card for its recorded details;
+ordinary tool input/output remains available in the work fold. These cards are
+**not live FleetView**: an old launch does not prove a task is still running, and a
+finished parent turn does not prove its children finished. Unrecorded activity,
+including some mention-launched or nested workflow work, cannot be reconstructed.
+
+Support is provided by the bridge serving that PC. An official remote bridge does
+not acquire this fork's recorded delegation support just because the local browser has it.
+
 ## Subscription usage
 
 On a local desktop pane, the composer shows a compact read-only limit for the agent's provider:

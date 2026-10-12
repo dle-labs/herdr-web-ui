@@ -8,6 +8,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ## [Unreleased]
 
 ### Added
+- Show recorded Pi subagent and workflow evidence outside folded chat work, with expandable results and explicit last-recorded status rather than inferred live progress.
 - The file viewer and Markdown reader page offer **Show source**, highlighted source with
   CSS-counter line numbers, and **Copy file**, which selects the source when copying is unavailable.
   **Settings → Chat → File viewer** controls line wrapping and Markdown width; previews inherit

@@ -951,4 +951,10 @@ export const TR: Record<string, string> = {
   "Reading the plan…": "Plan okunuyor…",
   "Couldn't read the plan. Trying again…": "Plan okunamadı. Tekrar deneniyor…",
   "Only part of this file is shown. Download it to read the rest.": "Bu dosyanın yalnızca bir bölümü gösteriliyor. Gerisini okumak için indirin.",
+  "Delegation evidence": "Görev devri kanıtı",
+  "Last recorded evidence, not live status. A parent turn ending does not mean this task ended.": "Son kaydedilen kanıttır, güncel durum değildir. Üst görevin turunun sona ermesi, bu görevin de sona erdiği anlamına gelmez.",
+  "Original notification": "Özgün bildirim",
+  "Recorded duration: {ms} ms": "Kaydedilen süre: {ms} ms",
+  "Recorded: {status}": "Kaydedilen durum: {status}",
+  "Unknown": "Bilinmiyor",
 };

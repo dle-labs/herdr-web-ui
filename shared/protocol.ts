@@ -388,6 +388,20 @@ export interface SkillActivity {
   path?: string;
 }
 
+/** Bounded pi-subagents transcript evidence. Never a live runtime status. */
+export interface DelegationEvidence {
+  id: string | null;
+  type: "agent" | "workflow";
+  name: string;
+  agent: string | null;
+  model: string | null;
+  status: string | null;
+  evidence: "tool" | "notification" | "record" | "workflow";
+  duration_ms: number | null;
+  result: string;
+  result_cut?: boolean;
+}
+
 export type ConversationPart =
   | { kind: "text"; text: string; phase?: "commentary" | "final_answer" }
   /** the agent's reasoning block; the client folds it and shows it only on request */
@@ -399,6 +413,7 @@ export type ConversationPart =
     /** Hermes could not load a tool-call list whose arguments exceeded its page limit. */
     arguments_omitted?: true;
     skill?: SkillActivity;
+    delegation?: DelegationEvidence;
     /** set when `output` was cut: the call's id, for GET /api/pane/conversation/tool-output, and the whole output's length */
     output_ref?: string; output_size?: number;
     /** images the call returned (pi reads a picture into the result); same fetch as a user image */
@@ -412,7 +427,9 @@ export type ConversationPart =
    * `source`: the runtime's name for it (pi's customType, e.g. "async-result", "irc:incoming", "omo-model-profile:unavailable") */
   | { kind: "notice"; text: string; source?: string }
   /** OmO's background tasks that ended, as OmO reported them back to the agent, or a Claude Code subagent that ended (its task notification): it starts a turn, nobody typed it */
-  | { kind: "task_result"; tasks: OmoTaskResult[] };
+  | { kind: "task_result"; tasks: OmoTaskResult[] }
+  /** Persisted extension evidence, including mention/flag launches with no parent tool call. */
+  | { kind: "delegation"; tasks: DelegationEvidence[]; text?: string };
 
 /** One OmO background task that ended (the `senpi-task.completion` OmO wakes its agent with). */
 export interface OmoTaskResult {

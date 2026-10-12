@@ -1,11 +1,25 @@
 import { describe, expect, it } from "bun:test";
 
-import { formatWorkDuration, splitTurn, workFailed, workStartsOpen, workSummary } from "./workBlocks.ts";
+import { formatWorkDuration, splitTurn, turnDelegations, workFailed, workStartsOpen, workSummary } from "./workBlocks.ts";
 import type { ConversationPart } from "../../shared/protocol.ts";
 
 const tool = (name: string, summary = name): Extract<ConversationPart, { kind: "tool" }> => ({ kind: "tool", name, summary, input: "{}", output: "" });
 const text = (value: string): Extract<ConversationPart, { kind: "text" }> => ({ kind: "text", text: value });
 const thinking = (value: string): Extract<ConversationPart, { kind: "thinking" }> => ({ kind: "thinking", text: value });
+
+describe("delegation visibility", () => {
+  it("keeps metadata outside folded work without discarding raw tool rows or changing a launch into completion", () => {
+    const task = { id: "a1", type: "agent" as const, name: "Explore", agent: "explore", model: null, status: "background", evidence: "tool" as const, duration_ms: null, result: "" };
+    const call = { ...tool("Agent"), delegation: task, output: "original output" };
+    const parts = [call, text("Parent finished")];
+    expect(workStartsOpen(false, parts)).toBe(false);
+    expect(turnDelegations(parts)).toEqual([task]);
+    expect(splitTurn(parts).work).toEqual([call]);
+    const standalone: ConversationPart = { kind: "delegation", tasks: [task] };
+    expect(splitTurn([text("Answer"), standalone])).toEqual({ work: [], answer: [text("Answer")] });
+    expect(turnDelegations([standalone])).toEqual([task]);
+  });
+});
 
 describe("splitTurn", () => {
   it("folds every action and the narration between them into the work; the trailing prose is the answer", () => {
