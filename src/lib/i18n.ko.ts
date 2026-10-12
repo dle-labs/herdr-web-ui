@@ -742,6 +742,7 @@ export const KO: Record<string, string> = {
   "A paired device gets in on its own, from anywhere it can reach this server, until you revoke it here. A code comes from this screen on the PC or on a device already paired, or from the pair command in the PC's terminal.": "페어링된 기기는 여기서 폐기하기 전까지, 이 서버에 닿는 어디서든 스스로 들어옵니다. 코드는 PC나 이미 페어링된 기기의 이 화면에서, 또는 PC 터미널의 pair 명령으로 받습니다.",
   "Or send this link to it:": "또는 이 링크를 그 기기로 보내세요:",
   "Loading…": "불러오는 중…",
+  "Select a file to view.": "볼 파일을 선택하세요.",
   "No devices paired yet.": "아직 페어링된 기기가 없습니다.",
   "Device name": "기기 이름",
   "Save name": "이름 저장",

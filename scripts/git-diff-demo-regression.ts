@@ -390,8 +390,29 @@ try {
             await preview.click();
             await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
           }
+          const browserEntry = await page.evaluate(() => history.state);
+          await markdown.getByRole("button", { name: "Close file", exact: true }).click();
+          await markdown.locator(".file-viewer-embedded").waitFor({ state: "detached" });
+          assert.ok(await markdown.isVisible(), "Close file leaves the Files browser open");
+          assert.ok(await markdown.locator(".workspace-file-tree").isVisible(), "Close file returns to file navigation on desktop and phone");
+          assert.equal(await markdown.locator('.workspace-tree-row[aria-current="true"]').count(), 0, "the closed document is no longer selected");
+          assert.equal(await modes.count(), 0, "a closed Markdown document has no Preview/Diff controls");
+          assert.deepEqual(await page.evaluate(() => history.state), browserEntry, "closing only a document preserves the browser's Back entry");
+          if (!mobile) await markdown.getByText("Select a file to view.", { exact: true }).waitFor();
+          await markdown.getByRole("button", { name: "Refresh changes", exact: true }).click();
+          await frames(page);
+          assert.equal(await markdown.locator(".file-viewer-embedded, .changes-markdown-mode, [data-diff-path]").count(), 0, "refresh does not reopen or reselect a closed document");
+          await row.click();
+          await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
+          if (file.status === "modified") {
+            await diff.click();
+            await section(markdown, file.path).getByText("Saved Markdown diff note", { exact: true }).waitFor();
+            await preview.click();
+            await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
+          }
           if (mobile) await markdown.getByRole("button", { name: "Back to files", exact: true }).click();
         }
+        console.log(`PASS Close file: ${mobile ? "phone" : "desktop"} keeps the browser, navigation, history and saved Markdown comments; refresh stays closed and the same file reopens`);
         await markdown.getByRole("button", { name: "Close files", exact: true }).click();
         await page.locator(".composer-comments-walk").first().click();
         const reopened = page.getByRole("dialog", { name: "Files", exact: true });
@@ -414,10 +435,18 @@ try {
         await sourceDialog.locator('.file-viewer-text .hl-line[data-source-line="1"]').click();
         const sourcePopover = page.locator(".comment-popover");
         await sourcePopover.getByRole("textbox", { name: "Comment", exact: true }).fill("Saved ordinary source note");
+        // The phone's comment sheet physically covers Close file; Escape is its available dismissal.
+        if (mobile) await page.keyboard.press("Escape");
+        else await sourceDialog.getByRole("button", { name: "Close file", exact: true }).click();
+        assert.ok(await sourceDialog.locator(".file-viewer-embedded").isVisible(), "an unsaved source comment keeps the document open");
+        assert.equal(await sourcePopover.getByRole("textbox", { name: "Comment", exact: true }).inputValue(), "Saved ordinary source note", "Close file preserves the unsaved draft");
         await sourcePopover.getByRole("button", { name: "Save comment", exact: true }).click();
         await sourcePopover.waitFor({ state: "detached" });
         await sourceDialog.locator(".comment-pin:not(.is-pending)").waitFor();
-        if (mobile) await sourceDialog.getByRole("button", { name: "Back to files", exact: true }).click();
+        await sourceDialog.getByRole("button", { name: "Close file", exact: true }).click();
+        await sourceDialog.locator(".file-viewer-embedded").waitFor({ state: "detached" });
+        assert.ok(await sourceDialog.isVisible(), "closing a plain source file also preserves its browser");
+        assert.ok(await sourceDialog.locator(".workspace-file-tree").isVisible());
         await treeFile(sourceDialog, "docs/modified.md").click();
         await sourceDialog.locator(".file-viewer-markdown").getByRole("heading", { name: "Modified guide", exact: true }).waitFor();
         if (mobile) await sourceDialog.getByRole("button", { name: "Back to files", exact: true }).click();

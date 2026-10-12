@@ -175,6 +175,12 @@ async function checkLayout(): Promise<void> {
           assert.ok(scrolling.pageHeight <= scenario.height, `${label}: oversized content cannot grow page`);
           const close = page.getByRole("button", { name: "Close file", exact: true });
           if (scenario.touch) await close.tap(); else await close.click();
+          await page.locator(".file-viewer-embedded").waitFor({ state: "detached" });
+          const files = page.getByRole("dialog", { name: "Files", exact: true });
+          assert.ok(await files.isVisible(), `${label}: closing the document keeps the browser open`);
+          assert.ok(await files.locator(".workspace-file-tree").isVisible(), `${label}: closing the document returns to navigation`);
+          const closeFiles = files.getByRole("button", { name: "Close files", exact: true });
+          if (scenario.touch) await closeFiles.tap(); else await closeFiles.click();
           await page.locator("#closed").waitFor();
           assert.equal(await page.getByRole("dialog").count(), 0, `${label}: actual close callback removes dialog`);
           assert.deepEqual(errors, [], label);

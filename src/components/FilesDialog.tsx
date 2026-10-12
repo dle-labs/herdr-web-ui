@@ -69,12 +69,12 @@ export function FilesDialog({ start, paneId, connected, initialIntent = "browse"
           {narrow && showFile && <button type="button" className="icon-button" aria-label={t("Back to files")} onClick={() => { if (leave()) setShowFile(false); }}><ArrowLeft aria-hidden="true" /></button>}
           <h2 className="modal-title" id="files-dialog-title">{t("Files")}</h2>
           {paneId !== null && <button type="button" className="icon-button" aria-label={t("Refresh changes")} onClick={() => { if (leave()) setRefreshToken((value) => value + 1); }}><RefreshCw aria-hidden="true" /></button>}
-          <button type="button" className="icon-button" aria-label={t("Close files")} onClick={close}><X aria-hidden="true" /></button>
+          <button type="button" className="icon-button" aria-label={t("Close files")} title={t("Close files")} onClick={close}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body">
           <Suspense fallback={<p role="status">{t("Loading…")}</p>}>
             <ChangesView start={start} paneId={paneId} connected={connected} initialIntent={initialIntent} initialComment={initialComment} initialPath={initialPath} initialCommentId={initialCommentId}
-              showFile={showFile} onShowFile={() => setShowFile(true)} refreshToken={refreshToken} keyboardActive={keyboardActive} onClose={close} />
+              showFile={showFile} onShowFile={() => setShowFile(true)} refreshToken={refreshToken} keyboardActive={keyboardActive} onHideFile={() => setShowFile(false)} />
           </Suspense>
         </div>
       </section>

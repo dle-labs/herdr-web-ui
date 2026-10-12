@@ -701,6 +701,7 @@ export const TR: Record<string, string> = {
   "A paired device gets in on its own, from anywhere it can reach this server, until you revoke it here. A code comes from this screen on the PC or on a device already paired, or from the pair command in the PC's terminal.": "Eşleştirilmiş bir cihaz, buradan iptal edene dek, bu sunucuya erişebildiği her yerden kendi başına girer. Kod, bilgisayardaki bu ekrandan, zaten eşleştirilmiş bir cihazdan veya bilgisayar terminalindeki pair komutundan gelir.",
   "Or send this link to it:": "Ya da bu bağlantıyı ona gönderin:",
   "Loading…": "Yükleniyor…",
+  "Select a file to view.": "Görüntülenecek bir dosya seçin.",
   "No devices paired yet.": "Henüz eşleştirilmiş cihaz yok.",
   "Device name": "Cihaz adı",
   "Save name": "Adı kaydet",

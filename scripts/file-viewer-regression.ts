@@ -222,7 +222,7 @@ try {
 
   await page.goForward();
   await preview.waitFor();
-  await preview.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await preview.waitFor({ state: "hidden" });
   // Repeated opens must not accumulate extra history entries.
   await videoLink.click();
@@ -237,7 +237,7 @@ try {
   await page.locator(".workspace-files-scrim").evaluate((scrim) => scrim.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
   await preview.waitFor({ state: "hidden" });
   await page.setViewportSize({ width: 390, height: 844 });
-  console.log("PASS Forward restores the viewer; X, Escape and scrim close consume its entry");
+  console.log("PASS Forward restores the viewer; Close files, Escape and scrim close consume its entry");
 
   // The Settings shortcut must open a visible dialog above the preview. Its history entries
   // retain the file beneath it, so only Settings may handle Escape until those entries land.
@@ -277,9 +277,9 @@ try {
     await page.waitForFunction(() => history.state?.["herdr-web-ui:settings"] === undefined);
     await preview.waitFor();
     assert.deepEqual(await page.evaluate(() => history.state["herdr-web-ui:file-preview"]), previewEntry, "Escape closes only Settings and preserves the preview entry");
-    await preview.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await preview.waitFor({ state: "hidden" });
-    assert.equal(await page.evaluate(() => history.state?.["herdr-web-ui:file-preview"]), undefined, "one click on Close file consumes the preview entry");
+    assert.equal(await page.evaluate(() => history.state?.["herdr-web-ui:file-preview"]), undefined, "one click on Close files consumes the preview entry");
     assert.equal(await composer.inputValue(), "Keep my mobile draft");
 
     // System Back follows the same order, preserving the document instead of closing the file.
@@ -291,10 +291,10 @@ try {
     await page.goBack();
     await settings.waitFor({ state: "hidden" });
     await preview.waitFor();
-    await preview.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await preview.waitFor({ state: "hidden" });
     assert.equal(await page.evaluate(() => (window as unknown as { testDocument: string }).testDocument), "same-document");
-    console.log(`PASS Settings opens above the preview at ${width}px; Escape and Back preserve it, then X closes the file once`);
+    console.log(`PASS Settings opens above the preview at ${width}px; Escape and Back preserve it, then Close files dismisses Files once`);
   }
 
   // Add PC from Settings over a preview: Settings closes, the preview stays mounted beneath, and
@@ -329,7 +329,7 @@ try {
   await addPc.waitFor({ state: "hidden" });
   assert.equal(await page.locator(".file-viewer").count(), 1, "Escape over Add PC leaves the preview beneath it");
   assert.deepEqual(await page.evaluate(() => history.state["herdr-web-ui:file-preview"]), previewUnderAddPc, "Escape over Add PC preserves the preview entry");
-  await preview.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await preview.waitFor({ state: "hidden" });
   console.log("PASS Add PC opened from Settings over a preview keeps Tab inside Add PC, and its Escape closes Add PC alone");
 
@@ -384,9 +384,9 @@ try {
   await page.keyboard.press("Escape");
   await settingsAlone.waitFor({ state: "hidden" });
   await preview.waitFor();
-  await preview.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await preview.waitFor({ state: "hidden" });
-  console.log("PASS the command palette opens above Settings over a preview; Escape closes the palette, then Settings, then X the file");
+  console.log("PASS the command palette opens above Settings over a preview; Escape closes the palette, then Settings, then Close files dismisses Files");
   await page.setViewportSize({ width: 390, height: 844 });
 
   await page.getByRole("button", { name: "notes", exact: true }).click();
@@ -399,7 +399,7 @@ try {
   await videoLink.waitFor();
   await videoLink.click();
   await preview.waitFor();
-  await preview.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await preview.waitFor({ state: "hidden" });
   await page.goBack();
   assert.equal(page.url(), `${origin}/api/health`, "no ghost modal entry or back trap after explicit close");
@@ -410,7 +410,7 @@ try {
   await page.locator(".file-viewer-text").waitFor();
   assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
   console.log("PASS Chat file URI label opens file content through touch");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "folder", exact: true }).tap();
   await page.locator(".file-viewer .dir-browser").waitFor();
@@ -418,13 +418,13 @@ try {
   await page.locator(".file-viewer-text").waitFor();
   assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
   console.log("PASS Chat folder URI opens directory browser through touch");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: new URL(`file://${join(root, "notes.txt")}`).href, exact: true }).tap();
   await page.locator(".file-viewer-text").waitFor();
   assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
   console.log("PASS Chat plain file URI opens content through touch");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // Markdown: Show source, reader tab, Open raw file, Download, Copy; no Wrap (a setting)
@@ -533,7 +533,7 @@ try {
   await linked.waitFor();
   assert.doesNotMatch(await linked.locator(".file-viewer-meta").getAttribute("title") ?? "", /\/docs\//);
   console.log("PASS A link in a Markdown preview opens the file it names");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // a text file past the load limit: shown in part, so it cannot be copied whole
@@ -547,7 +547,7 @@ try {
   assert.equal(await big.getByRole("button", { name: "Copy file", exact: true }).count(), 0);
   assert.equal(await big.getByText("Too long to highlight").count(), 0, "plain text is never too long to highlight");
   console.log("PASS A text file past the load limit says so in its header and has no Copy");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // code past the load limit: its first 256 KB, highlighted (in the worker), and the header says it is cut
@@ -565,7 +565,7 @@ try {
   console.log("PASS Code past the load limit shows its first 256 KB, highlighted");
   await bigCode.locator(".file-viewer-text[data-wrap]").waitFor();
   console.log("PASS Settings → Wrap long lines wraps the code");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // a quote nested 20 000 deep renders as a quote nested to the parser's limit, the rest its text
@@ -585,7 +585,7 @@ try {
   assert.equal(quoteDepth, 33, "the quote nests to the parser's limit");
   assert.equal(await deep.getByRole("alert").count(), 0, "the preview renders, not its fallback");
   console.log("PASS A Markdown file of 20 000 nested quotes renders, and the app stays");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // an empty file opens empty, whole, with Copy: not as an error
@@ -595,7 +595,7 @@ try {
   assert.equal(await empty.getByRole("alert").count(), 0);
   assert.equal(await empty.locator(".file-viewer-notice").count(), 0, "an empty file is not cut short");
   console.log("PASS An empty file opens as an empty file, not as an error");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // The real app and file server, not a component-only fixture: a fresh tab must render
@@ -778,7 +778,7 @@ try {
   assert.equal(await slow.locator(".file-viewer-text code span:not(.hl-line)").count(), 0, "the source is plain");
   assert.deepEqual(await frozen(), [], "no task held the page for a second");
   console.log("PASS A Markdown file the highlighter is slow on previews, its source stays plain, and the page never freezes");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // a Markdown file past the load limit: its first 256 KB, previewed, and the header says it is cut
@@ -788,7 +788,7 @@ try {
   assert.match(await long.locator(".file-viewer-meta .file-viewer-notice").getAttribute("title") ?? "", /^Showing the first 256 KB(?: of .+\.)?$/);
   await long.getByRole("button", { name: "Show source", exact: true }).waitFor();
   console.log("PASS A Markdown file past the load limit previews its first 256 KB and says it is cut");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // a file of more lines than are numbered shows as one text, and a Markdown file of more than a
@@ -799,7 +799,7 @@ try {
   await manyLines.locator(".file-viewer-text").waitFor();
   assert.equal(await manyLines.locator(".file-viewer-text .hl-line").count(), 0, "no element per line");
   assert.equal(await manyLines.locator(".file-viewer-text[data-line-numbers]").count(), 0, "and no gutter");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "long list", exact: true }).click();
   const longList = preview;
@@ -809,7 +809,7 @@ try {
   assert.equal(await longList.locator(".file-viewer-markdown").count(), 0, "the Preview is not drawn");
   assert.deepEqual(await frozen(), [], "no task held the page for a second");
   console.log("PASS A file of too many lines shows as one text, a Markdown file of too many elements as its source, and the page never freezes");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // a path in a tool's output opens the file it names; the rest of the output stays its text
@@ -825,7 +825,7 @@ try {
   await shot.locator("img.file-viewer-media").waitFor();
   assert.equal(await shot.locator("img.file-viewer-media").evaluate((image: HTMLImageElement) => image.naturalWidth), 1);
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "tool-output-image-open.png") });
-  await shot.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await shot.waitFor({ state: "hidden" });
   console.log("PASS A file path in a tool's output opens the picture through touch");
   // the command names one too; a relative path is found from the pane's folder
@@ -862,14 +862,14 @@ try {
   await report.locator(".file-viewer-text[data-line-numbers]").waitFor();
   assert.equal(await report.getByRole("button", { name: "Source", exact: true }).getAttribute("aria-pressed"), "true");
   assert.match(await page.evaluate(() => window.getSelection()?.toString() ?? ""), /<h1 id="ran">static<\/h1>/);
-  await report.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await report.waitFor({ state: "hidden" });
   console.log("PASS An HTML file a command names opens as its page, sandboxed with no network or storage, and as its source");
   // a log in a plain code block: its paths open as well
   const log = page.locator(".markdown-code").last();
   await log.getByRole("button", { name: shotPath, exact: true }).tap();
   await shot.locator("img.file-viewer-media").waitFor();
-  await shot.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await shot.waitFor({ state: "hidden" });
   assert.equal(await log.locator(".hl-code").innerText(), `${shotPath} (1600, 1000) -> (1255, 960)`, "a copy of the block is still its text");
   assert.deepEqual(errors, []);
@@ -894,7 +894,7 @@ try {
   assert.equal(await plainGuide.locator(".hl-keyword, .hl-function").count(), 0, "the viewer's code is plain");
   assert.equal(await plainGuide.locator(".file-viewer-notice").count(), 0, "and no notice says it is too long");
   console.log("PASS Settings → Highlight code off shows code plain, in the chat and the viewer");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // the file found, then its body refused (the file gone since, a remote PC dropped): the error's

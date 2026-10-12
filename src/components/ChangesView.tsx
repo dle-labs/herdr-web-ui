@@ -86,9 +86,9 @@ function DiffSection({ paneId, inventory, path, owner, connected, split, scrollR
   </section>;
 }
 
-export default function ChangesView({ paneId, start, connected, initialIntent = "browse", initialComment = null, initialPath = null, initialCommentId = null, showFile, onShowFile, refreshToken, keyboardActive, onClose }: {
+export default function ChangesView({ paneId, start, connected, initialIntent = "browse", initialComment = null, initialPath = null, initialCommentId = null, showFile, onShowFile, refreshToken, keyboardActive, onHideFile }: {
   paneId: string | null; start: string; connected: boolean; initialIntent?: WorkspaceFileIntent; initialComment?: FileComment | null;
-  initialPath?: string | null; initialCommentId?: string | null; showFile: boolean; onShowFile: () => void; refreshToken: number; keyboardActive: boolean; onClose: () => void;
+  initialPath?: string | null; initialCommentId?: string | null; showFile: boolean; onShowFile: () => void; refreshToken: number; keyboardActive: boolean; onHideFile: () => void;
 }) {
   const t = useT();
   const machineId = useMachineId();
@@ -97,6 +97,9 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
   const [inventory, setInventory] = useState<GitChangesResponse | null>(null);
   const [path, setPath] = useState<string | null>(initialComment?.diff?.path ?? null);
   const [preview, setPreview] = useState<string | null>(initialComment?.diff ? null : initialPath);
+  const [documentClosed, setDocumentClosed] = useState(false);
+  // An inventory read already in flight must not reselect a file after it closes.
+  const closed = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [jump, setJump] = useState<string | null>(initialComment?.diff?.path ?? null);
@@ -117,7 +120,7 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
       if (!live || !canLeave()) return;
       setInventory(next);
       setError(null);
-      setPath((selected) => next.files.some((file) => file.path === selected) ? selected : next.files[0]?.path ?? null);
+      if (!closed.current) setPath((selected) => next.files.some((file) => file.path === selected) ? selected : next.files[0]?.path ?? null);
     }).catch(() => {
       if (live) setError(t("Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs."));
     }).finally(() => { if (live) setLoading(false); });
@@ -156,11 +159,27 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
   function select(absolute: string) {
     if (!canLeave()) return;
     resolvedInitial.current = true;
+    closed.current = false;
+    setDocumentClosed(false);
     onShowFile();
     const changed = inventory ? changedWorkspacePath(inventory, absolute) : null;
     const document = inventory ? workspacePreviewPath(inventory, absolute, initialIntent) : absolute;
     setPreview(document); setPath(changed); setJump(document === null ? changed : null);
   }
+  function closeDocument() {
+    if (!canLeave()) return;
+    resolvedInitial.current = true;
+    closed.current = true;
+    setDocumentClosed(true);
+    setPreview(null); setPath(null); setJump(null);
+    onHideFile();
+  }
+  // Once the embedded preview unmounts, return keyboard focus to navigation.
+  useEffect(() => {
+    if (!documentClosed) return;
+    const target = surface.current?.querySelector<HTMLElement>(".workspace-tree-row") ?? surface.current?.closest<HTMLElement>(".files-dialog");
+    target?.focus();
+  }, [documentClosed]);
   const root = inventory?.root ?? start;
   const selectedChanged = preview && inventory ? changedWorkspacePath(inventory, preview) : path;
   const markdownPath = inventory && selectedChanged ? changedMarkdownPreviewPath(inventory, selectedChanged) : null;
@@ -183,7 +202,7 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     <div className="changes-layout">
       <aside className="changes-navigation"><WorkspaceFileTree root={root} paneId={paneId} files={inventory?.files ?? []} refreshToken={refreshToken} selected={preview ?? (path ? absolutePath(root, path) : null)} onSelect={select} /></aside>
       <div className="changes-detail" ref={documentRef} aria-label={t("File diff")} onScroll={() => {
-        if (preview) return;
+        if (preview || documentClosed) return;
         const container = documentRef.current;
         // When every section fits, layout/scrollIntoView events are not navigation:
         // keep the explicitly selected document for Preview instead of picking the first diff.
@@ -195,8 +214,8 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
         // programmatic scroll. They must not change which document Preview will open.
         if (active?.dataset.diffPath && !active.querySelector(".changes-diff-placeholder")) setPath(active.dataset.diffPath);
       }}>
-        {preview ? <FileViewer key={`${preview}:${refreshToken}`} keyboardActive={keyboardActive} path={preview} paneId={paneId} machineId={machineId} paneFolder={start} connected={connected}
-          commentId={initialComment?.diff ? null : initialComment?.id ?? initialCommentId} onOpen={select} onClose={onClose} /> : <>
+        {documentClosed ? <p className="changes-note" role="status">{t("Select a file to view.")}</p> : preview ? <FileViewer key={`${preview}:${refreshToken}`} keyboardActive={keyboardActive} path={preview} paneId={paneId} machineId={machineId} paneFolder={start} connected={connected}
+          commentId={initialComment?.diff ? null : initialComment?.id ?? initialCommentId} onOpen={select} onClose={closeDocument} /> : <>
           {loading && !inventory && <p className="changes-note" role="status">{t("Loading…")}</p>}
           {error !== null && <p className="changes-note" role="alert">{error}</p>}
           {inventory?.files.length === 0 && <p className="changes-note" role="status">{t("No changes in this comparison.")}</p>}

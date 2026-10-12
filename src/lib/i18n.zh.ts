@@ -746,6 +746,7 @@ export const ZH: Record<string, string> = {
   "A paired device gets in on its own, from anywhere it can reach this server, until you revoke it here. A code comes from this screen on the PC or on a device already paired, or from the pair command in the PC's terminal.": "已配对的设备可从任何能访问此服务器的地方自动进入，直到你在此处撤销。代码可从 PC 或已配对设备上的此界面获取，也可在 PC 终端中运行 pair 命令获取。",
   "Or send this link to it:": "或将此链接发送到该设备：",
   "Loading…": "正在加载…",
+  "Select a file to view.": "请选择要查看的文件。",
   "No devices paired yet.": "尚未配对任何设备。",
   "Device name": "设备名称",
   "Save name": "保存名称",

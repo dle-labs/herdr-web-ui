@@ -82,6 +82,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 ### Fixed
 - Comment editors stay clear of the text being commented on. When no floating position fits,
   a desktop editor reserves space below the reading area without losing the draft, focus or caret.
+- Closing an embedded file returns to file navigation without closing the workspace browser; the outer Close files button still dismisses the browser, and unsaved comments block both actions.
 - New, staged and modified Markdown files open as rendered previews when browsed or followed from file links, with Preview/Diff switching that preserves comments. Explicit changes and diff-comment navigation still opens the diff; unavailable Markdown previews explain their source fallback.
 - A message another Claude Code session sends into a pane (its `peer` messages) shows in the chat as
   a folded **Message from another session: {name}** that opens its own turn, instead of being skipped so the work it

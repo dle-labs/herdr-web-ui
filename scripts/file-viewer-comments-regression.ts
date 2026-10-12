@@ -845,7 +845,7 @@ const cases: Record<string, Case> = {
     console.log("PASS code-click: Delete removes the pin, the highlight and the line's mark");
 
     // in a file cut short, a whole line takes a click; one cut off at the load limit (here the file's only line) none
-    await viewer.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await viewer.waitFor({ state: "detached" });
     await page.getByRole("button", { name: "big.txt", exact: true }).click();
     viewer = page.getByRole("dialog", { name: "Files", exact: true });
@@ -860,7 +860,7 @@ const cases: Record<string, Case> = {
     assert.equal(await popoverReference(page), `big.txt · Line ${whole}`, "the last whole line of a file cut short takes a click");
     await fieldFocused(page);
     await escapePopover(page);
-    await viewer.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await viewer.waitFor({ state: "detached" });
     await page.getByRole("button", { name: "long.txt", exact: true }).click();
     viewer = page.getByRole("dialog", { name: "Files", exact: true });
@@ -876,7 +876,7 @@ const cases: Record<string, Case> = {
 
     // the code view without wrapping scrolls sideways inside the viewer's body: a pin follows its line as it does, and has
     // none while the line is scrolled wholly out of view, never left where it was, over other text
-    await viewer.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await viewer.waitFor({ state: "detached" });
     await page.getByRole("button", { name: "wide.ts", exact: true }).click();
     viewer = page.getByRole("dialog", { name: "Files", exact: true });
@@ -1000,14 +1000,14 @@ const cases: Record<string, Case> = {
     console.log("PASS code-phone: Copy file copies the whole file; when both clipboard paths refuse it selects the source");
 
     // a file cut short takes comments too, and a viewer without a pane none
-    await viewer.getByRole("button", { name: "Close file", exact: true }).tap();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).tap();
     await viewer.waitFor({ state: "detached" });
     await page.getByRole("button", { name: "big.txt", exact: true }).tap();
     const big = page.getByRole("dialog", { name: "Files", exact: true });
     await big.locator(".file-viewer-text .hl-line").first().waitFor();
     assert.equal(await big.locator(".file-viewer-meta .file-viewer-notice").count(), 1, "big.txt opens cut short");
     assert.equal(await big.locator(".file-viewer-body[data-comment-surface]").count(), 1, "a file cut short takes comments");
-    await big.getByRole("button", { name: "Close file", exact: true }).tap();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).tap();
     await big.waitFor({ state: "detached" });
     // as the app opens a file with no pane selected (App.tsx `viewFile`): the preview's history entry, read on load
     await page.evaluate((path) => history.replaceState({ ...history.state, "herdr-web-ui:file-preview": { path, paneId: null, machineId: "local" } }, ""), join(root, "src", "sync.ts"));
@@ -1257,7 +1257,7 @@ const cases: Record<string, Case> = {
       console.log("PASS header: the counter reads 2 comments; each tap walks to the next pin (lines 7–9, then line 8), opens its popover, marks the pin, in view");
 
       // 2. two lines inserted above line 8: the comment on line 8 follows its line to line 10, and the store says so
-      await viewer.getByRole("button", { name: "Close file", exact: true }).click();
+      await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
       await viewer.waitFor({ state: "detached" });
       const moved = [...SYNC_LINES.slice(0, 7), "  // a revision is a counter", "  // that only grows", ...SYNC_LINES.slice(7)];
       writeSync(moved);
@@ -1283,7 +1283,7 @@ const cases: Record<string, Case> = {
       console.log("PASS header: after two lines were inserted above line 8, its comment's pin is at line 10 and it is stored as lines [10, 10]");
 
       // 3. line 7 changed: the comment on lines 7–9 stays outdated, and the walk opens it in a dialog
-      await viewer.getByRole("button", { name: "Close file", exact: true }).click();
+      await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
       await viewer.waitFor({ state: "detached" });
       writeSync(moved.map((line, index) => index === 6 ? "  const stored = await loadLatest(incoming.id);" : line));
       viewer = await openSync(page);
@@ -1379,7 +1379,7 @@ const cases: Record<string, Case> = {
 
       // 4. no Write message: the header's comment group is the counter alone
       assert.equal(await viewer.getByRole("button", { name: "Write message", exact: true }).count(), 0, "no Write message button");
-      await viewer.getByRole("button", { name: "Close file", exact: true }).click();
+      await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
       await viewer.waitFor({ state: "detached" });
       console.log("PASS header: the header has no Write message button");
 
@@ -1453,7 +1453,7 @@ const cases: Record<string, Case> = {
     assert.equal(await specCounter.getAttribute("aria-label"), "1 comment");
     await specCounter.click();
     await eventually("the viewer's walk to stay on the spec's comment", () => openedInViewer(spec, table, "Also return the stored revision."));
-    await spec.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await spec.waitFor({ state: "detached" });
     console.log("PASS composer: tap 2 opens docs/spec.md in the preview at its comment's popover; the viewer's walk stays there");
 
@@ -1464,7 +1464,7 @@ const cases: Record<string, Case> = {
     await eventually("the viewer to open the comment on line 8", () => openedInViewer(sync, line8, "Compare with <=."))
       .catch(async (error: Error) => { throw new Error(`${error.message}: ${JSON.stringify(await page.evaluate(() => ({ fields: [...document.querySelectorAll<HTMLTextAreaElement>(".comment-popover textarea")].map((node) => node.value), pins: [...document.querySelectorAll(".file-viewer .comment-pin")].map((node) => ({ id: (node as HTMLElement).dataset.commentId, current: node.classList.contains("is-current") })), dialogs: document.querySelectorAll(".modal.comment-popover").length })))}`); });
     await assertPinAtLineEnd(sync.locator(".file-viewer-body"), `.comment-pin[data-comment-id="${line8}"]`, '.hl-line[data-source-line="8"]', "line 8's comment");
-    await sync.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await sync.waitFor({ state: "detached" });
     console.log("PASS composer: tap 3 opens src/sync.ts in the code view at its comment on line 8");
 

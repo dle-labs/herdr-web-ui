@@ -192,6 +192,11 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   Switching keeps saved comments and is refused while a comment field is dirty. Unchanged paths
   open the existing file preview in the same surface. Diffs form one continuous scroll region, with the tree selection following
   the viewed file. On narrow screens the tree and document are separate steps.
+  **Close file** closes only the embedded document, clears its selection and returns focus to
+  navigation; the browser, expanded folders, saved comments and history entry stay open. The
+  desktop detail says **Select a file to view.** until another file is selected; refresh does not
+  reopen the closed document. **Close files**, Escape without an open comment, the scrim and
+  system Back dismiss the whole browser. Both close buttons protect dirty comment drafts.
 - A changes shortcut immediately before the composer's agent mark appears when the visible pane
   has changes. Follow edits is opt-in, refreshes only while visible and connected, and preserves
   dirty comment drafts. Wrap and highlight controls share the file viewer's settings.

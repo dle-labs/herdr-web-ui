@@ -744,6 +744,7 @@ export const JA: Record<string, string> = {
   "A paired device gets in on its own, from anywhere it can reach this server, until you revoke it here. A code comes from this screen on the PC or on a device already paired, or from the pair command in the PC's terminal.": "ペアリングされたデバイスは、ここで取り消すまで、このサーバーに到達できる場所ならどこからでも自動的にアクセスできます。コードは PC やペアリング済みデバイスのこの画面、または PC のターミナルの pair コマンドで取得できます。",
   "Or send this link to it:": "またはこのリンクをそのデバイスに送信してください:",
   "Loading…": "読み込んでいます…",
+  "Select a file to view.": "表示するファイルを選択してください。",
   "No devices paired yet.": "ペアリングされたデバイスはまだありません。",
   "Device name": "デバイス名",
   "Save name": "名前を保存",
