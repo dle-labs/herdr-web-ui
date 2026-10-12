@@ -46,7 +46,10 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("requestfailed", (request) => cancelled.push(request.url()));
   await page.goto(`http://127.0.0.1:${server.port}`);
-  const open = async (path: string) => { await page.evaluate((path) => window.previewQA.open(path), path); await page.getByRole("dialog").waitFor(); };
+  // FileViewer is embedded in the workspace browser now; this focused fixture exercises
+  // that real preview directly, rather than relying on its former standalone dialog role.
+  const viewer = page.locator(".file-viewer-embedded");
+  const open = async (path: string) => { await page.evaluate((path) => window.previewQA.open(path), path); await viewer.waitFor(); };
   await open("error");
   await page.getByRole("alert").filter({ hasText: "The file could not be opened." }).waitFor();
   assert.equal(await source.count(), 0);
@@ -75,7 +78,7 @@ try {
   await open("close");
   await closingResponse;
   await page.getByRole("button", { name: "Close file", exact: true }).click();
-  await page.getByRole("dialog").waitFor({ state: "detached" });
+  await viewer.waitFor({ state: "detached" });
   await open("good"); await page.getByText("한글 complete", { exact: true }).waitFor();
   await page.waitForFunction(() => document.querySelector(".file-viewer-content > pre.hl-code.file-viewer-text > code")?.textContent === "한글 complete");
   assert.ok(cancelled.some((url) => new URL(url).searchParams.get("path") === "close"), "closing aborts the active response");
