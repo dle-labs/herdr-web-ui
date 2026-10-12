@@ -112,7 +112,6 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
 - Comment editors no longer stop at 2,000 characters; the combined message is still checked against the send limit.
 - Chat selection comments keep list bullets, numbering and task checkbox markers in their quotes.
 - Comments sent from chat or file selections stay outside the quoted text in terminal Markdown renderers.
-- This fork uses `dle-labs.herdr-web-ui` for its plugin identity, phone setup actions and config-directory lookup.
 - A phone shows a split tab one pane at a time again, at the screen's whole width, instead of
   every pane squeezed into herdr's grid (since 0.4.6). The tab's menu lists the tab's panes to
   switch between them. Wider screens keep the split, and herdr's own layout is not changed.
