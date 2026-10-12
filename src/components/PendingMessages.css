@@ -33,11 +33,17 @@
   color: var(--text-strong);
   font: inherit;
   line-height: var(--lh-prose);
-  white-space: pre-wrap;
+  white-space: normal;
   overflow-wrap: anywhere;
   text-align: start;
   cursor: text;
   user-select: text;
+}
+
+.pending-message-source {
+  margin: 0;
+  font: inherit;
+  white-space: pre-wrap;
 }
 
 .pending-message-meta {

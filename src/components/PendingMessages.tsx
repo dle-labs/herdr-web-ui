@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ArrowUp, Copy, X } from "lucide-react";
 import type { PendingMessageView } from "../lib/pendingMessages.ts";
-import { copyText } from "../lib/clipboard.ts";
+import { copyText, selectContents } from "../lib/clipboard.ts";
+import { Markdown } from "./Markdown.tsx";
 import { submitNote } from "../lib/compose.ts";
 import { useT } from "../lib/i18n.ts";
 import "./PendingMessages.css";
@@ -37,6 +38,10 @@ export function PendingMessages({ messages, active = true, connected, blocked, u
   activeRef.current = active;
   const rootRef = useRef<HTMLOListElement | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [copySource, setCopySource] = useState<string | null>(null);
+  const selectSource = useCallback((node: HTMLPreElement | null): void => {
+    if (node && activeRef.current) selectContents(node);
+  }, []);
   const restoreFocus = (keyboard: boolean, target: HTMLButtonElement, stack: Element | null, owner: string | null): void => {
     const root = rootRef.current;
     if (!activeRef.current || !keyboard || target.isConnected || !stack?.isConnected || stack.getAttribute("data-pane-owner") !== owner) return;
@@ -51,7 +56,11 @@ export function PendingMessages({ messages, active = true, connected, blocked, u
       const uncertain = message.state === "uncertain";
       const status = pendingStatus(message, busy, t);
       return <li key={message.id} className="pending-message" data-state={message.state}>
-        <div className="pending-message-bubble" aria-busy={busy || undefined}>{message.text}</div>
+        <div className="pending-message-bubble" aria-busy={busy || undefined}>
+          {copySource === message.id
+            ? <pre className="pending-message-source" ref={selectSource}>{message.text}</pre>
+            : <Markdown>{message.text}</Markdown>}
+        </div>
         <div className="pending-message-meta">
           <span className="pending-message-note" role="status">{status}</span>
           {!uncertain && <button type="button" className="icon-button pending-message-action pending-message-send"
@@ -62,8 +71,12 @@ export function PendingMessages({ messages, active = true, connected, blocked, u
             }}><ArrowUp aria-hidden="true" /><span>{t("Send now")}</span></button>}
           {uncertain && <button type="button" className="icon-button pending-message-action" aria-label={copied === message.id ? t("Copied") : t("Copy message")}
             title={t("Copy message")} onClick={(event) => {
-              const text = event.currentTarget.closest(".pending-message")?.querySelector<HTMLElement>(".pending-message-bubble");
-              void copyText(message.text, text).then((ok) => { if (ok) setCopied(message.id); });
+              const initiator = document.activeElement;
+              // Copy the source, never the rendered blockquote (which has no `>` markers).
+              void copyText(message.text).then((ok) => {
+                if (ok) { setCopied(message.id); setCopySource(null); }
+                else if (activeRef.current && document.activeElement === initiator) setCopySource(message.id);
+              });
             }}><Copy aria-hidden="true" /></button>}
           <button type="button" className="icon-button pending-message-action" aria-label={uncertain ? t("Discard saved copy") : t("Discard")}
             title={uncertain ? t("Discard saved copy") : t("Discard")} disabled={busy || message.serverOwned && !connected}

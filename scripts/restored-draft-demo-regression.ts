@@ -23,6 +23,65 @@ const { chromium } = (await import(playwrightCore)) as typeof import("playwright
 const TURN_TEXT = "Rename the backup job\nand rerun it";
 /** what the agent's input box holds again, as one line */
 const RESTORED = "Rename the backup job and rerun it";
+const QUOTED = "Review this:\n\n> first quoted line\n> second quoted line\n>\n> > nested quote\n\nKeep **my reply** separate.";
+
+/** A saved pending copy has no connection proof; it renders Markdown but copies its exact source. */
+async function pendingQuoteCopies(page: Page): Promise<void> {
+  const row = page.locator('.pending-message[data-state="uncertain"]');
+  await row.waitFor();
+  assert.equal(await row.locator("blockquote").count(), 2, "saved quotes render, including nesting");
+  assert.equal(await row.locator("blockquote blockquote").innerText(), "nested quote");
+  assert.equal(await row.locator(".pending-message-send").count(), 0, "formatting cannot permit a retry");
+  assert.equal(await row.locator(".pending-message-bubble").evaluate((node) => getComputedStyle(node).whiteSpace), "normal");
+
+  // Reload uses the retained localStorage source, not text reconstructed from the rendered quote.
+  await page.reload();
+  await row.waitFor();
+  assert.equal(await row.locator("blockquote").count(), 2);
+  const copy = row.getByRole("button", { name: "Copy message", exact: true });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: async (text: string) => { (window as unknown as { copiedSource: string }).copiedSource = text; },
+    } });
+  });
+  await copy.click();
+  await row.getByRole("button", { name: "Copied", exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => (window as unknown as { copiedSource: string }).copiedSource), QUOTED, "clipboard API preserves markers and newlines");
+
+  // Insecure-context fallback copies from a textarea, not from the rendered DOM.
+  await page.reload();
+  await row.waitFor();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+    document.execCommand = (command: string) => {
+      if (command !== "copy") return false;
+      (window as unknown as { copiedSource: string }).copiedSource = (document.activeElement as HTMLTextAreaElement).value;
+      return true;
+    };
+  });
+  await copy.click();
+  await row.getByRole("button", { name: "Copied", exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => (window as unknown as { copiedSource: string }).copiedSource), QUOTED, "legacy copy preserves the same source");
+
+  // If both APIs refuse, select visible source: selecting a rendered quote would lose its `>`.
+  await page.reload();
+  await row.waitFor();
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => { throw new Error("refused"); } } });
+    document.execCommand = () => false;
+  });
+  await copy.click();
+  await row.locator(".pending-message-source").waitFor();
+  assert.equal(await page.evaluate(() => window.getSelection()?.toString()), QUOTED, "manual copying selects literal quote markers too");
+  const composer = page.getByRole("textbox", { name: "Message", exact: true });
+  await composer.fill("keep typing");
+  assert.equal(await composer.inputValue(), "keep typing", "manual-copy fallback never replaces the draft");
+  await composer.fill("");
+  await page.reload();
+  await row.waitFor();
+  assert.equal(await row.locator("blockquote").count(), 2, "manual-copy mode is not persisted");
+  console.log("PASS saved pending quotes render after reload and all copy paths retain their exact Markdown source");
+}
 
 const extraTurn = (): unknown => ({ role: "user", ts: new Date().toISOString(), parts: [{ kind: "text", text: TURN_TEXT }] });
 
@@ -133,10 +192,14 @@ try {
     try {
       const desktop = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "en-US" });
       try {
-        await desktop.addInitScript((paneId) => {
+        await desktop.addInitScript(({ paneId, quoted }) => {
           localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
           localStorage.setItem(`herdr-web-ui:view:${paneId}`, "chat");
-        }, panes.infra);
+          const key = `herdr-web-ui:pending:${paneId}`;
+          if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify({ version: 1, messages: [
+            { id: "saved-quote", request_id: 1, text: quoted, created_at: "2026-01-01T00:00:00Z", state: "queued" },
+          ] }));
+        }, { paneId: panes.infra, quoted: QUOTED });
         const page = await desktop.newPage();
         const errors: string[] = [];
         page.on("pageerror", (error) => errors.push(error.message));
@@ -146,6 +209,7 @@ try {
         // the fixture's own two turns, before the send's turn joins them
         await page.waitForFunction(() => document.querySelectorAll(".chat-turn").length === 2, undefined, { timeout: 10_000 });
         await appFaces(page);
+        await pendingQuoteCopies(page);
         const composer = page.getByRole("textbox", { name: "Message", exact: true });
 
         // a send the agent restored fills an empty composer — without the focus, which would raise
@@ -197,6 +261,15 @@ try {
         console.log("PASS a composer holding the user's own words is never overwritten by a restored send");
 
         assert.deepEqual(errors, []);
+        const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US", storageState: await desktop.storageState() });
+        try {
+          const mobile = await phone.newPage();
+          const mobileErrors: string[] = [];
+          mobile.on("pageerror", (error) => mobileErrors.push(error.message));
+          await mobile.goto(url);
+          await pendingQuoteCopies(mobile);
+          assert.deepEqual(mobileErrors, []);
+        } finally { await phone.close(); }
       } finally { await desktop.close(); }
     } finally { await browser.close(); }
   } finally { server.stop(); }
