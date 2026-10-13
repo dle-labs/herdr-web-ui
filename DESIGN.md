@@ -205,14 +205,18 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   **Unified / Split** sits beside Refresh in the browser header only when the current comparison
   inventory contains diffs, and shares the Settings layout preference. Phones remain unified.
   Dirty comment drafts block layout changes.
-- **Find files…** searches filenames/paths across the repository (tracked and untracked,
+- **Find files…** and **Compare with…** live in the Files modal header, beside its title and
+  document controls, without a magnifying-glass icon or a separate toolbar in the body. On
+  narrow screens the finder and comparison button wrap into a second header row. Opening Files
+  does not automatically focus the finder or open its dropdown over a requested document.
+  **Find files…** searches filenames/paths across the repository (tracked and untracked,
   nonignored), or through a bounded directory walk outside Git. Arrow keys and Enter choose a
   result; Mod+P focuses this finder only while focus is inside Files, never in a terminal.
   Results float below the finder without shifting the file tree or document. At most five
   fixed-height path rows are visible, with long paths ellipsized and the remaining results
   scrollable; keyboard navigation scrolls only that list. Requests are debounced, stale
   responses ignored, and incomplete results are explicitly marked.
-- **Compare with…** opens a searchable commit combobox. The toolbar compares all files; a file's
+- **Compare with…** opens a searchable commit combobox. The header button compares all files; a file's
   right-click/Shift+F10 menu compares just that file. Choosing a commit compares its contents with
   the current working tree; **Working changes** restores the HEAD baseline. The chosen hash is
   visible and is preserved in saved comment coordinates. Comparisons are read-only and keep

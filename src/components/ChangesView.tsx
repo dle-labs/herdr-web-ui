@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { GitCompareArrows } from "lucide-react";
 import { WorkspaceFileSearch } from "./WorkspaceFileSearch.tsx";
 import { CommitPicker } from "./CommitPicker.tsx";
@@ -91,9 +92,9 @@ function DiffSection({ paneId, inventory, path, owner, connected, split, scrollR
   </section>;
 }
 
-export default function ChangesView({ paneId, start, connected, initialIntent = "browse", initialComment = null, initialPath = null, initialCommentId = null, showFile, onShowFile, refreshToken, keyboardActive, onHideFile, onDiffsChange }: {
+export default function ChangesView({ paneId, start, connected, initialIntent = "browse", initialComment = null, initialPath = null, initialCommentId = null, showFile, onShowFile, refreshToken, keyboardActive, onHideFile, onDiffsChange, toolsHost }: {
   paneId: string | null; start: string; connected: boolean; initialIntent?: WorkspaceFileIntent; initialComment?: FileComment | null;
-  initialPath?: string | null; initialCommentId?: string | null; showFile: boolean; onShowFile: () => void; refreshToken: number; keyboardActive: boolean; onHideFile: () => void; onDiffsChange: (hasDiffs: boolean) => void;
+  initialPath?: string | null; initialCommentId?: string | null; showFile: boolean; onShowFile: () => void; refreshToken: number; keyboardActive: boolean; onHideFile: () => void; onDiffsChange: (hasDiffs: boolean) => void; toolsHost: HTMLElement | null;
 }) {
   const t = useT();
   const machineId = useMachineId();
@@ -236,11 +237,11 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
   }
   const owner = paneId === null ? null : paneStorageId(machineId, paneId);
   return <div ref={surface} data-show-file={showFile || undefined} className={`changes-view${narrow && showFile ? " is-showing-file" : ""}`}>
-    {paneId !== null && <div className="workspace-file-tools">
+    {paneId !== null && toolsHost !== null && createPortal(<>
       <WorkspaceFileSearch paneId={paneId} refreshToken={refreshToken} onSelect={select} onReveal={onHideFile} />
       <button type="button" className="btn" onClick={() => setCompareTarget(null)}><GitCompareArrows aria-hidden="true" />{t("Compare with…")}</button>
       {baseCommit && <span className="changes-comparison-label" title={baseCommit}>{baseCommit.slice(0, 8)} → {t("Working tree")}</span>}
-    </div>}
+    </>, toolsHost)}
     {paneId !== null && compareTarget !== undefined && <CommitPicker paneId={paneId} label={compareTarget ?? t("All files")} onSelect={compare} onClose={() => setCompareTarget(undefined)} />}
     {markdownPath !== null && (!narrow || showFile) && <div className="changes-markdown-mode">
       <div className="segmented" role="group" aria-label={t("Markdown view")}>

@@ -10,12 +10,6 @@
   color: var(--text-dim);
 }
 
-.workspace-file-search-field > svg {
-  width: var(--icon-size);
-  height: var(--icon-size);
-  flex: none;
-}
-
 .workspace-file-search-input {
   width: 100%;
   min-width: 0;

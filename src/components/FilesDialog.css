@@ -29,6 +29,31 @@
   display: flex;
   padding: 0;
 }
+.files-dialog-header {
+  position: relative;
+  z-index: calc(var(--z-popover) + 1);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
 .files-dialog .modal-title {
+  flex: 0 0 auto;
+}
+.files-dialog-header > .icon-button:last-child { margin-inline-start: auto; }
+.files-dialog-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
   flex: 1;
+  min-width: 0;
+}
+.files-dialog-tools > :first-child { flex: 1; min-width: 160px; }
+.files-dialog-tools .btn svg { width: var(--space-4); height: var(--space-4); }
+.changes-comparison-label { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); }
+/* A phone keyboard leaves the document controls available. Mod+P / Back to files
+   reveals the finder; a focused finder is never hidden by this rule. */
+[data-keyboard] .files-dialog[data-show-file] .files-dialog-tools:not(:focus-within) { display: none; }
+@media (max-width: 768px) {
+  .files-dialog .modal-title { flex: 1; }
+  .files-dialog-tools { flex-basis: 100%; order: 1; }
 }

@@ -61,6 +61,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#606](https://github.com/devswha/herdr-web-ui/pull/606) by @sobir-git)
 
 ### Changed
+- Filename search and **Compare with…** share the Files modal header, without a redundant magnifying-glass icon or separate body toolbar.
 - Install and update counts include app setting values such as theme, text size and notification
   choices, rather than only the names of changed appearance settings. Custom text and account
   identifiers stay out; custom choices use flags or counts. The expanded notice is shown again

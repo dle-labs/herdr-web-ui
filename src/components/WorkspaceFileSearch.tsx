@@ -1,5 +1,4 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Search } from "lucide-react";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 import "./WorkspaceFileSearch.css";
@@ -83,7 +82,6 @@ export function WorkspaceFileSearch({ paneId, onSelect, refreshToken, disabled =
 
   return <div className="workspace-file-search">
     <div className="workspace-file-search-field">
-      <Search aria-hidden="true" />
       <input ref={input} className="input workspace-file-search-input" type="text" role="combobox"
         aria-label={t("Find files…")} placeholder={t("Find files…")} autoComplete="off" spellCheck={false}
         aria-autocomplete="list" aria-expanded={visible} aria-controls={visible ? id : undefined}

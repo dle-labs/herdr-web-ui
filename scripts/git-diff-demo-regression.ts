@@ -225,6 +225,12 @@ try {
           assert.equal(await dialog.getByRole("button", { name, exact: true }).count(), 0, `${name} is not a Files control`);
         }
         assert.equal(await dialog.locator(".modal-header").getByRole("button", { name: "Refresh changes", exact: true }).count(), 1, "refresh is in the modal header");
+        assert.equal(await dialog.locator(".modal-header").getByRole("combobox", { name: "Find files…", exact: true }).count(), 1, "filename search is in the modal header");
+        assert.equal(await dialog.locator(".modal-header").getByRole("button", { name: "Compare with…", exact: true }).count(), 1, "Compare with is in the modal header");
+        assert.equal(await dialog.locator(".workspace-file-search-field svg").count(), 0, "the redundant search icon is removed");
+        assert.equal(await dialog.locator(".modal-body .workspace-file-search, .workspace-file-tools").count(), 0, "there is no separate search toolbar in the body");
+        await frames(page);
+        assert.equal(await dialog.getByRole("combobox", { name: "Find files…", exact: true }).getAttribute("aria-expanded"), "false", "opening Files never auto-opens a search dropdown over its content");
         if (mobile) {
           assert.equal(await dialog.locator(".changes-navigation").isVisible(), true, "Browse files starts on the phone tree");
           assert.equal(await dialog.locator(".changes-detail").isVisible(), false, "detail does not cover the initial phone tree");
@@ -536,6 +542,10 @@ try {
         assert.ok(rows.rows.every((height) => Math.abs(height - rows.rows[0]!) <= 1), "long paths retain one fixed-height row");
         assert.ok(Math.abs(rows.height - rows.rows[0]! * 5) <= 1, "the list displays five rows at a time");
         assert.ok(rows.scrollHeight > rows.height, "the rest of the results are scrollable");
+        assert.ok(await searchList.getByRole("option").nth(4).evaluate((node) => {
+          const bounds = node.getBoundingClientRect();
+          return node.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+        }), "the header dropdown receives clicks above the browser content");
         const pageTop = await page.evaluate(() => window.scrollY);
         for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowDown");
         await frames(page);
