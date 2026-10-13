@@ -1085,6 +1085,22 @@ describe("diff comments in the existing pending workflow", () => {
     store.saveFile("o", target, "");
     expect(store.list("o")).toHaveLength(4);
   });
+  it("removes another tab's replacement through the opening's anchored target without touching other diff identities", () => {
+    const { store, storage } = storeAt();
+    store.saveFile("o", target, "original old-side note");
+    const opened = store.list("o")[0] as FileComment;
+    store.saveFile("o", { ...target, diff: { ...target.diff!, side: "new" } }, "new-side note");
+    store.saveFile("o", { ...target, diff: { ...target.diff!, revision: "earlier" } }, "earlier revision note");
+    const otherTab = new BlockCommentStore(() => storage);
+    otherTab.saveFile("o", opened, "replacement old-side note");
+    store.refresh("o");
+    expect(store.list("o").some((comment) => comment.id === opened.id)).toBe(false);
+    expect(store.list("o").some((comment) => comment.comment === "replacement old-side note")).toBe(true);
+    store.saveFile("o", opened, "");
+    expect(store.list("o").map((comment) => comment.comment).sort()).toEqual(["earlier revision note", "new-side note"]);
+    otherTab.refresh("o");
+    expect(otherTab.list("o")).toEqual(store.list("o"));
+  });
   it("never moves diff coordinates through the ordinary file move API", () => {
     const { store, data } = storeAt();
     store.saveFile("o", target, "old");

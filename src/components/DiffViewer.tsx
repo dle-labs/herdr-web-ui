@@ -49,7 +49,8 @@ function DiffCommentEditor({ open, connected, text, onSave, onClose, onDelete }:
       <button type="button" className="icon-button" aria-label={t("Close comment")} onClick={draft.leave}><X aria-hidden="true" /></button></div>
     <CommentField draft={draft} />
     <div className="diff-comment-actions">
-      {open.commentId !== null && <button type="button" className="icon-button" aria-label={t("Delete comment")} onClick={() => { draft.dictation.cancel(); onDelete(); }}><Trash2 aria-hidden="true" /></button>}
+      <button type="button" className="icon-button" aria-label={open.commentId === null ? t("Discard comment") : t("Delete comment")} title={open.commentId === null ? t("Discard comment") : t("Delete comment")}
+        onClick={() => { draft.dictation.cancel(); onDelete(); }}><Trash2 aria-hidden="true" /></button>
       {showDictation && <MicButton dictation={draft.dictation} />}
       <span>{t("Saved comments are included with your next chat message.")}</span>
       <button type="button" className="icon-button" aria-label={t("Save comment")} disabled={!draft.canSave} onClick={draft.save}><ArrowUp aria-hidden="true" /></button>

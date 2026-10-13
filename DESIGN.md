@@ -227,7 +227,10 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 - Comment links reveal and open the requested current or outdated editor, including old-side
   rename paths. A failed diff keeps its saved comments editable in the fallback section.
 - Saving adds a pending chat comment; it neither changes source files nor sends a message.
-  Dirty fields block close, comparison switches and refresh until saved or explicitly cleared.
+  A new diff comment has an explicit **Discard comment** trash action, which closes its draft
+  without touching saved comments. Saved comments use **Delete comment**, including when another
+  tab replaced the saved ID while a changed editor stayed open; deletion stays on the same target.
+  Dirty fields block close, comparison switches and refresh until saved or explicitly discarded or cleared.
 
 ### Rules
 - Amber is the one chrome color. Accent (selected, focused, informational) and primary (the user's

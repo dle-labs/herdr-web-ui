@@ -86,7 +86,18 @@ export function useCommentPopover<T>({ persist, enabled }: {
   const remove = useCallback((): void => {
     const current = openRef.current;
     if (current === null) return;
-    if (current.commentId !== null) blockComments.remove(current.owner, [current.commentId]);
+    if (current.commentId !== null) {
+      blockComments.refresh(current.owner);
+      if (blockComments.list(current.owner).some((comment) => comment.id === current.commentId)) {
+        blockComments.remove(current.owner, [current.commentId]);
+      } else {
+        // Another tab can replace the saved ID while this changed draft stays
+        // open. Delete the comment still on its target, not the obsolete ID.
+        // The surface's persistence lookup checks the full target identity.
+        persistRef.current(current.owner, current.target, "");
+      }
+    }
+    // A new comment's Discard closes only its draft, never another tab's save.
     close();
   }, [close]);
 

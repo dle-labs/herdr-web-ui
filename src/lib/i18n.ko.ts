@@ -1057,6 +1057,7 @@ export const KO: Record<string, string> = {
   "Comments with this message: {count}": "이 메시지의 댓글: {count}",
   "Delete 1 comment?": "댓글 1개를 삭제할까요?",
   "Delete comment": "댓글 삭제",
+  "Discard comment": "댓글 버리기",
   "Delete {count} comments?": "댓글 {count}개를 삭제할까요?",
   "Diff layout": "파일 비교 레이아웃",
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "이 기기의 채팅과 파일 뷰어에 있는 모든 댓글이 삭제됩니다. 되돌릴 수 없습니다.",

@@ -252,6 +252,10 @@ try {
         if (mobile) {
           assert.equal(await section(dialog).locator('[data-diff-type]').getAttribute("data-diff-type"), "single");
           assert.equal(await dialog.locator(".changes-navigation").isVisible(), false, "mobile detail replaces the tree");
+          await selectComment(dialog, "old");
+          await field(dialog).fill("Discard this phone diff draft");
+          await dialog.getByRole("button", { name: "Discard comment", exact: true }).click();
+          await field(dialog).waitFor({ state: "detached" });
           await dialog.getByRole("button", { name: "Back to files", exact: true }).click();
           await treeFile(dialog, "src/new.ts").click();
           await section(dialog, "src/new.ts").locator('[data-diff-type="single"]').waitFor();
@@ -333,6 +337,55 @@ try {
           assert.equal(await field(dialog).inputValue(), "Preserve this draft");
           assert.equal(await page.evaluate(() => (window as any).gitRequests.length), requests, "dirty editor blocks refresh requests");
           await saveComment(dialog, "Review the new greeting");
+          for (const name of ["Split", "Unified"]) {
+            await browserLayout.getByRole("button", { name, exact: true }).click();
+            await section(dialog).locator(`[data-diff-type="${name === "Split" ? "split" : "single"}"]`).waitFor();
+            await selectComment(dialog, "old");
+            await field(dialog).fill("Discard this old-side draft");
+            await dialog.getByRole("button", { name: "Close comment", exact: true }).click();
+            assert.equal(await field(dialog).inputValue(), "Discard this old-side draft", "Close still protects dirty drafts");
+            await dialog.getByRole("button", { name: "Discard comment", exact: true }).click();
+            await field(dialog).waitFor({ state: "detached" });
+            assert.equal(await section(dialog).getByText("Discard this old-side draft", { exact: true }).count(), 0);
+            assert.equal(await section(dialog).getByText("Review the new greeting", { exact: true }).count(), 1, "discard does not remove saved comments");
+          }
+          await browserLayout.getByRole("button", { name: "Split", exact: true }).click();
+          await section(dialog).locator('[data-diff-type="split"]').waitFor();
+          await selectComment(dialog, "old");
+          await saveComment(dialog, "Explain the old greeting");
+          await section(dialog).getByText("Explain the old greeting", { exact: true }).click();
+          await field(dialog).fill("Keep this changed editor open");
+          const otherPage = await context.newPage();
+          try {
+            await otherPage.goto(url);
+            await otherPage.locator(".conn-live").waitFor({ state: "attached" });
+            await otherPage.evaluate(() => { (window as any).gitRevision = 1; });
+            const otherDialog = await openChanges(otherPage);
+            await treeFile(otherDialog, "src").click();
+            await treeFile(otherDialog, "src/greeting.ts").click();
+            await section(otherDialog).getByText("Explain the old greeting", { exact: true }).click();
+            await saveComment(otherDialog, "Old-side comment updated in another tab");
+            await section(dialog).getByText("Old-side comment updated in another tab", { exact: true }).waitFor();
+            assert.equal(await field(dialog).inputValue(), "Keep this changed editor open", "another tab's save preserves the dirty editor");
+            await dialog.getByRole("button", { name: "Delete comment", exact: true }).click();
+            await field(dialog).waitFor({ state: "detached" });
+            await section(dialog).getByText("Old-side comment updated in another tab", { exact: true }).waitFor({ state: "detached" });
+            await section(otherDialog).getByText("Old-side comment updated in another tab", { exact: true }).waitFor({ state: "detached" });
+            assert.equal(await section(dialog).getByText("Review the new greeting", { exact: true }).count(), 1, "old-side deletion preserves the new-side comment");
+            await selectComment(dialog, "old");
+            await field(dialog).fill("Discard only this local draft");
+            await selectComment(otherDialog, "old");
+            await saveComment(otherDialog, "Keep the other tab's new comment");
+            await section(dialog).getByText("Keep the other tab's new comment", { exact: true }).waitFor();
+            await dialog.getByRole("button", { name: "Discard comment", exact: true }).click();
+            await field(dialog).waitFor({ state: "detached" });
+            assert.equal(await section(dialog).getByText("Keep the other tab's new comment", { exact: true }).count(), 1, "discarding a new draft never deletes a concurrent save");
+            await section(dialog).getByText("Keep the other tab's new comment", { exact: true }).click();
+            await field(dialog).waitFor();
+            await dialog.getByRole("button", { name: "Delete comment", exact: true }).click();
+            await field(dialog).waitFor({ state: "detached" });
+            await section(otherDialog).getByText("Keep the other tab's new comment", { exact: true }).waitFor({ state: "detached" });
+          } finally { await otherPage.close(); }
           await selectComment(dialog, "old");
           await saveComment(dialog, "Explain the old greeting");
           await selectComment(dialog, "new", 1, 3);
@@ -408,6 +461,10 @@ try {
         await quick.locator(".commit-picker-option").nth(1).click();
         await page.waitForFunction(() => document.querySelectorAll("[data-diff-path]").length > 1);
         assert.ok((await page.evaluate(() => (window as any).gitRequests as string[])).some((request) => new URL(request, url).searchParams.get("base_commit") === selectedBase), "historical comparisons pass the chosen base to the API");
+        await selectComment(quick, "old");
+        await field(quick).fill("Discard this historical diff draft");
+        await quick.getByRole("button", { name: "Discard comment", exact: true }).click();
+        await field(quick).waitFor({ state: "detached" });
         await quick.getByRole("button", { name: "Close files", exact: true }).click();
         await page.waitForFunction(() => !history.state?.["herdr-web-ui:sheet"]);
         console.log(`PASS File tools: ${mobile ? "phone" : "desktop"} filename search, keyboard commit search, single-file context comparison and all-file comparison`);

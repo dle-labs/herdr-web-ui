@@ -1061,6 +1061,7 @@ export const ZH: Record<string, string> = {
   "Comments with this message: {count}": "此消息的评论：{count}",
   "Delete 1 comment?": "删除 1 条评论？",
   "Delete comment": "删除评论",
+  "Discard comment": "丢弃评论",
   "Delete {count} comments?": "删除 {count} 条评论？",
   "Diff layout": "差异布局",
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "此设备上聊天和文件查看器中的所有评论都将被删除，且无法撤销。",

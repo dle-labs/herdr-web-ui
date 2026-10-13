@@ -1059,6 +1059,7 @@ export const JA: Record<string, string> = {
   "Comments with this message: {count}": "このメッセージのコメント: {count}",
   "Delete 1 comment?": "コメント 1 件を削除しますか？",
   "Delete comment": "コメントを削除",
+  "Discard comment": "コメントを破棄",
   "Delete {count} comments?": "コメント {count} 件を削除しますか？",
   "Diff layout": "差分レイアウト",
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "このデバイスのチャットとファイルビューアにあるコメントがすべて削除されます。この操作は元に戻せません。",

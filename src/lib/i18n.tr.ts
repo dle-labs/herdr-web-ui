@@ -1012,6 +1012,7 @@ export const TR: Record<string, string> = {
   "Comments with this message: {count}": "Bu mesajdaki yorumlar: {count}",
   "Delete 1 comment?": "1 yorum silinsin mi?",
   "Delete comment": "Yorumu sil",
+  "Discard comment": "Yorumu at",
   "Delete {count} comments?": "{count} yorum silinsin mi?",
   "Diff layout": "Fark görünümü düzeni",
   "Every comment in the chat and the file viewer on this device is deleted. This cannot be undone.": "Bu cihazdaki sohbet ve dosya görüntüleyicide bulunan tüm yorumlar silinir. Bu işlem geri alınamaz.",
