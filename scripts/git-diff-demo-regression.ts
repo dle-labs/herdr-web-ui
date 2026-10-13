@@ -201,7 +201,7 @@ try {
         assert.equal(await dialog.getByRole("tab").count(), 0, "there are no Files/Changes tabs");
         assert.equal(await dialog.locator(".changes-toolbar, .changes-filepath, .changes-path").count(), 0, "old changes toolbar and file path bar are absent");
         assert.equal(await dialog.getByRole("combobox", { name: "Compare", exact: true }).count(), 0, "the retired mode selector is absent");
-        for (const name of ["Compare", "Follow edits", "Open file", "All changes", "Unified", "Split", "Wrap long lines", "Highlight code"]) {
+        for (const name of ["Compare", "Follow edits", "Open file", "All changes", "Wrap long lines", "Highlight code"]) {
           assert.equal(await dialog.getByRole("button", { name, exact: true }).count(), 0, `${name} is not a Files control`);
         }
         assert.equal(await dialog.locator(".modal-header").getByRole("button", { name: "Refresh changes", exact: true }).count(), 1, "refresh is in the modal header");
@@ -261,6 +261,12 @@ try {
           console.log("PASS Git Changes: phone tree, embedded preview, unified diff and back navigation");
         } else {
           assert.equal(await section(dialog).locator('[data-diff-type]').getAttribute("data-diff-type"), "split");
+          assert.equal(await dialog.locator(".diff-comment-keyboard").count(), 0, "diffs do not show a side/line comment form");
+          const browserLayout = dialog.locator(".modal-header").getByRole("group", { name: "Diff layout", exact: true });
+          await browserLayout.getByRole("button", { name: "Unified", exact: true }).click();
+          await section(dialog).locator('[data-diff-type="single"]').waitFor();
+          await browserLayout.getByRole("button", { name: "Split", exact: true }).click();
+          await section(dialog).locator('[data-diff-type="split"]').waitFor();
           await page.keyboard.press("ControlOrMeta+Shift+Comma");
           await openSettingsPage(page, "File viewer");
           const settings = page.getByRole("dialog", { name: "Settings", exact: true });
@@ -318,6 +324,8 @@ try {
           await field(dialog).fill("Preserve this draft");
           const requests = await page.evaluate(() => (window as any).gitRequests.length);
           await dialog.getByRole("button", { name: "Refresh changes", exact: true }).click();
+          await browserLayout.getByRole("button", { name: "Unified", exact: true }).click();
+          assert.equal(await section(dialog).locator('[data-diff-type]').getAttribute("data-diff-type"), "split", "dirty editor blocks layout changes");
           await dialog.getByRole("button", { name: "Close files", exact: true }).click();
           await page.keyboard.press("Escape");
           await frames(page);
@@ -349,6 +357,7 @@ try {
         await empty.getByRole("option", { name: "Working changes", exact: true }).click();
         await empty.getByText("No changes in this comparison.", { exact: true }).waitFor({ state: "attached" });
         assert.equal(await empty.locator("[data-diff-path]").count(), 0);
+        assert.equal(await empty.locator(".modal-header").getByRole("group", { name: "Diff layout", exact: true }).count(), 0, "empty inventory hides layout controls");
         if (mobile) {
           await empty.getByRole("button", { name: "Back to files", exact: true }).click();
           await treeFile(empty, "unchanged.ts").waitFor();
@@ -429,11 +438,8 @@ try {
           await number(section(markdown, file.path), "new", 3).waitFor();
           assert.equal(await diff.getAttribute("aria-pressed"), "true", "Diff renders real selectable Git lines");
           if (file.status === "modified") {
-            const keyboard = section(markdown, file.path).locator(".diff-comment-keyboard");
-            await keyboard.getByLabel("Comment side", { exact: true }).selectOption("additions");
-            await keyboard.getByLabel("Comment line", { exact: true }).fill("3");
-            await keyboard.getByRole("button", { name: "Add comment", exact: true }).focus();
-            await page.keyboard.press("Enter");
+            await number(section(markdown, file.path), "new", 3).click();
+            await field(markdown).waitFor();
             await field(markdown).fill("Keep the Markdown diff draft");
             await preview.click();
             await frames(page);

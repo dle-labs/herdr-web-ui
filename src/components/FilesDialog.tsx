@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { ArrowLeft, RefreshCw, X } from "lucide-react";
 
 import { useT } from "../lib/i18n.ts";
+import { useSettings } from "../lib/settings.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
@@ -38,6 +39,8 @@ export function FilesDialog({ start, paneId, connected, initialIntent = "browse"
   const narrow = useMediaQuery("(max-width: 768px)");
   const [showFile, setShowFile] = useState(initialPath !== null || initialComment !== null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [hasDiffs, setHasDiffs] = useState(false);
+  const { settings, update } = useSettings();
   const machineId = useMachineId();
   useOpeningPaneLane(surface, paneId === null ? null : paneStorageId(machineId, paneId));
   const leave = (): boolean => {
@@ -73,12 +76,16 @@ export function FilesDialog({ start, paneId, connected, initialIntent = "browse"
           {narrow && showFile && <button type="button" className="icon-button" aria-label={t("Back to files")} onClick={() => { if (leave()) setShowFile(false); }}><ArrowLeft aria-hidden="true" /></button>}
           <h2 className="modal-title" id="files-dialog-title">{t("Files")}</h2>
           {paneId !== null && <button type="button" className="icon-button" aria-label={t("Refresh changes")} onClick={() => { if (leave()) setRefreshToken((value) => value + 1); }}><RefreshCw aria-hidden="true" /></button>}
+          {hasDiffs && <div className="segmented" role="group" aria-label={t("Diff layout")}>
+            <button type="button" aria-pressed={narrow || !settings.splitDiff} onClick={() => { if (leave()) update({ splitDiff: false }); }}>{t("Unified")}</button>
+            <button type="button" aria-pressed={!narrow && settings.splitDiff} disabled={narrow} onClick={() => { if (leave()) update({ splitDiff: true }); }}>{t("Split")}</button>
+          </div>}
           <button type="button" className="icon-button" aria-label={t("Close files")} title={t("Close files")} onClick={close}><X aria-hidden="true" /></button>
         </header>
         <div className="modal-body">
           <Suspense fallback={<p role="status">{t("Loading…")}</p>}>
             <ChangesView start={start} paneId={paneId} connected={connected} initialIntent={initialIntent} initialComment={initialComment} initialPath={initialPath} initialCommentId={initialCommentId}
-              showFile={showFile} onShowFile={() => setShowFile(true)} refreshToken={refreshToken} keyboardActive={keyboardActive} onHideFile={() => setShowFile(false)} />
+              showFile={showFile} onShowFile={() => setShowFile(true)} refreshToken={refreshToken} keyboardActive={keyboardActive} onHideFile={() => setShowFile(false)} onDiffsChange={setHasDiffs} />
           </Suspense>
         </div>
       </section>

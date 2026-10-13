@@ -91,9 +91,9 @@ function DiffSection({ paneId, inventory, path, owner, connected, split, scrollR
   </section>;
 }
 
-export default function ChangesView({ paneId, start, connected, initialIntent = "browse", initialComment = null, initialPath = null, initialCommentId = null, showFile, onShowFile, refreshToken, keyboardActive, onHideFile }: {
+export default function ChangesView({ paneId, start, connected, initialIntent = "browse", initialComment = null, initialPath = null, initialCommentId = null, showFile, onShowFile, refreshToken, keyboardActive, onHideFile, onDiffsChange }: {
   paneId: string | null; start: string; connected: boolean; initialIntent?: WorkspaceFileIntent; initialComment?: FileComment | null;
-  initialPath?: string | null; initialCommentId?: string | null; showFile: boolean; onShowFile: () => void; refreshToken: number; keyboardActive: boolean; onHideFile: () => void;
+  initialPath?: string | null; initialCommentId?: string | null; showFile: boolean; onShowFile: () => void; refreshToken: number; keyboardActive: boolean; onHideFile: () => void; onDiffsChange: (hasDiffs: boolean) => void;
 }) {
   const t = useT();
   const machineId = useMachineId();
@@ -109,6 +109,9 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
   const [comparisonPath, setComparisonPath] = useState<string | null>(null);
   // undefined: closed, null: all files, string: one repository-relative file.
   const [compareTarget, setCompareTarget] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    onDiffsChange(inventory?.files.some((file) => comparisonPath === null || file.path === comparisonPath || file.old_path === comparisonPath) ?? false);
+  }, [inventory, comparisonPath, onDiffsChange]);
   const [initialRequestActive, setInitialRequestActive] = useState(true);
   const initialRequest = useRef(true);
   // An inventory read already in flight must not reselect a file after it closes.

@@ -23,7 +23,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   halves. A press in a half makes it the one the header, the palette and the shortcuts act on.
   The split is kept across a reload, and a narrower window shows the active half alone. Drag
   guide by @flam-ing. ([#861](https://github.com/devswha/herdr-web-ui/pull/861) by @Yoonwoo-Ha)
-- Browse files and all current Git changes in one modal viewer with a compact file tree, colorful file-type icons, dimmed Git-ignored folders and continuous diffs. File links open in this same browser; diff layout, wrapping and highlighting preferences live in Settings. Open changes from the composer and add inline old/new line-range comments, with dictation, to the next chat message.
+- Browse files and all current Git changes in one modal viewer with a compact file tree, colorful file-type icons, dimmed Git-ignored folders and continuous diffs. File links open in this same browser; Unified/Split controls sit beside Refresh when diffs exist, sharing the Settings layout preference. Wrapping and highlighting preferences live in Settings. Open changes from the composer and add inline old/new line-range comments, with dictation, to the next chat message.
 - Use Pierre's Shiki highlighting engine across diffs, files and chat, with shared palette colors and bounded background highlighting for file/chat code.
 - The file viewer and Markdown reader page offer **Show source**, highlighted source with
   CSS-counter line numbers, and **Copy file**, which selects the source when copying is unavailable.

@@ -1038,8 +1038,6 @@ export const KO: Record<string, string> = {
   "Couldn't read the plan. Trying again…": "계획을 읽지 못했습니다. 다시 시도하는 중…",
   "Only part of this file is shown. Download it to read the rest.": "파일의 일부만 표시됩니다. 나머지는 다운로드해 확인하세요.",
   "Add comment": "댓글 추가",
-  "Comment side": "댓글 방향",
-  "Comment line": "댓글 줄",
   "Back to files": "파일 목록으로 돌아가기",
   "Binary files cannot be displayed as a text diff.": "바이너리 파일은 텍스트 비교로 표시할 수 없습니다.",
   "Changed files": "변경된 파일",

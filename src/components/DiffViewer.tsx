@@ -160,8 +160,6 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
   const shown = comments.filter((comment) => comment.diff?.revision === file.revision);
   const outdated = comments.filter((comment) => comment.diff?.revision !== file.revision);
   const metadata = useMemo(() => diffMetadata(file, mode), [file, mode]);
-  const [keyboardSide, setKeyboardSide] = useState<"deletions" | "additions">(file.new_file === null ? "deletions" : "additions");
-  const [keyboardLine, setKeyboardLine] = useState("1");
   const initialOpened = useRef<string>();
   useEffect(() => {
     if (initialId === undefined || initialOpened.current === initialId) return;
@@ -214,25 +212,13 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
       <span>{metadata.comment.comment}</span>
     </button>
   );
-  const keyboardRange = { start: Number(keyboardLine), end: Number(keyboardLine), side: keyboardSide };
-  const canAddKeyboard = useMemo(() => diffCommentTarget(file, mode, {
-    start: Number(keyboardLine), end: Number(keyboardLine), side: keyboardSide,
-  }) !== null, [file, mode, keyboardLine, keyboardSide]);
   return <div className="diff-viewer" ref={surface} data-comment-surface="">
-    {settings.comments && !file.binary && <form className="diff-comment-keyboard" onSubmit={(event) => { event.preventDefault(); if (canAddKeyboard) add(keyboardRange); }}>
-      <label>{t("Comment side")}<select className="select" aria-label={t("Comment side")} value={keyboardSide} onChange={(event) => setKeyboardSide(event.target.value as "deletions" | "additions")}>
-        <option value="deletions" disabled={file.old_file === null}>{t("Old")}</option>
-        <option value="additions" disabled={file.new_file === null}>{t("New")}</option>
-      </select></label>
-      <label>{t("Comment line")}<input className="input" type="number" min="1" step="1" value={keyboardLine} onChange={(event) => setKeyboardLine(event.target.value)} /></label>
-      <button className="btn" type="submit" disabled={!canAddKeyboard}>{t("Add comment")}</button>
-    </form>}
     {/* A fresh renderer prevents a worker's previous token AST from surviving the
         plain-text threshold change. The draft text lives outside this subtree. */}
     {metadata !== null && <FileDiff key={String(settings.highlightCode)} fileDiff={metadata} lineAnnotations={annotations} selectedLines={selected} options={{
       diffStyle: split ? "split" : "unified", theme: PIERRE_THEME, themeType: resolvedTheme,
-      // A target can lie in collapsed context, including a saved comment reached
-      // by keyboard/deep link. Keep it expanded for the lifetime of the editor.
+      // A saved comment reached by deep link can lie in collapsed context.
+      // Keep it expanded for the lifetime of the editor.
       expandUnchanged: popover.open !== null && popover.open.target.diff?.revision === file.revision,
       overflow: settings.wrapCode ? "wrap" : "scroll", disableFileHeader: true, diffIndicators: "classic", enableLineSelection: settings.comments,
       // Pierre's zero threshold takes its plain-text rendering path (including

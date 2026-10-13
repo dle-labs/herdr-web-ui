@@ -1,17 +1,3 @@
-.diff-comment-keyboard {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: var(--space-2);
-  padding: var(--space-2);
-}
-.diff-comment-keyboard label {
-  display: grid;
-  gap: var(--space-1);
-  font-size: var(--fs-xs);
-}
-.diff-comment-keyboard input { width: 7em; }
-
 /* Custom gutter utilities are slotted beside Pierre's positioned line-number
    content. Match its native utility's stacking, or the number intercepts clicks
    and moving onto the button makes the hover utility disappear. */

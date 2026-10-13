@@ -202,6 +202,9 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 - **Browse files** is a quick action beside the composer's microphone, or beside `+` when
   dictation is unavailable. It targets that composer's pane/PC without background polling;
   pane and tab menus do not contain Changed files. Wrap and highlight controls live in Settings.
+  **Unified / Split** sits beside Refresh in the browser header only when the current comparison
+  inventory contains diffs, and shares the Settings layout preference. Phones remain unified.
+  Dirty comment drafts block layout changes.
 - **Find files…** searches filenames/paths across the repository (tracked and untracked,
   nonignored), or through a bounded directory walk outside Git. Arrow keys and Enter choose a
   result; Mod+P focuses this finder only while focus is inside Files, never in a terminal.
@@ -223,7 +226,6 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   revisions move cards into Outdated comments, never onto unrelated source lines.
 - Comment links reveal and open the requested current or outdated editor, including old-side
   rename paths. A failed diff keeps its saved comments editable in the fallback section.
-  Keyboard users can select a diff side and line and add a comment without hovering a gutter.
 - Saving adds a pending chat comment; it neither changes source files nor sends a message.
   Dirty fields block close, comparison switches and refresh until saved or explicitly cleared.
 

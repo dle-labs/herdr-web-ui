@@ -1040,8 +1040,6 @@ export const JA: Record<string, string> = {
   "Couldn't read the plan. Trying again…": "計画を読み込めませんでした。再試行しています…",
   "Only part of this file is shown. Download it to read the rest.": "ファイルの一部のみ表示しています。残りはダウンロードしてお読みください。",
   "Add comment": "コメントを追加",
-  "Comment side": "コメントする側",
-  "Comment line": "コメントする行",
   "Back to files": "ファイル一覧に戻る",
   "Binary files cannot be displayed as a text diff.": "バイナリファイルはテキスト差分として表示できません。",
   "Changed files": "変更されたファイル",

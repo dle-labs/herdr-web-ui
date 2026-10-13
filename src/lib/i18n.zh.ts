@@ -1042,8 +1042,6 @@ export const ZH: Record<string, string> = {
   "Couldn't read the plan. Trying again…": "无法读取计划，正在重试…",
   "Only part of this file is shown. Download it to read the rest.": "仅显示文件的一部分。请下载文件以阅读其余内容。",
   "Add comment": "添加评论",
-  "Comment side": "评论侧",
-  "Comment line": "评论行",
   "Back to files": "返回文件列表",
   "Binary files cannot be displayed as a text diff.": "二进制文件无法显示为文本差异。",
   "Changed files": "已更改的文件",

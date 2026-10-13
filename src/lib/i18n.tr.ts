@@ -993,8 +993,6 @@ export const TR: Record<string, string> = {
   "Couldn't read the plan. Trying again…": "Plan okunamadı. Tekrar deneniyor…",
   "Only part of this file is shown. Download it to read the rest.": "Bu dosyanın yalnızca bir bölümü gösteriliyor. Gerisini okumak için indirin.",
   "Add comment": "Yorum ekle",
-  "Comment side": "Yorum tarafı",
-  "Comment line": "Yorum satırı",
   "Back to files": "Dosyalara dön",
   "Binary files cannot be displayed as a text diff.": "İkili dosyalar metin farkı olarak görüntülenemez.",
   "Changed files": "Değişen dosyalar",
