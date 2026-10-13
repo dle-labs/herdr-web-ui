@@ -70,6 +70,13 @@ describe("a paired watch device", () => {
     expect((await asWatcher("/api/fs/file?path=/etc/hostname")).status).toBe(403);
     expect((await asWatcher("/api/workspace/directories?cwd=/tmp")).status).toBe(403);
     expect((await asWatcher("/api/machines/local/workspace/directories?cwd=/tmp")).status).toBe(403);
+    for (const endpoint of ["changes", "diff", "commits", "files"]) {
+      for (const prefix of ["/api", "/api/machines/local", "/api/machines/remote-test"]) {
+        const response = await asWatcher(`${prefix}/workspace/${endpoint}?pane_id=test`);
+        expect(response.status).toBe(403);
+        expect(await response.json()).toMatchObject({ error: { code: "read_only" } });
+      }
+    }
     // sending an alert is not a preference: it makes the server POST somewhere
     expect((await asWatcher("/api/push/test", "POST")).status).toBe(403);
     // watching is the role's whole point

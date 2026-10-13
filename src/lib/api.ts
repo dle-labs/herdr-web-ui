@@ -10,6 +10,11 @@ import type {
   DirectoryListing,
   FileInfo,
   FocusPaneRequest,
+  GitDiffMode,
+  GitChangesResponse,
+  GitFileDiffResponse,
+  GitCommitsResponse,
+  WorkspaceFilesResponse,
   HealthAuth,
   IntegrationsResponse,
   LanExposure,
@@ -69,6 +74,20 @@ import type { VoiceConfigUpdate, VoiceStatus } from "../../shared/voice.ts";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { t } from "./i18n.ts";
 import { chatReadDeadlineMs, withChatReadDeadline } from "./chatReadDeadline.ts";
+
+/** GET /api/voice: only status comes back, never the server-held secret. */
+export async function fetchVoiceStatus(signal?: AbortSignal): Promise<VoiceStatus> {
+  const response = await fetch("/api/voice", { cache: "no-store", signal });
+  if (!response.ok) throw await errorFrom("/api/voice", response);
+  return (await response.json()) as VoiceStatus;
+}
+
+/** An environment key is read-only; the server rejects changes with key_from_env. */
+export async function saveVoiceConfig(update: VoiceConfigUpdate): Promise<VoiceStatus> {
+  const response = await fetch("/api/voice/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(update) });
+  if (!response.ok) throw await errorFrom("/api/voice/config", response);
+  return (await response.json()) as VoiceStatus;
+}
 
 /** Settings → Phone: what Tailscale on the server's PC already serves, or the command to run. */
 export function fetchRemoteAccess(): Promise<RemoteAccess> {
@@ -558,6 +577,26 @@ export async function fetchDirectories(path: string, hidden: boolean, machineId 
   return getJson<DirectoryListing>(machinePath(machineId, `workspace/directories?${query.toString()}`));
 }
 
+export function fetchGitCommits(paneId: string, query = "", machineId = "local"): Promise<GitCommitsResponse> {
+  return getJson<GitCommitsResponse>(machinePath(machineId, `workspace/commits?${new URLSearchParams({ pane_id: paneId, query })}`));
+}
+
+export function fetchWorkspaceFiles(paneId: string, query = "", machineId = "local"): Promise<WorkspaceFilesResponse> {
+  return getJson<WorkspaceFilesResponse>(machinePath(machineId, `workspace/files?${new URLSearchParams({ pane_id: paneId, query })}`));
+}
+
+export function fetchGitChanges(paneId: string, mode: GitDiffMode, machineId = "local", baseCommit?: string): Promise<GitChangesResponse> {
+  const query = new URLSearchParams({ pane_id: paneId, mode });
+  if (baseCommit !== undefined) query.set("base_commit", baseCommit);
+  return getJson<GitChangesResponse>(machinePath(machineId, `workspace/changes?${query.toString()}`));
+}
+
+export function fetchGitDiff(paneId: string, mode: GitDiffMode, path: string, machineId = "local", baseCommit?: string): Promise<GitFileDiffResponse> {
+  const query = new URLSearchParams({ pane_id: paneId, mode, path });
+  if (baseCommit !== undefined) query.set("base_commit", baseCommit);
+  return getJson<GitFileDiffResponse>(machinePath(machineId, `workspace/diff?${query.toString()}`));
+}
+
 function fileQuery(path: string, paneId: string | null): string {
   return new URLSearchParams({ path, ...(paneId ? { pane_id: paneId } : {}) }).toString();
 }
@@ -767,17 +806,3 @@ export async function machineRequest<T>(path: string, method = "GET", body?: unk
 export const startMachineSetup = (request: SetupRequest) => machineRequest<SetupJob>("/setup", "POST", request);
 export const fetchMachineSetup = (id: string) => machineRequest<SetupJob>(`/setup/${encodeURIComponent(id)}`);
 export const answerMachineSetup = (id: string, action: SetupAction) => machineRequest<SetupJob>(`/setup/${encodeURIComponent(id)}`, "POST", action);
-
-/** GET /api/voice: whether the server holds a key; the key itself never comes back. */
-export async function fetchVoiceStatus(): Promise<VoiceStatus> {
-  const response = await fetch("/api/voice", { cache: "no-store" });
-  if (!response.ok) throw await errorFrom("/api/voice", response);
-  return (await response.json()) as VoiceStatus;
-}
-
-/** PUT /api/voice/config: ApiError 409 `key_from_env` when the key comes from HERDR_WEB_OPENAI_API_KEY. */
-export async function saveVoiceConfig(update: VoiceConfigUpdate): Promise<VoiceStatus> {
-  const response = await fetch("/api/voice/config", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(update) });
-  if (!response.ok) throw await errorFrom("/api/voice/config", response);
-  return (await response.json()) as VoiceStatus;
-}

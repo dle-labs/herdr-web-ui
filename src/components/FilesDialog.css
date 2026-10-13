@@ -1,9 +1,81 @@
-/* Browse | Changes in the Files dialog's header, between the title and Close */
-.files-dialog-tabs {
-  flex: none;
+.workspace-files-scrim {
+  padding: max(var(--space-4), env(safe-area-inset-top, 0px))
+    max(var(--space-4), env(safe-area-inset-right, 0px))
+    max(var(--space-4), env(safe-area-inset-bottom, 0px))
+    max(var(--space-4), env(safe-area-inset-left, 0px));
 }
 
-/* the dialog keeps one height across its two tabs: a short list of changes does not shrink it */
-.files-dialog .modal-body {
-  min-height: calc(var(--control-h) * 8);
+.files-dialog-changes {
+  width: min(96vw, 1100px);
+  max-width: 100%;
+  height: var(--app-height, 100dvh);
+  max-height: min(92vh, 100%);
+}
+
+@media (max-width: 640px) {
+  .workspace-files-scrim {
+    padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+  }
+
+  .files-dialog-changes {
+    width: 100%;
+    max-height: 92%;
+  }
+}
+.files-dialog-changes .modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  padding: 0;
+}
+.files-dialog-tabs { flex: none; }
+.files-dialog-browser {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.files-dialog-repository {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4);
+}
+.files-dialog-browser[hidden],
+.files-dialog-repository[hidden] { display: none; }
+.files-dialog-header {
+  position: relative;
+  z-index: calc(var(--z-popover) + 1);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  column-gap: var(--space-4);
+  row-gap: var(--space-2);
+  padding-inline: var(--space-6);
+}
+.files-dialog .modal-title {
+  flex: 0 0 auto;
+}
+.files-dialog-header > .icon-button:last-child { margin-inline-start: auto; }
+.files-dialog-tools {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  column-gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+.files-dialog-tools > :first-child { flex: 1; min-width: 160px; }
+.files-dialog-tools .btn svg { width: var(--space-4); height: var(--space-4); }
+.changes-comparison-label { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); }
+/* A phone keyboard leaves the document controls available. Mod+P / Back to files
+   reveals the finder; a focused finder is never hidden by this rule. */
+[data-keyboard] .files-dialog[data-show-file] .files-dialog-tools:not(:focus-within):not(:has(.commit-picker)) { display: none; }
+@media (max-width: 768px) {
+  .files-dialog-header { column-gap: var(--space-3); padding-inline: var(--space-4); }
+  .files-dialog .modal-title { flex: 1; }
+  .files-dialog-tools { flex-basis: 100%; order: 1; }
 }

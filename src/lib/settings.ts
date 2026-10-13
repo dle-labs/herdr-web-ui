@@ -7,7 +7,10 @@
 
 import type { TelemetrySettings } from "../../shared/telemetry.ts";
 import { SHARED_SETTING_KEYS, type SharedSettingKey } from "../../shared/preferences.ts";
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { blockComments } from "./blockComments.ts";
+import { invalidateDictation } from "./voice.ts";
+import { DEFAULT_DICTATION_CONFIG, validDictationLanguage, validDictationModel, type DictationConfig } from "./voiceTransport.ts";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
@@ -39,15 +42,12 @@ export type Palette = "amber" | "report" | "charcoal" | "catppuccin" | "lilac" |
  *  narrow: 820px; default: follows the pane, up to 60rem (chatLaneWidth); wide: 72rem; full: the pane, less the gutters */
 export type ChatWidth = "narrow" | "default" | "wide" | "full";
 export const CHAT_WIDTHS: readonly ChatWidth[] = ["narrow", "default", "wide", "full"];
-/** the microphone button. auto: in the chat composer off a phone, and only where dictation can work;
- *  on: there, on a phone and in the terminal input line, disabled with its reason where it cannot work; off: nowhere */
+/** Auto shows supported desktop chat or explicitly selected Speaches chat; On also shows terminal controls. */
 export type VoiceButton = "auto" | "on" | "off";
 export const VOICE_BUTTONS: readonly VoiceButton[] = ["auto", "on", "off"];
-/**
- * The languages dictation can be set to, as BCP 47 tags (SpeechRecognition.lang; the transcribe
- * route takes the first subtag). Auto can also use a browser language outside this list when
- * its primary subtag is two letters and the UI is not translated into it.
- */
+export type VoiceProvider = "auto" | "openai" | "speaches" | "browser";
+export const VOICE_PROVIDERS: readonly VoiceProvider[] = ["auto", "openai", "speaches", "browser"];
+/** BCP 47 tags understood by browser recognition; OpenAI uses the primary language subtag. */
 export const DICTATION_LANGUAGES = [
   "ar-SA", "cs-CZ", "da-DK", "de-DE", "el-GR", "en-GB", "en-US", "es-ES", "fi-FI", "fr-FR", "he-IL", "hi-IN",
   "hu-HU", "id-ID", "it-IT", "ja-JP", "ko-KR", "nb-NO", "nl-NL", "pl-PL", "pt-BR", "pt-PT", "ro-RO", "ru-RU",
@@ -141,6 +141,8 @@ export interface Settings {
   autoSendQueued: boolean;
   /** show the agent's folded reasoning blocks in the chat view */
   showThinking: boolean;
+  /** comment on a reply or a file by selecting text or clicking a block; off deletes every comment */
+  comments: boolean;
   /** request a screen wake lock while a pane is open in this visible tab */
   keepScreenOn: boolean;
   /** UI language; `system` follows the browser (src/lib/i18n.ts) */
@@ -175,14 +177,23 @@ export interface Settings {
   usageHidden: string[];
   /** the microphone button in the composer and the terminal input line; nothing is recorded until it is pressed */
   voiceInput: VoiceButton;
-  /** the language dictation listens for; auto: the UI language's, or the browser's the UI lacks (src/lib/voice.ts dictationLocale) */
+  /** Auto follows upstream availability; every take uses one snapshotted provider without error fallback. */
+  voiceProvider: VoiceProvider;
+  /** Explicit Send while recording may finish and submit; off requires transcript review first. */
+  voiceFinishAndSend: boolean;
   voiceLanguage: DictationLanguage;
   voicePolishChat: boolean;
-  /** off by default: a terminal line is usually a command, kept as spoken */
+  /** Commands stay as transcribed unless explicitly enabled. */
   voicePolishTerminal: boolean;
   /** the file viewer wraps long lines instead of scrolling sideways */
   wrapCode: boolean;
-  /** code is colored by its language; off, it is plain text */
+  /** Folder quick action in the composer; Browse files stays available in the menu. */
+  showBrowseFilesShortcut: boolean;
+  /** Side-by-side diffs on wide screens; narrow browsers always use unified. */
+  splitDiff: boolean;
+  /** Non-secret backend dictation configuration; presets require explicit Apply before use. */
+  dictation: DictationConfig;
+  /** code in the chat and the file viewer is colored by syntax; off, it is plain text */
   highlightCode: boolean;
   /** the width of a Markdown preview: the chat's lane (--chat-w), centered, or the viewer's width */
   markdownWidth: MarkdownWidth;
@@ -199,9 +210,10 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
  * Settings field in the projection makes a new field require an explicit collection decision. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily" | "codeFontFamily"
-  | "quickReplies" | "usageOrder" | "usageHidden"
-  // not collected: the report's schema (shared/telemetry.ts) has no field for it yet
+  | "quickReplies" | "usageOrder" | "usageHidden" | "voiceProvider" | "voiceFinishAndSend" | "dictation"
+  // not collected: the report's schema (shared/telemetry.ts) has no field for them yet
   | "diffStyle" | "contrast" | "fontSmoothing" | "panelMotion" | "uiFontSize"
+  | "comments" | "splitDiff" | "showBrowseFilesShortcut"
   // not collected: only System mode reads them, and `palette` is already reported
   | "paletteLight" | "paletteDark">;
 
@@ -289,9 +301,9 @@ export const SETTING_SCOPE = {
   // this screen's legibility, as density and the font sizes are
   contrast: "device",
   fontSmoothing: "device", panelMotion: "device",
-  voiceInput: "device", voiceLanguage: "device", voicePolishChat: "device", voicePolishTerminal: "device",
+  voiceInput: "device", voiceProvider: "device", voiceFinishAndSend: "device", dictation: "device", voiceLanguage: "device", voicePolishChat: "device", voicePolishTerminal: "device",
   // Viewer layout follows this screen, as chatWidth does; highlighting remains shared.
-  wrapCode: "device", markdownWidth: "device", diffStyle: "device",
+  wrapCode: "device", showBrowseFilesShortcut: "device", splitDiff: "device", comments: "device", markdownWidth: "device", diffStyle: "device",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 /** The shared part of `settings`, by the names shared/preferences.ts lists. */
@@ -338,6 +350,7 @@ export const DEFAULT_SETTINGS: Settings = {
   attachLimit: 20,
   autoSendQueued: true,
   showThinking: false,
+  comments: true,
   keepScreenOn: false,
   language: "system",
   alertsOn: true,
@@ -356,10 +369,15 @@ export const DEFAULT_SETTINGS: Settings = {
   usageOrder: [],
   usageHidden: [],
   voiceInput: "auto",
+  voiceProvider: "auto",
+  voiceFinishAndSend: false,
   voiceLanguage: "auto",
   voicePolishChat: true,
   voicePolishTerminal: false,
   wrapCode: false,
+  showBrowseFilesShortcut: true,
+  splitDiff: true,
+  dictation: { ...DEFAULT_DICTATION_CONFIG },
   highlightCode: true,
   markdownWidth: "readable",
   diffStyle: "unified",
@@ -380,14 +398,33 @@ export const QUICK_REPLY_MAX_CHARS = 200;
  * A record from before the button had a place of its own holds a boolean: on stays on. Its off
  * was also what a device that never chose held, so it follows the default.
  */
-function voiceButton(value: unknown): VoiceButton {
+export function voiceButton(value: unknown): VoiceButton {
   if (value === true) return "on";
   return VOICE_BUTTONS.includes(value as VoiceButton) ? value as VoiceButton : DEFAULT_SETTINGS.voiceInput;
 }
 
-/** Whether an input asks for dictation at all: auto leaves the terminal input line and a phone's composer alone. */
-export function wantsVoiceInput(setting: VoiceButton, mode: "chat" | "terminal", phone: boolean): boolean {
-  return setting === "on" || (setting === "auto" && mode === "chat" && !phone);
+/** Comments retain their microphone on Auto; explicit Speaches also enables mobile chat. */
+export function wantsVoiceInput(setting: VoiceButton, mode: "chat" | "terminal" | "comment", phone = false, provider: VoiceProvider = "auto"): boolean {
+  return mode === "comment" ? setting !== "off" : setting === "on" || (setting === "auto" && mode === "chat" && (!phone || provider === "speaches"));
+}
+
+export const DICTATION_MODEL_MAX_CHARS = 512;
+
+/** Pure migration: secret fields are ignored and malformed records cannot activate a preset. */
+export function sanitizeDictation(value: unknown): DictationConfig {
+  const record = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+  const rawModel = record["model"];
+  const model = typeof rawModel === "string" && rawModel.length <= DICTATION_MODEL_MAX_CHARS && !/[\u0000-\u001f\u007f]/.test(rawModel) ? rawModel.trim() : "";
+  const current = record["version"] === 2;
+  // Retired live configurations keep their model/language, but require a new Apply.
+  const validMode = record["mode"] === "recording";
+  return {
+    version: 2,
+    model: validDictationModel(model) ? model : DEFAULT_DICTATION_CONFIG.model,
+    mode: "recording",
+    activated: current && validMode && record["activated"] === true && validDictationModel(model) && (record["language"] === undefined || validDictationLanguage(record["language"])),
+    ...(current && validDictationLanguage(record["language"]) ? { language: record["language"] } : {}),
+  };
 }
 
 /** The replies worth a button: what the list holds, without the blank ones still being written. */
@@ -531,6 +568,7 @@ export function sanitizeSettings(raw: unknown): Settings {
       : DEFAULT_SETTINGS.attachLimit,
     autoSendQueued: typeof record["autoSendQueued"] === "boolean" ? record["autoSendQueued"] : DEFAULT_SETTINGS.autoSendQueued,
     showThinking: typeof record["showThinking"] === "boolean" ? record["showThinking"] : DEFAULT_SETTINGS.showThinking,
+    comments: typeof record["comments"] === "boolean" ? record["comments"] : DEFAULT_SETTINGS.comments,
     keepScreenOn: typeof record["keepScreenOn"] === "boolean" ? record["keepScreenOn"] : DEFAULT_SETTINGS.keepScreenOn,
     language: LANGUAGE_SETTINGS.includes(record["language"] as LanguageSetting) ? record["language"] as LanguageSetting : DEFAULT_SETTINGS.language,
     alertsOn: typeof record["alertsOn"] === "boolean" ? record["alertsOn"] : DEFAULT_SETTINGS.alertsOn,
@@ -552,10 +590,17 @@ export function sanitizeSettings(raw: unknown): Settings {
     usageOrder: usageKeys(record["usageOrder"]),
     usageHidden: usageKeys(record["usageHidden"]),
     voiceInput: voiceButton(record["voiceInput"]),
+    voiceProvider: VOICE_PROVIDERS.includes(record["voiceProvider"] as VoiceProvider)
+      ? record["voiceProvider"] as VoiceProvider
+      : !Object.hasOwn(record, "voiceProvider") && sanitizeDictation(record["dictation"]).activated ? "speaches" : DEFAULT_SETTINGS.voiceProvider,
+    voiceFinishAndSend: record["voiceFinishAndSend"] === true,
     voiceLanguage: DICTATION_LANGUAGES.includes(record["voiceLanguage"] as (typeof DICTATION_LANGUAGES)[number]) ? record["voiceLanguage"] as DictationLanguage : DEFAULT_SETTINGS.voiceLanguage,
     voicePolishChat: typeof record["voicePolishChat"] === "boolean" ? record["voicePolishChat"] : DEFAULT_SETTINGS.voicePolishChat,
     voicePolishTerminal: typeof record["voicePolishTerminal"] === "boolean" ? record["voicePolishTerminal"] : DEFAULT_SETTINGS.voicePolishTerminal,
     wrapCode: typeof record["wrapCode"] === "boolean" ? record["wrapCode"] : DEFAULT_SETTINGS.wrapCode,
+    showBrowseFilesShortcut: typeof record["showBrowseFilesShortcut"] === "boolean" ? record["showBrowseFilesShortcut"] : DEFAULT_SETTINGS.showBrowseFilesShortcut,
+    splitDiff: typeof record["splitDiff"] === "boolean" ? record["splitDiff"] : DEFAULT_SETTINGS.splitDiff,
+    dictation: sanitizeDictation(record["dictation"]),
     highlightCode: typeof record["highlightCode"] === "boolean" ? record["highlightCode"] : DEFAULT_SETTINGS.highlightCode,
     markdownWidth: MARKDOWN_WIDTHS.find((width) => width === record["markdownWidth"]) ?? DEFAULT_SETTINGS.markdownWidth,
     diffStyle: DIFF_STYLES.find((style) => style === record["diffStyle"]) ?? DEFAULT_SETTINGS.diffStyle,
@@ -685,7 +730,16 @@ interface SettingsContextValue {
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<Settings>(loadSettings);
+  // the Comments setting decides what the comment store lists (`BlockCommentStore.setEnabled`): applied as the settings
+  // load, before anything reads the store, and on every change before paint, so what read it in that commit draws again
+  const [settings, setSettings] = useState<Settings>(() => {
+    const loaded = loadSettings();
+    blockComments.setEnabled(loaded.comments);
+    return loaded;
+  });
+  useLayoutEffect(() => blockComments.setEnabled(settings.comments), [settings.comments]);
+  // Invalidate committed snapshots too, including mode changes and future non-setter updates.
+  useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.voiceProvider, settings.voiceFinishAndSend, settings.voiceLanguage, settings.voicePolishChat, settings.voicePolishTerminal, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated, settings.dictation.language]);
   const [systemDark, setSystemDark] = useState(() => resolveTheme("system") === "dark");
 
   useEffect(() => {
@@ -715,6 +769,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [settings, resolvedTheme, resolvedPalette, resolvedLanguage]);
 
   const update = useCallback((patch: Partial<Settings>) => {
+    // Event-time invalidation, never a React updater side effect: late takes lose authority immediately.
+    if (["dictation", "voiceInput", "voiceProvider", "voiceFinishAndSend", "voiceLanguage", "voicePolishChat", "voicePolishTerminal"].some((key) => Object.hasOwn(patch, key))) invalidateDictation();
     setSettings((current) => {
       const next = sanitizeSettings({ ...current, ...patch });
       saveSettings(next);

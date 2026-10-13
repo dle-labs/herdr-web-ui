@@ -454,11 +454,11 @@
           <div class="n">06</div>
           <div>
             <h3>Speak instead of typing.<span class="arw" aria-hidden="true">→</span></h3>
-            <p>Dictate into the chat or the terminal line, Korean and English mixed. Review the words before sending them to the agent; transcription uses your own OpenAI key or the browser's speech recognition.</p>
+            <p>Hold or tap the mic in chat or terminal input lines. Auto chooses configured/supported OpenAI, otherwise supported browser recognition; Speaches is an explicit record-then-transcribe option. Each take keeps one provider. Finish, review, then Send by default; finish-and-send is opt-in.</p>
           </div>
           <div class="ev" aria-hidden="true">
-            <div class="ev-row"><span>hold the mic</span><b><i class="dot working"></i>recording 0:04</b></div>
-            <div class="q">테스트 다시 돌리고, fix the flaky one</div>
+            <div class="ev-row"><span>tap the mic</span><b><i class="dot working"></i>recording 0:04</b></div>
+            <div class="q">Run the tests again and fix the flaky one</div>
             <div class="ev-note">goes in at the caret · never sent by itself</div>
           </div>
         </a>
@@ -558,7 +558,7 @@
               </tr>
               <tr>
                 <th scope="row">Answering</th>
-                <td class="us" data-client="herdr web ui">Prompt cards checked against the live menu, or the terminal. Dictation into either.</td>
+                <td class="us" data-client="herdr web ui">Prompt cards checked against the live menu, or the terminal. Dictation in chat and terminal input lines.</td>
                 <td data-client="collie">Prompts as tappable buttons, quick replies, voice input.</td>
                 <td data-client="roamgate">Typed into the terminal, from a composer or as direct keys.</td>
                 <td data-client="herdr-remote">One-tap approvals from the phone, the menu bar or Telegram.</td>
@@ -615,7 +615,7 @@
           </div>
           <div class="qa">
             <dt>Does my code or conversation leave my machine?</dt>
-            <dd>Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The app sends an anonymous count when it is installed and each time it is updated (the version, the OS, how it was installed and a random ID; no IP address is stored), and Settings → About → Anonymous usage counts shows what is sent and turns it off. The agents’ own model connections depend on their configuration. <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">Data flow and access →</a></dd>
+            <dd>Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional dictation uses only your selected provider: OpenAI recordings and optional text polishing pass through the WebUI voice backend; completed self-hosted recordings pass through WebUI to Speaches, with no live audio streaming; browser recognition may use the browser vendor's service. Auto selects OpenAI or browser recognition before recording; explicit choices and active takes never fall back. Enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The app sends an anonymous count when it is installed and each time it is updated (the version, the OS, how it was installed and a random ID; no IP address is stored), and Settings → About → Anonymous usage counts shows what is sent and turns it off. The agents’ own model connections depend on their configuration. <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">Data flow and access →</a></dd>
           </div>
           <div class="qa">
             <dt>Does it work on Windows?</dt>

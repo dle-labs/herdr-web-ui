@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { Minus, Plus } from "lucide-react";
 
 import "./SettingsControls.css";
@@ -21,10 +21,11 @@ export function SettingsGroup({ title, note, className, section, children }: { t
 /**
  * One setting. `wide` marks a control that needs the whole line on a phone (three or more
  * segments, a text field): the row stacks there, and stays one line everywhere else.
+ * `stacked` keeps multi-control forms below their label at every width.
  */
-export function SettingsRow({ label, description, htmlFor, wide = false, children }: { label: string; description?: ReactNode; htmlFor?: string; wide?: boolean; children: ReactNode }) {
+export function SettingsRow({ label, description, htmlFor, wide = false, stacked = false, children }: { label: string; description?: ReactNode; htmlFor?: string; wide?: boolean; stacked?: boolean; children: ReactNode }) {
   return (
-    <div className={wide ? "settings-row is-wide" : "settings-row"}>
+    <div className={`settings-row${wide ? " is-wide" : ""}${stacked ? " settings-row-stacked" : ""}`}>
       <div className="settings-row-text">
         {htmlFor !== undefined ? <label className="settings-label" htmlFor={htmlFor}>{label}</label> : <span className="settings-label">{label}</span>}
         {description !== undefined && <span className="settings-description">{description}</span>}
@@ -34,9 +35,10 @@ export function SettingsRow({ label, description, htmlFor, wide = false, childre
   );
 }
 
-export function Toggle({ checked, label, onChange, disabled }: { checked: boolean; label: string; onChange: (checked: boolean) => void; disabled?: boolean }) {
+/** A switch; `buttonRef` reaches its button, for an owner that gives the focus back to it (after a question it asked). */
+export function Toggle({ checked, label, onChange, disabled, buttonRef }: { checked: boolean; label: string; onChange: (checked: boolean) => void; disabled?: boolean; buttonRef?: Ref<HTMLButtonElement> }) {
   return (
-    <button type="button" className="settings-toggle" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)}>
+    <button ref={buttonRef} type="button" className="settings-toggle" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)}>
       <span className="settings-toggle-thumb" />
     </button>
   );

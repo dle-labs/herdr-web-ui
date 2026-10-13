@@ -1,6 +1,7 @@
+/* The comment layout owns the outer inset. A real flex child yields room to a docked editor. */
 .chat-frame {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -8,6 +9,8 @@
 
 .chat-frame-body {
   position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
 }

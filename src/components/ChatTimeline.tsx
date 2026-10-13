@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { createPortal } from "react-dom";
+import type { CommentSurfaceProps } from "./useCommentSurface.tsx";
+import { hasOpenComment } from "../lib/commentDom.ts";
 
 import { ChatRowMemoryContext, type ChatRowMemory } from "../lib/chatRowState.tsx";
 import { chatMarkdownClipboardPayload } from "../lib/markdownClipboard.ts";
@@ -28,10 +31,15 @@ export interface ChatTimelineProps<Row extends ChatTimelineRow> {
   finding: boolean;
   onScroll: () => void;
   renderRow: (row: Row, index: number) => ReactNode;
+  surfaceProps?: CommentSurfaceProps;
+  /** Pins live beside the transcript in the real scroll owner, not in a virtualized row. */
+  overlay?: ReactNode;
+  commentRows?: readonly string[];
 }
 
 /** One scroll owner; selected and focused rows stay real DOM nodes outside its window. */
-export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source, scroller, listRef, following, smoothFollow, memories, outputChanged, header, footer, label, matchKey, finding, onScroll, renderRow }: ChatTimelineProps<Row>) {
+export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source, scroller, listRef, following, smoothFollow, memories, outputChanged, header, footer, label, matchKey, finding, onScroll, renderRow, surfaceProps, overlay, commentRows = [] }: ChatTimelineProps<Row>) {
+  const [scrollNode, setScrollNode] = useState<HTMLDivElement | null>(null);
   const [selectionKeys, setSelectionKeys] = useState<string[]>([]);
   const [focusKey, setFocusKey] = useState<string | null>(null);
   useLayoutEffect(() => {
@@ -41,12 +49,13 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
   const manualLayout = useRef(false);
   const rowKeys = useMemo(() => rows.map((row) => row.key), [rows]);
   const positions = useMemo(() => new Map(rowKeys.map((key, index) => [key, index])), [rowKeys]);
-  const pinned = useMemo(() => [...new Set(focusKey === null ? selectionKeys : [...selectionKeys, focusKey])], [selectionKeys, focusKey]);
+  const pinned = useMemo(() => [...new Set([...selectionKeys, ...commentRows, ...(focusKey === null ? [] : [focusKey])])], [selectionKeys, focusKey, commentRows]);
   const extraData = useMemo(() => ({ renderRow, matchKey }), [renderRow, matchKey]);
   const attachList = useCallback((instance: LegendListRef | null) => {
     listRef.current = instance;
     const node = instance?.getScrollableNode();
     scroller.current = node instanceof HTMLDivElement ? node : null;
+    setScrollNode(scroller.current);
   }, [listRef, scroller]);
 
   useLayoutEffect(() => {
@@ -111,7 +120,7 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
     const node = scroller.current;
     if (node === null || !smoothFollow) return;
     const settle = () => {
-      if (following.current && !manualLayout.current && node.scrollHeight - node.clientHeight - node.scrollTop > 1) listRef.current?.scrollToEnd({ animated: false });
+      if (following.current && !manualLayout.current && !hasOpenComment(node) && node.scrollHeight - node.clientHeight - node.scrollTop > 1) listRef.current?.scrollToEnd({ animated: false });
     };
     // `in` narrows the element to never: the DOM types always declare onscrollend
     if ("onscrollend" in (node as object)) {
@@ -144,7 +153,8 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
     </ChatRowMemoryContext.Provider>;
   }, [memories, outputChanged, renderRow, matchKey]);
 
-  return <LegendList
+  return <><LegendList
+    {...surfaceProps}
     ref={attachList}
     className={finding ? "chat-view chat-view-virtual chat-view-with-find" : "chat-view chat-view-virtual"}
     contentContainerClassName="chat-transcript chat-transcript-virtual"
@@ -168,14 +178,14 @@ export function ChatTimeline<Row extends ChatTimelineRow>({ rows, scope, source,
     ListHeaderComponent={<div className={finding ? "chat-virtual-header chat-virtual-header-with-find" : "chat-virtual-header"}>{header}</div>}
     ListFooterComponent={<div className="chat-virtual-footer">{footer}</div>}
     onScroll={onScroll}
-    onLoad={() => { if (following.current) listRef.current?.scrollToEnd({ animated: false }); }}
+    onLoad={() => { if (following.current && !hasOpenComment(scroller.current)) listRef.current?.scrollToEnd({ animated: false }); }}
     onItemSizeChanged={() => {
-      if (!following.current || manualLayout.current) return;
+      if (!following.current || manualLayout.current || hasOpenComment(scroller.current)) return;
       // The browser's own glide yields to any scroll the reader or a jump makes next; the list's
       // animated scroll keeps retrying toward the end and would pull them back.
       const node = scroller.current;
       if (smoothFollow && node !== null) node.scrollTo({ top: node.scrollHeight - node.clientHeight, behavior: "smooth" });
       else listRef.current?.scrollToEnd({ animated: false });
     }}
-  />;
+  />{scrollNode !== null && overlay && createPortal(overlay, scrollNode)}</>;
 }

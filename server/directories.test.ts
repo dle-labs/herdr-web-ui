@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { listDirectories, MAX_DIRECTORY_ENTRIES } from "./directories.ts";
+import { ignoredDirectories, listDirectories, MAX_DIRECTORY_ENTRIES } from "./directories.ts";
 
 describe("listDirectories", () => {
   const roots: string[] = [];
@@ -22,6 +22,89 @@ describe("listDirectories", () => {
     expect(listing.parent).toBe(tmpdir());
     expect(listing.truncated).toBe(false);
     expect(listDirectories(root, true)!.directories).toContain(".git");
+  });
+
+  const git = async (root: string, ...args: string[]) => {
+    const proc = Bun.spawn(["git", "-C", root, ...args], { stdout: "ignore", stderr: "pipe" });
+    const stderr = await new Response(proc.stderr).text();
+    expect(await proc.exited, stderr).toBe(0);
+  };
+
+  it("uses Git's nested rules, negations, excludes and tracked exceptions without filtering the listing", async () => {
+    const root = temp();
+    await git(root, "init", "-q");
+    const names = ["build", "keep", "tracked", "local-excluded", "global-excluded", "nested", "space dir", "-dash"];
+    for (const name of names) mkdirSync(join(root, name));
+    writeFileSync(join(root, "tracked", "file"), "tracked");
+    await git(root, "add", "tracked/file");
+    writeFileSync(join(root, ".gitignore"), "build/\nkeep/\n!keep/\ntracked/\nspace dir/\n-dash/\n");
+    writeFileSync(join(root, ".git", "info", "exclude"), "local-excluded/\n");
+    const excludes = join(root, "exclude-rules");
+    writeFileSync(excludes, "global-excluded/\n");
+    await git(root, "config", "core.excludesFile", excludes);
+    mkdirSync(join(root, "nested", "build"));
+    mkdirSync(join(root, "nested", "keep"));
+    mkdirSync(join(root, "nested", "own"));
+    writeFileSync(join(root, "nested", ".gitignore"), "!build/\nown/\n");
+    const hidden = listDirectories(root, true, true)!;
+    expect(hidden.directories).toContain(".git");
+    expect(await ignoredDirectories(hidden.path, hidden.directories)).toContain("build");
+    const listing = listDirectories(root, false, true)!;
+    expect(listing.directories).toHaveLength(names.length);
+    expect(await ignoredDirectories(listing.path, listing.directories)).toEqual(listing.directories.filter((name) => ["build", "local-excluded", "global-excluded", "space dir", "-dash"].includes(name)));
+    const nested = listDirectories(join(root, "nested"), false, true)!;
+    expect(await ignoredDirectories(nested.path, nested.directories)).toEqual(["own"]);
+    mkdirSync(join(root, "build", "child"));
+    expect(await ignoredDirectories(join(root, "build"), ["child"])).toEqual(["child"]);
+  });
+
+  it("returns empty metadata outside Git, with no folders, and when Git is unavailable", async () => {
+    const root = temp();
+    mkdirSync(join(root, "build"));
+    expect(await ignoredDirectories(root, ["build"])).toEqual([]);
+    expect(await ignoredDirectories(root, [])).toEqual([]);
+    const previous = process.env.PATH;
+    try {
+      process.env.PATH = root;
+      expect(await ignoredDirectories(root, ["build"])).toEqual([]);
+      expect(listDirectories(root, false, true)!.directories).toEqual(["build"]);
+    } finally {
+      if (previous === undefined) delete process.env.PATH;
+      else process.env.PATH = previous;
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("bounds subprocess time and output without blocking the event loop", async () => {
+    const root = temp();
+    const executable = join(root, "git");
+    const previous = process.env.PATH;
+    try {
+      process.env.PATH = root;
+      writeFileSync(executable, `#!${process.execPath}\nsetInterval(() => {}, 1000);\n`);
+      chmodSync(executable, 0o755);
+      const start = Date.now();
+      let responsive = false;
+      const timer = setTimeout(() => { responsive = true; }, 10);
+      expect(await ignoredDirectories(root, ["folder"])).toEqual([]);
+      clearTimeout(timer);
+      expect(responsive).toBe(true);
+      expect(Date.now() - start).toBeLessThan(3500);
+      writeFileSync(executable, `#!${process.execPath}\nprocess.stdout.write("x".repeat(2 * 1024 * 1024));\n`);
+      expect(await ignoredDirectories(root, ["folder"])).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.PATH;
+      else process.env.PATH = previous;
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("handles NUL-framed unusual names and directory symlinks", async () => {
+    const root = temp();
+    await git(root, "init", "-q");
+    mkdirSync(join(root, "line\nbreak"));
+    mkdirSync(join(root, "real"));
+    symlinkSync("real", join(root, "link"));
+    writeFileSync(join(root, ".gitignore"), "line*\nlink\n");
+    expect(await ignoredDirectories(root, ["line\nbreak", "link", "real"])).toEqual(["line\nbreak", "link"]);
   });
 
   it("reads ~ and an empty path as home, and has no parent at the root", () => {

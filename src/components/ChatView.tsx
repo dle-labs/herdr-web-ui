@@ -16,6 +16,8 @@ import { ChatDiffContext, TurnChangedFiles } from "./TurnChangedFiles.tsx";
 import type { RepoDiffTarget } from "../lib/repoDiff.ts";
 import { Markdown, ReservedImage } from "./Markdown.tsx";
 import { ImageLightbox } from "./ImageLightbox.tsx";
+import { useCommentSurface, type SurfaceComment } from "./useCommentSurface.tsx";
+import { CommentSurfaceLayout } from "./CommentSurfaceLayout.tsx";
 import { PromptCard } from "./PromptCard.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { loadChatTimeline, loadedChatTimeline, useChatTimeline } from "./chatTimelineLoader.ts";
@@ -53,6 +55,11 @@ import { patchText } from "../../shared/patch.ts";
 import { workRowLabel } from "../lib/workRowLabel.ts";
 import { machinePath, paneStorageId } from "../../shared/machines.ts";
 import { chatRestoreIndex, chatTurnAnchor, readChatPosition, rememberChatPosition, type ChatPosition } from "../lib/chatScrollMemory.ts";
+
+import { BlockCommentContext, blockComments, blockContent, commentTarget, isReplyComment, quoteExcerpt, replyPart, selectionTarget, useBlockComments, type CommentTarget, type ReplyPart } from "../lib/blockComments.ts";
+import { commentPartOf, paneComposer, pointOnText, selectionComment, type SelectionComment } from "../lib/commentSelection.ts";
+import { draftRanges, showPendingComment, watchCommentHighlights } from "../lib/commentHighlight.ts";
+import { hasOpenComment } from "../lib/commentDom.ts";
 import { fileUrl } from "../lib/api.ts";
 import { useMachineId } from "../lib/machineContext.tsx";
 import { useSkillMatcher } from "../lib/useSkillMatcher.ts";
@@ -72,6 +79,8 @@ const ChatHistoryContext = createContext("");
  * output while the viewer is open), and it must not take the open viewer with it.
  */
 const ImageViewerContext = createContext<(images: GalleryImage[], index: number) => void>(() => {});
+/** Bound once: a class method handed on loses its `this`. */
+const persistReplyComment = blockComments.save.bind(blockComments);
 import type { TypedAnswer } from "../lib/promptAnswer.ts";
 import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationResponse, ConversationTurn, InteractivePrompt, OmoTaskResult } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
@@ -103,6 +112,8 @@ export interface ChatViewProps {
   /** bumped when a composer message goes out, before the transcript holds it */
   sentKey?: number;
   connected: boolean;
+  /** A hidden, held or observing pane must not retain comment capture. */
+  commentActive?: boolean;
   ended: boolean;
   agent: string | null;
   agentStatus?: AgentStatus;
@@ -564,6 +575,17 @@ interface TurnProps {
   skills?: SkillMatcher | null;
   /** Find's current match is this turn: a folded message opens so the match can be read */
   matched?: boolean;
+  /**
+   * Position in the transcript, which anchors comments on a turn without a timestamp. Pass it only
+   * for such a turn (-1 otherwise): older history prepended shifts every index, and would re-render
+   * every memoised turn for nothing.
+   */
+  index: number;
+  /**
+   * false: no comments on this turn. The scrollback drawn without an agent is not a reply: what the
+   * composer sends there is typed into the pane, a shell perhaps, and comments only go to an agent.
+   */
+  commentable?: boolean;
 }
 
 const TASK_RESULT_ICONS: Record<OmoTaskResult["status"], ComponentType<LucideProps>> = { completed: CircleCheck, failed: CircleX, cancelled: CircleSlash };
@@ -609,13 +631,19 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
   return first.length > 96 ? `${first.slice(0, 95)}…` : first;
 }
 
-// a turn that did not change keeps its object across polls: skip re-rendering it
-const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, matched = false }: TurnProps) {
+// Unchanged turns keep their objects across polls; settled final-answer parts are commentable.
+const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, matched = false, index, commentable = true }: TurnProps) {
   const t = useT();
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useChatRowToggle("copy-failed", false);
   const copyError = copyFailed && <p className="chat-copy-error" role="alert">{t("Couldn't copy. Select the text and copy it manually.")}</p>;
   const copied = (ok: boolean): void => setCopyFailed(!ok);
+  const machineId = useMachineId();
+  const { work, answer } = splitTurn(turn.parts);
+  // one value per final-answer part, the same objects across polls, so the memoised turn's
+  // blocks keep theirs; none while the answer is still being written
+  const replies = useMemo((): (ReplyPart | null)[] => Array.from({ length: answer.length }, (_, part) =>
+    live || !commentable ? null : replyPart(paneStorageId(machineId, paneId), turn.ts, index, part)), [machineId, paneId, turn.ts, index, live, commentable, answer.length]);
   const time = turn.ts === null ? null : <TurnTime ts={turn.ts} />;
   const compact = turn.parts.find((part): part is Extract<ConversationPart, { kind: "compact" }> => part.kind === "compact");
   if (compact !== undefined) {
@@ -655,14 +683,13 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
       <SkillActivityList parts={turn.parts} />
     </article>;
   }
-  const { work, answer } = splitTurn(turn.parts);
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
   return <article className="chat-turn chat-turn-agent">
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}
     {work.length > 0 && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, turn.parts)} showThinking={showThinking} />}
-    {answer.map((part, index) => <Markdown key={index} skills={skills}>{part.text}</Markdown>)}
+    {answer.map((part, n) => <BlockCommentContext.Provider key={n} value={replies[n] ?? null}><Markdown skills={skills}>{part.text}</Markdown></BlockCommentContext.Provider>)}
     {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
       <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>
@@ -673,10 +700,11 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
   </article>;
 });
 
+/** A scrollback message drawn as a turn when no agent runs in the pane: shown, but not commentable. */
 function FallbackTurn({ paneId, message }: { paneId: string; message: TranscriptMessage }) {
   if (message.role === "status") return null;
   const turn: ConversationTurn = { role: message.role === "user" ? "user" : "assistant", ts: null, parts: [{ kind: "text", text: message.text }] };
-  return <Turn paneId={paneId} turn={turn} live={false} waiting={false} showThinking={false} />;
+  return <Turn paneId={paneId} turn={turn} live={false} waiting={false} showThinking={false} index={-1} commentable={false} />;
 }
 
 /** Optional terminal output must never hold initial display or transcript polling. */
@@ -715,11 +743,11 @@ function TerminalFallback({ paneId }: { paneId: string }) {
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff, active = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff, active = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, commentActive = true, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
-  const { settings } = useSettings();
   const machineId = useMachineId();
+  const { settings } = useSettings();
   const diffContext = useMemo(() => onOpenDiff ? { openDiff: onOpenDiff, cwd } : null, [onOpenDiff, cwd]);
   const skillMatcher = useSkillMatcher(paneId);
   // polls pause while the page is hidden and pick up at once when it is back
@@ -1140,7 +1168,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   // instead of scrolling there from the top.
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (node !== null && stickToBottom.current) {
+    if (node !== null && stickToBottom.current && !hasOpenComment(node)) {
       if (state.source === "conversation") timeline.current?.scrollToEnd({ animated: false });
       else node.scrollTop = node.scrollHeight;
     }
@@ -1164,7 +1192,8 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
         const next = `${entry.contentRect.width}|${style.fontSize}|${style.fontFamily}`;
         if (next !== lane) { lane = next; follow = true; }
       }
-      if (follow && stickToBottom.current) {
+      // Reserving comment-editor space is reading intent, not a request to jump to the latest turn.
+      if (follow && stickToBottom.current && !hasOpenComment(node)) {
         if (timeline.current) timeline.current.scrollToEnd({ animated: false });
         else node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
       }
@@ -1179,11 +1208,19 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   const faces = useFacesArrived();
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (node !== null && stickToBottom.current) {
+    if (node !== null && stickToBottom.current && !hasOpenComment(node)) {
       if (timeline.current) timeline.current.scrollToEnd({ animated: false });
       else node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
     }
   }, [faces]);
+  // the text of each selection comment shown here is highlighted, this view's ranges only (lib/commentHighlight.ts); with
+  // comments turned off none is, even one another tab that still has them on stores meanwhile
+  const commentsOn = settings.comments;
+  useEffect(() => {
+    const node = scroller.current;
+    const transcript = node?.querySelector(".chat-transcript");
+    return !commentsOn || node === null || transcript === null || transcript === undefined ? undefined : watchCommentHighlights(node, transcript);
+  }, [commentsOn, state.source, ChatTimeline]);
   // a tap or a drag down the transcript puts a phone's keyboard away to read (lib/keyboard.ts)
   useEffect(() => {
     const node = scroller.current;
@@ -1355,9 +1392,79 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     const { turn } = row;
     const live = isLiveWorkTurn(turn, index === shownTurns.length - 1, workStatus, finishedBeforeSend);
     return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error">{t("This message can't be shown here. The terminal has it.")}</p>}>
-      <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} matched={row.key === matchKey} />
+      <Turn paneId={paneId} turn={turn} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} matched={row.key === matchKey} index={turn.ts === null ? index : -1} />
     </RenderBoundary>;
   }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, skillMatcher, matchKey]);
+  // The chat's comments (`useCommentSurface`): a pin opens its comment to edit, its field filled with it, a block clicked
+  // or tapped or a mouse's drag over text a new one to write, or the block's or selection's comment where it has one.
+  // The popover is drawn beside its pin, or as a dialog where it has none and on a phone. The agent may start again
+  // while a comment is written, and the reply turn live: the popover and what is typed in it stay until it is saved or
+  // closed. A pin for each of this pane's reply comments whose text is drawn, named as the comment; none while comments
+  // are off
+  const owner = paneStorageId(machineId, paneId);
+  const stored = useBlockComments(owner);
+  const surfaceComments = useMemo<SurfaceComment<CommentTarget>[]>(() => stored.filter(isReplyComment).map((comment) => ({
+    id: comment.id,
+    anchor: comment.anchor,
+    label: t("Comment on “{quote}”: {comment}", { quote: quoteExcerpt(comment.quote ?? blockContent(comment.block)), comment: comment.comment }),
+    ...(comment.point === undefined ? {} : { point: comment.point }),
+    target: commentTarget(comment),
+    comment: comment.comment,
+  })), [stored, t]);
+  const commentSurface = useCommentSurface<CommentTarget, SelectionComment>({
+    // The persistent comment owner is machine/pane-scoped; its popover adds its target/opening identity.
+    connected: connected && !ended && commentActive,
+    surface: scroller,
+    enabled: settings.comments && (state.source !== "conversation" || ChatTimeline !== null),
+    active: commentActive && active,
+    persist: persistReplyComment,
+    owner,
+    comments: surfaceComments,
+    anchorOf: (target) => target.anchor,
+    // the block's or selection's comment where it has one: it keeps its pin where it was
+    existing: (targetOwner, target) => {
+      const found = blockComments.get(targetOwner, target);
+      return found === undefined ? null : { id: found.id, comment: found.comment, target };
+    },
+    // a new comment's pin goes where the block was clicked or the drag let go, on the text its highlight will cover (`draftRanges`)
+    pointed: (targetOwner, target, at) => {
+      const node = scroller.current;
+      const point = node === null ? undefined : pointOnText(draftRanges(node, targetOwner, target), at);
+      return point === undefined ? target : { ...target, point };
+    },
+    // a click on a reply block comments on all of it, or on the part of it that was clicked
+    targetAtClick: (element) => {
+      const part = element.closest(".is-commentable");
+      const found = part === null ? undefined : commentPartOf(part);
+      return found === undefined ? null : { owner: found.owner, target: found.target };
+    },
+    selection: {
+      measure: selectionComment,
+      target: (found) => ({ owner: found.owner, target: selectionTarget(found.target, found.text, found.start, found.end, found.until) }),
+    },
+    describe: ({ target }) => ({ quote: target.quote ? { text: target.quote.text } : { block: target.block } }),
+    // a Delete with no pin left, or a comment whose pin is gone, gives the focus to the composer
+    focusFallback: paneComposer,
+    // its text shows as the comment's will, a selection's (the field took the browser's selection away) or a whole block's
+    showPending: (targetOwner, target) => {
+      const node = scroller.current;
+      if (node === null) return () => {};
+      showPendingComment(node, { owner: targetOwner, target });
+      return () => showPendingComment(node, null);
+    },
+  });
+
+  // Keep the source of an open editor mounted even after its selection/focus moves to the editor.
+  const commentRows = useMemo(() => {
+    const opened = commentSurface.open;
+    const node = scroller.current;
+    if (opened === null || node === null) return [];
+    return [...new Set(draftRanges(node, opened.owner, opened.target).flatMap((range) => {
+      const element = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+      const key = element?.closest<HTMLElement>("[data-chat-row]")?.dataset.chatRow;
+      return key === undefined ? [] : [key];
+    }))];
+  }, [commentSurface.open, timelineRows]);
   const header = <>
       {/* the conversation below is not all the file holds: a /tree left these behind, and pi moved
           its leaf without writing anything, so nothing here could say they were ever there. First
@@ -1396,7 +1503,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
   return <ChatDiffContext.Provider value={diffContext}><ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
-    <div className="chat-frame">
+    <CommentSurfaceLayout className="chat-surface-layout"><div className="chat-frame">
     {state.source === "conversation" && findOpen && <ChatFind key={timelineScope} rows={searchRows} older={typeof olderCursor === "string"} olderState={olderState} onOlder={loadOlder} onMatch={showMatch} onClose={closeFind} />}
     <div className="chat-frame-body">
     {state.source === "conversation" ? ChatTimeline === null
@@ -1424,18 +1531,23 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
       finding={findOpen}
       onScroll={onScroll}
       renderRow={renderTurn}
-    /> : <div className="chat-view" ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
+      surfaceProps={commentSurface.surfaceProps}
+      overlay={commentSurface.overlay}
+      commentRows={commentRows}
+    /> : <div className="chat-view" {...commentSurface.surfaceProps} ref={scroller} onScroll={onScroll} role="log" aria-live="polite" aria-label={t("conversation of {pane}", { pane: paneId })}>
       <div className="chat-transcript" data-conversation-source={state.conversationSource}>
         {agent !== null ? <TerminalFallback key={paneId} paneId={paneId} />
           : state.messages.map((message, index) => <FallbackTurn key={index} paneId={paneId} message={message} />)}
         {footer}
       </div>
+      {commentSurface.overlay}
     </div>}
     {state.source === "conversation" && <ChatMinimap turns={minimap} rowKeys={rowKeys} scroller={scroller} onJump={jumpToTurn} />}
     {jump}
     {state.source === "conversation" && !findOpen && <button ref={findButton} type="button" className="icon-button chat-find-open" aria-label={t("Find in messages")} title={t("Find in messages")} onClick={() => setFindOpen(true)}><Search aria-hidden="true" /></button>}
     </div>
     </div>
+    </CommentSurfaceLayout>
   {/* The prompt card is not part of the transcript: it is drawn on the composer's column, over the
       input card, where PaneTerminal keeps its place. The prompt itself (its poll, the answer, the
       re-read) stays here. */}

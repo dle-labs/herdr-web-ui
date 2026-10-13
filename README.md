@@ -80,7 +80,7 @@ A browser and phone client for [herdr](https://github.com/herdrdev/herdr). Read 
 - **Approve with a tap** — approvals, questions and plan menus become cards, checked to be current before your answer is sent.
 - **Know when you're needed** — live status for every pane, an alert that drops in while the app is open, and push alerts when an agent needs input or finishes, even with the app closed.
 - **Install it on your phone** — a PWA with a key bar above the keyboard (Esc, Tab, Ctrl, Alt, Shift, Enter, arrows) that you can rearrange and extend with your own combinations in Settings, and a QR code to your Tailscale address. [Phone setup →](docs/guide.md#on-your-phone)
-- **Speak instead of typing** — dictate into the chat or the terminal line, Korean and English mixed. Review the words before sending them to the agent; transcription uses your own OpenAI key or the browser's speech recognition.
+- **Speak instead of typing** — hold or tap the mic in chat or terminal input lines. Auto chooses configured/supported OpenAI, otherwise supported browser recognition; self-hosted Speaches is an explicit option. Each take keeps one provider without error fallback. Finish, review, then Send by default; finish-and-send is opt-in.
 - **Keep your workflow** — herdr owns the agents; this app connects to them. Update from Settings without stopping them, with patch notes for what each update brings. New tabs and worktrees come from a row's ⋯ menu. [All features →](docs/guide.md#features)
 
 ---
@@ -135,7 +135,7 @@ No. Tailscale, an SSH tunnel, a VPN or your own HTTPS proxy can provide a route 
 
 **Does my code or conversation leave my machine?**
 
-Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional voice input sends audio (and text when polishing) to the configured provider; enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The app sends an anonymous count when it is installed and each time it is updated (the version, the OS, how it was installed and a random ID; no IP address is stored), and **Settings → About → Anonymous usage counts** shows what is sent and turns it off. The agents’ own model connections depend on their configuration. [Data flow and access →](docs/guide.md#faq)
+Session files stay on the PC running each agent, and their contents are served to browsers you connect. The app has no hosted relay or account service of its own. Optional dictation uses only your selected provider: OpenAI recordings and optional text polishing pass through the WebUI voice backend, self-hosted completed recordings pass through WebUI to Speaches (no live audio streaming), and browser recognition may use the browser vendor's service. Auto selects OpenAI or browser recognition before recording; explicit choices and active takes never fall back. Enabled usage meters contact provider APIs. Updates, remote-PC setup and push alerts can also use external services. The app sends an anonymous count when it is installed and each time it is updated (the version, the OS, how it was installed and a random ID; no IP address is stored), and **Settings → About → Anonymous usage counts** shows what is sent and turns it off. The agents’ own model connections depend on their configuration. [Data flow and access →](docs/guide.md#faq)
 
 **Does it work on Windows?**
 

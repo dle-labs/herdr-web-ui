@@ -115,36 +115,18 @@ Copyright (c) 2026 T3 Tools Inc.
   `apps/web/src/components/chat/MessagesTimeline.logic.ts`,
   `apps/web/src/components/chat/MessagesTimeline.tsx`
 
-## TanStack Highlight
+## Shiki
 
-Code highlighting in the client and its worker uses
-[`@tanstack/highlight`](https://github.com/TanStack/highlight).
-
-```
-MIT License
-
-Copyright (c) 2026-present Tanner Linsley
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
+Code, Markdown fences and diffs use [Shiki](https://shiki.style/) through
+`@pierre/diffs`, with a shared application theme. Shiki's MIT license and the
+licenses of its bundled runtime dependencies ship in
+[`licenses/git-diff.txt`](licenses/git-diff.txt).
 
 ## Pierre diffs
+
+The Git Changes view and repository diffs also use this package. Full license and attribution
+texts for its bundled runtime dependencies (including Shiki, jsdiff and the HTML utilities)
+ship in [`licenses/git-diff.txt`](licenses/git-diff.txt).
 
 The file viewer draws a source of more than 2 000 lines as a window of rows from
 [`@pierre/diffs`](https://github.com/pierrecomputer/pierre) 1.5.2, colored in the package's own

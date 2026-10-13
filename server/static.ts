@@ -81,7 +81,8 @@ function cacheControlFor(pathname: string): string {
  * - `connect-src 'self'`: every fetch is a relative /api path, the terminal socket is
  *   window.location.host over ws:/wss: (which 'self' matches — confirmed in Chromium:
  *   an explicit `new WebSocket("ws://<same host>/ws")` and the machines event stream both
- *   connect under the enforcing header).
+ *   connect under the enforcing header). Dictation uses the same-origin backend relay;
+ *   no external speech HTTPS/WSS sources are granted. File-viewer CSP remains separate.
  * - `media-src 'self'`: the file viewer's <video>/<audio>, same-origin.
  * - `frame-src 'self'`: the PDF viewer frames /api/fs/file, same-origin.
  * - `worker-src 'self'`: the service worker is /sw.js, same-origin.
@@ -119,11 +120,12 @@ export const CONTENT_SECURITY_POLICY = CSP_DIRECTIVES.join("; ");
  *   logs what the policy would have blocked and the app keeps working. `report-only` is the
  *   measurement mode; anything else enforces.
  */
-function cspHeader(): Record<string, string> {
+export function cspHeader(): Record<string, string> {
   const mode = process.env["HERDR_WEB_CSP"];
+  const policy = CSP_DIRECTIVES.join("; ");
   return mode === "report-only"
-    ? { "content-security-policy-report-only": CONTENT_SECURITY_POLICY }
-    : { "content-security-policy": CONTENT_SECURITY_POLICY };
+    ? { "content-security-policy-report-only": policy }
+    : { "content-security-policy": policy };
 }
 
 /**
@@ -176,7 +178,7 @@ export async function serveStatic(pathname: string, acceptEncoding?: string | nu
   if (!existsSync(indexPath)) {
     return new Response(
       "herdr-web-ui server is running, but the browser client has not been built yet.\nRun: bun run build\n",
-      { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } },
+      { status: 200, headers: { "content-type": "text/plain; charset=utf-8", ...cspHeader() } },
     );
   }
   const relative = normalize(pathname).replace(/^(\.\.[/\\])+/, "");

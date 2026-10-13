@@ -1,6 +1,6 @@
 import type { Translate } from "./i18n.ts";
 
-export type SettingsPageId = "appearance" | "chat" | "terminal" | "alerts" | "voice" | "usage" | "shortcuts" | "devices" | "remote" | "integrations" | "about";
+export type SettingsPageId = "appearance" | "chat" | "files" | "terminal" | "alerts" | "voice" | "usage" | "shortcuts" | "devices" | "remote" | "integrations" | "about";
 
 /** What the palette shows for one Settings page: its name and the words a user may look for it by. */
 export interface SettingsPageEntry {
@@ -18,9 +18,10 @@ export function settingsPageEntries(t: Translate): SettingsPageEntry[] {
   return [
     { id: "appearance", label: t("Appearance"), aliases: t("theme dark light mode colors palette density language sidebar logos") },
     { id: "chat", label: t("Chat"), aliases: t("chat font size message width composer enter send thinking code") },
+    { id: "files", label: t("File viewer"), aliases: t("folder explorer open file") },
     { id: "terminal", label: t("Terminal"), aliases: t("terminal font size cursor key bar keyboard clipboard") },
     { id: "alerts", label: t("Alerts"), aliases: t("notifications sound push bell needs input finished") },
-    { id: "voice", label: t("Voice input"), aliases: t("dictation microphone speech openai") },
+    { id: "voice", label: t("Dictation"), aliases: t("dictation microphone speech openai") },
     { id: "usage", label: t("Subscription usage"), aliases: t("plan limits quota meters pace") },
     { id: "shortcuts", label: t("Shortcuts"), aliases: t("keyboard keys bindings hotkeys") },
     { id: "devices", label: t("Phone & devices"), aliases: t("phone install keep screen on app") },

@@ -2,11 +2,30 @@ import { describe, expect, it } from "bun:test";
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_DICTATION_CONFIG } from "./voiceTransport.ts";
+import { DICTATION_LANGUAGES, DICTATION_MODEL_MAX_CHARS, VOICE_PROVIDERS, sanitizeDictation, voiceButton } from "./settings.ts";
 import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
 import { SHARED_SETTING_KEYS } from "../../shared/preferences.ts";
 import { NOTICE_VERSION, TELEMETRY_SETTINGS_KEYS, telemetrySettings } from "../../shared/telemetry.ts";
-import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
+import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
+it("shows the file browser shortcut by default and keeps this device's choice outside telemetry", () => {
+  expect(DEFAULT_SETTINGS.showBrowseFilesShortcut).toBe(true);
+  expect(sanitizeSettings({}).showBrowseFilesShortcut).toBe(true);
+  expect(sanitizeSettings({ showBrowseFilesShortcut: false }).showBrowseFilesShortcut).toBe(false);
+  expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ showBrowseFilesShortcut: false })))).showBrowseFilesShortcut).toBe(false);
+  for (const value of [null, "false", 0]) expect(sanitizeSettings({ showBrowseFilesShortcut: value }).showBrowseFilesShortcut).toBe(true);
+  expect(SETTING_SCOPE.showBrowseFilesShortcut).toBe("device");
+  expect(telemetrySettingsSnapshot(DEFAULT_SETTINGS)).not.toHaveProperty("showBrowseFilesShortcut");
+});
+
+it("shares the diff layout preference with the file browser and sanitizes saved values", () => {
+  expect(DEFAULT_SETTINGS.splitDiff).toBe(true);
+  expect(sanitizeSettings({}).splitDiff).toBe(true);
+  expect(sanitizeSettings({ splitDiff: false }).splitDiff).toBe(false);
+  expect(sanitizeSettings({ splitDiff: true }).splitDiff).toBe(true);
+  for (const splitDiff of [null, "false", 0]) expect(sanitizeSettings({ splitDiff }).splitDiff).toBe(true);
+});
 
 it("keeps a tab's pane while out of use until this device turns the pause on", () => {
   expect(DEFAULT_SETTINGS.releasePaneAway).toBe(false);
@@ -171,6 +190,8 @@ describe("telemetry settings snapshot", () => {
       quickReplies: ["private quick reply"],
       usageOrder: ["private-order-account-id"],
       usageHidden: ["private-hidden-account-id"],
+      voiceProvider: "speaches",
+      dictation: { version: 2, mode: "recording", model: "private/speech-model", activated: true },
     });
     const snapshot = telemetrySettingsSnapshot(settings);
     const serialized = JSON.stringify(snapshot);
@@ -184,10 +205,10 @@ describe("telemetry settings snapshot", () => {
       quickReplyCount: 1,
       usageHiddenCount: 1,
     });
-    for (const key of ["keyBarExtras", "keyBarItems", "shortcutOverrides", "terminalFontFamily", "chatFontFamily", "quickReplies", "usageOrder", "usageHidden"]) {
+    for (const key of ["keyBarExtras", "keyBarItems", "shortcutOverrides", "terminalFontFamily", "chatFontFamily", "quickReplies", "usageOrder", "usageHidden", "voiceProvider", "voiceFinishAndSend", "dictation"]) {
       expect(snapshot).not.toHaveProperty(key);
     }
-    for (const raw of ["private-terminal-font", "private-chat-font", "private quick reply", "private-order-account-id", "private-hidden-account-id"]) {
+    for (const raw of ["private-terminal-font", "private-chat-font", "private quick reply", "private-order-account-id", "private-hidden-account-id", "private/speech-model"]) {
       expect(serialized).not.toContain(raw);
     }
   });
@@ -202,6 +223,13 @@ describe("telemetry settings snapshot", () => {
       ...TELEMETRY_SETTINGS_KEYS.filter((key) => !sent.includes(key)).map((key) =>
         `${key}: the Worker requires it and telemetrySettingsSnapshot in src/lib/settings.ts does not send it. Send it, or remove it from shared/telemetry.ts and deploy the Worker before releasing.`),
     ]).toEqual([]);
+  });
+
+  it("does not expand telemetry collection to the new review-surface preferences", () => {
+    const snapshot = telemetrySettingsSnapshot(sanitizeSettings({ comments: false, splitDiff: false }));
+    expect(snapshot).not.toHaveProperty("comments");
+    expect(snapshot).not.toHaveProperty("splitDiff");
+    expect(telemetrySettings(snapshot)).toEqual(snapshot);
   });
 
   it("requires a complete, valid schema and reconstructs a clean own-key snapshot", () => {
@@ -522,16 +550,207 @@ describe("microphone button", () => {
     for (const voiceLanguage of [null, 1, "", "hu", "hu-hu", "xx-XX", "auto "]) expect(sanitizeSettings({ voiceLanguage }).voiceLanguage).toBe("auto");
   });
 
-  it("is asked for in the chat off a phone on auto, everywhere when on and nowhere when off", () => {
-    expect(wantsVoiceInput("auto", "chat", false)).toBe(true);
-    expect(wantsVoiceInput("auto", "chat", true)).toBe(false);
-    expect(wantsVoiceInput("auto", "terminal", false)).toBe(false);
-    for (const mode of ["chat", "terminal"] as const) {
-      for (const phone of [false, true]) {
+  it("keeps explicitly selected Speaches visible in mobile chat without overriding Off", () => {
+    for (const phone of [false, true]) {
+      expect(wantsVoiceInput("auto", "chat", phone, "speaches")).toBe(true);
+      expect(wantsVoiceInput("off", "chat", phone, "speaches")).toBe(false);
+    }
+    for (const provider of ["auto", "openai", "browser"] as const) expect(wantsVoiceInput("auto", "chat", true, provider)).toBe(false);
+    expect(wantsVoiceInput("auto", "comment", true, "speaches")).toBe(true);
+    expect(wantsVoiceInput("auto", "terminal", true, "speaches")).toBe(false);
+  });
+
+  it("keeps Auto on desktop chat and On on every draft surface", () => {
+    for (const mode of ["chat", "terminal", "comment"] as const) {
+      for (const phone of [false, true, undefined]) {
+        expect(wantsVoiceInput("auto", mode, phone)).toBe(mode === "comment" || (mode === "chat" && phone !== true));
         expect(wantsVoiceInput("on", mode, phone)).toBe(true);
         expect(wantsVoiceInput("off", mode, phone)).toBe(false);
       }
     }
+  });
+});
+
+describe("dictation settings", () => {
+  it("migrates legacy visibility additively, retaining upstream preferences without activating Speaches", () => {
+    for (const [old, expected] of [["off", "off"], ["on", "on"], ["auto", "auto"], [true, "on"], [false, "auto"], [undefined, "auto"], [null, "auto"], ["bad", "auto"]] as const) {
+      expect(voiceButton(old)).toBe(expected);
+      const migrated = sanitizeSettings({ voiceInput: old, voiceLanguage: "ja-JP", voicePolishChat: true, voicePolishTerminal: true, api_key: "secret" });
+      expect(migrated.dictation).toEqual(DEFAULT_DICTATION_CONFIG);
+      expect(migrated.dictation.activated).toBe(false);
+      expect(migrated.voiceProvider).toBe("auto");
+      expect(migrated.voiceLanguage).toBe("ja-JP");
+      expect(migrated.voicePolishChat).toBe(true);
+      expect(migrated.voicePolishTerminal).toBe(true);
+      expect(migrated).not.toHaveProperty("api_key");
+    }
+  });
+
+  it("defaults upstream records to Automatic without forcing OpenAI", () => {
+    const defaults = sanitizeSettings({});
+    expect(defaults.voiceProvider).toBe("auto");
+    expect(defaults.voiceLanguage).toBe("auto");
+    expect(defaults.voicePolishChat).toBe(true);
+    expect(defaults.voicePolishTerminal).toBe(false);
+    for (const voiceLanguage of ["auto", ...DICTATION_LANGUAGES] as const) {
+      const saved = sanitizeSettings({ voiceLanguage, voicePolishChat: false, voicePolishTerminal: true });
+      const loaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
+      expect(loaded.voiceLanguage).toBe(voiceLanguage);
+      expect(loaded.voicePolishChat).toBe(false);
+      expect(loaded.voicePolishTerminal).toBe(true);
+    }
+    expect(sanitizeSettings({ voiceLanguage: "bad", voicePolishChat: "false", voicePolishTerminal: "true" })).toMatchObject({ voiceLanguage: "auto", voicePolishChat: true, voicePolishTerminal: false });
+  });
+
+  it("migrates only valid activated v2 Speaches records when no provider is present", () => {
+    const dictation = { version: 2, mode: "recording", model: "custom/model", activated: true };
+    expect(sanitizeSettings({ dictation }).voiceProvider).toBe("speaches");
+    for (const invalid of [{ ...dictation, version: 1 }, { ...dictation, mode: "bad" }, { ...dictation, model: "bad model" }, { ...dictation, activated: false }]) {
+      expect(sanitizeSettings({ dictation: invalid }).voiceProvider).toBe("auto");
+    }
+    for (const voiceProvider of VOICE_PROVIDERS) {
+      const saved = sanitizeSettings({ dictation, voiceProvider, voiceLanguage: "ko-KR", voicePolishChat: false, voicePolishTerminal: true });
+      expect(saved.voiceProvider).toBe(voiceProvider);
+      const loaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
+      expect(sanitizeSettings({ ...loaded, theme: "light" })).toMatchObject({ voiceProvider, voiceLanguage: "ko-KR", voicePolishChat: false, voicePolishTerminal: true, dictation });
+    }
+    for (const voiceProvider of [null, false, "unknown", ["openai", "speaches"], 7]) {
+      expect(sanitizeSettings({ dictation, voiceProvider }).voiceProvider).toBe("auto");
+    }
+  });
+
+  it("requires an explicit opt-in for finish-and-send and keeps the choice device-scoped", () => {
+    expect(DEFAULT_SETTINGS.voiceFinishAndSend).toBe(false);
+    expect(SETTING_SCOPE.voiceFinishAndSend).toBe("device");
+    for (const value of [undefined, null, false, "true", 1]) expect(sanitizeSettings({ voiceFinishAndSend: value }).voiceFinishAndSend).toBe(false);
+    const saved = sanitizeSettings({ voiceFinishAndSend: true });
+    expect(sanitizeSettings(JSON.parse(JSON.stringify(saved))).voiceFinishAndSend).toBe(true);
+    expect(sanitizeSettings({ ...saved, palette: "forest" }).voiceFinishAndSend).toBe(true);
+    expect(telemetrySettingsSnapshot(saved)).not.toHaveProperty("voiceFinishAndSend");
+  });
+
+  it("retains valid explicitly applied settings across storage and unrelated updates", () => {
+    const dictation = { version: 2, mode: "recording", model: " custom/model ", activated: true };
+    const saved = sanitizeSettings({ dictation, voiceInput: "off" });
+    expect(saved.dictation).toEqual({ version: 2, mode: "recording", model: "custom/model", activated: true });
+    const reloaded = sanitizeSettings(JSON.parse(JSON.stringify(saved)));
+    expect(reloaded.dictation).toEqual(saved.dictation);
+    expect(sanitizeSettings({ ...reloaded, theme: "light" }).dictation).toEqual(saved.dictation);
+    expect(reloaded.voiceInput).toBe("off");
+  });
+
+  it("retires live configurations without losing model, language or provider choices", () => {
+    const migrated = sanitizeSettings({ voiceProvider: "speaches", dictation: { version: 2, mode: "live", model: "custom/model", language: "ja", activated: true } });
+    expect(migrated.voiceProvider).toBe("speaches");
+    expect(migrated.dictation).toEqual({ version: 2, mode: "recording", model: "custom/model", language: "ja", activated: false });
+    expect(sanitizeSettings(JSON.parse(JSON.stringify(migrated)))).toEqual(migrated);
+  });
+
+  it("requires explicit boolean activation and valid bounded fields", () => {
+    const valid = { version: 2, mode: "recording", model: "custom/model", activated: true } as const;
+    for (const activated of [false, undefined, null, "true", 1]) expect(sanitizeDictation({ ...valid, activated }).activated).toBe(false);
+    for (const mode of [undefined, null, "invalid", "live", 2]) expect(sanitizeDictation({ ...valid, mode }).activated).toBe(false);
+    for (const version of [undefined, null, 1, "2", 3]) {
+      expect(sanitizeDictation({ ...valid, version, mode: "live", baseUrl: "https://speech.example/v1" })).toEqual({ version: 2, mode: "recording", model: "custom/model", activated: false });
+    }
+    expect(sanitizeDictation({ ...valid, generation: "old", baseUrl: "https://speech.example/v1" })).toEqual(valid);
+    for (const model of [undefined, 7, "", "  ", "bad model", "../model", "https://model", "bad\nmodel", "bad\u0000model", "x".repeat(DICTATION_MODEL_MAX_CHARS + 1)]) {
+      const clean = sanitizeDictation({ ...valid, model });
+      expect(clean.activated).toBe(false);
+      expect(clean.model.length).toBeLessThanOrEqual(DICTATION_MODEL_MAX_CHARS);
+    }
+    for (const raw of [undefined, null, [], true, "bad"]) expect(sanitizeDictation(raw)).toEqual(DEFAULT_DICTATION_CONFIG);
+  });
+
+  it("invalidates capture at update-call time rather than in the React state updater", () => {
+    const source = readFileSync(join(import.meta.dir, "settings.ts"), "utf8");
+    const handler = source.slice(source.indexOf("const update = useCallback"), source.indexOf("const value = useMemo"));
+    expect(handler.indexOf("invalidateDictation()")).toBeGreaterThan(0);
+    expect(handler.indexOf("invalidateDictation()")).toBeLessThan(handler.indexOf("setSettings((current)"));
+    for (const field of ["dictation", "voiceInput", "voiceProvider", "voiceFinishAndSend", "voiceLanguage", "voicePolishChat", "voicePolishTerminal"]) expect(handler).toContain(`"${field}"`);
+    expect(handler).toContain("Object.hasOwn(patch, key)");
+  });
+
+  it("keeps the upstream compact indicator, readonly preview and an accessible loading status", () => {
+    const source = readFileSync(join(import.meta.dir, "..", "components", "VoiceInput.tsx"), "utf8");
+    const pill = source.slice(source.indexOf("export function VoiceRecordingPill"));
+    expect(pill.match(/className="voice-pill-partial"/g)).toHaveLength(1);
+    expect(pill).toContain('aria-label={t("Dictation preview")} aria-live="off"');
+    expect(pill).toContain("Array.from({ length: 7 }");
+    expect(pill).toContain('<LoaderCircle className="voice-loading" aria-hidden="true"');
+    expect(pill).toContain('role="status" aria-live="polite"');
+    expect(pill).not.toContain("ResizeObserver");
+    expect(pill).not.toContain("onText");
+    expect(pill).not.toContain("write(");
+    const css = readFileSync(join(import.meta.dir, "..", "components", "VoiceInput.css"), "utf8");
+    expect(css).toContain("position: absolute");
+    expect(css).toContain("steps(8) infinite");
+    expect(css).toContain(".voice-loading { animation: none; }");
+  });
+
+  it("invalidates committed snapshots for every persisted configuration field", () => {
+    const source = readFileSync(join(import.meta.dir, "settings.ts"), "utf8");
+    expect(source).toContain("useLayoutEffect(() => invalidateDictation(), [settings.voiceInput, settings.voiceProvider, settings.voiceFinishAndSend, settings.voiceLanguage, settings.voicePolishChat, settings.voicePolishTerminal, settings.dictation.version, settings.dictation.mode, settings.dictation.model, settings.dictation.activated, settings.dictation.language])");
+  });
+
+  it("keeps speech-service requests explicit and never acquires a microphone in settings", () => {
+    const page = readFileSync(join(import.meta.dir, "..", "components", "DictationSettings.tsx"), "utf8");
+    const dialog = readFileSync(join(import.meta.dir, "..", "components", "SettingsDialog.tsx"), "utf8");
+    for (const source of [page, dialog]) {
+      expect(source).not.toContain("getUserMedia");
+      expect(source).not.toContain("localStorage");
+    }
+    expect(page).toContain("discoverDictationModels({ ...applied }, controller.signal)");
+    expect(page).toContain("generation !== request.current.generation");
+    expect(page).toContain("applied.activated && policy !== null");
+    // Destination edits go to backend persistence only, never browser dictation preferences.
+    expect(page).toContain("saveDictationBackend(change, request.signal)");
+    expect(page).toContain('policy?.source === "env"');
+    expect(page).toContain("activated: false");
+    expect(readFileSync(join(import.meta.dir, "settings.ts"), "utf8")).not.toContain("base_url");
+    expect(sanitizeDictation({ version: 2, mode: "recording", model: "custom/model", activated: true, language: "ja" })).toMatchObject({ language: "ja", activated: true });
+    expect(sanitizeDictation({ version: 2, mode: "recording", model: "custom/model", activated: true, language: "auto", api_key: "secret" })).toMatchObject({ language: "auto", activated: true });
+    for (const language of ["", "en-US", "EN", "en\n", "x".repeat(50), 1, null]) {
+      const clean = sanitizeDictation({ version: 2, mode: "recording", model: "custom/model", activated: true, language });
+      expect(clean.activated).toBe(false);
+      expect(clean.language).toBeUndefined();
+    }
+    expect(page).toContain('mode: "recording"');
+    expect(page).not.toContain('t("Live preview")');
+    expect(page).not.toContain("setMode(");
+    expect(dialog).toContain('case "voice": return <DictationSettings />');
+  });
+
+  it("uses exclusive provider selection with hidden preferences preserved and no automatic fallback", () => {
+    const page = readFileSync(join(import.meta.dir, "..", "components", "DictationSettings.tsx"), "utf8");
+    expect(page).toContain("value={settings.voiceProvider}");
+    expect(page).toContain('id="voice-provider"');
+    expect(page).toContain("update({ voiceProvider: event.target.value as VoiceProvider })");
+    expect(page).toContain('settings.voiceProvider === "openai"');
+    expect(page).toContain('settings.voiceProvider === "browser"');
+    expect(page).toContain('settings.voiceProvider === "speaches"');
+    expect(page).toContain('value="auto"');
+    expect(page).toContain("settings.voiceFinishAndSend");
+    expect(page).toContain("Browser speech recognition may send audio to the browser vendor");
+    expect(page).not.toContain('update({ voiceLanguage: "auto"');
+    expect(page).not.toContain('update({ dictation: DEFAULT');
+  });
+
+  it("keeps key edits explicit, env keys read-only and secrets out of React state and error text", () => {
+    const page = readFileSync(join(import.meta.dir, "..", "components", "DictationSettings.tsx"), "utf8");
+    expect(page).toContain('status.source !== "env"');
+    expect(page).toContain('status.source === "env") return');
+    expect(page).toContain('type="password"');
+    expect(page).toContain('input.current.value = ""');
+    expect(page).not.toContain("setVoiceKey");
+    expect(page).not.toContain("error.message");
+    expect(page).toContain('window.addEventListener("pagehide", clear)');
+    expect(page).toContain('document.addEventListener("visibilitychange", onHidden)');
+    expect(page).toContain("saveVoiceConfig({ api_key })");
+    expect(page).toContain('new Event("herdr-voice-status-changed")');
+    const api = readFileSync(join(import.meta.dir, "api.ts"), "utf8");
+    expect(api).toContain('fetch("/api/voice", { cache: "no-store", signal })');
+    expect(api).toContain('fetch("/api/voice/config", { method: "PUT"');
   });
 });
 
@@ -719,17 +938,21 @@ describe("default lens", () => {
   });
 });
 
+it("keeps the file viewer's wrap setting only when it is a boolean, and no size limits", () => {
+  expect(DEFAULT_SETTINGS.wrapCode).toBe(false);
+  expect(sanitizeSettings({ wrapCode: true }).wrapCode).toBe(true);
+  expect(sanitizeSettings({ wrapCode: "yes" }).wrapCode).toBe(false);
+  // the limits are fixed now: a record stored with them drops them
+  const stored = sanitizeSettings({ textLoadLimit: 1024 * 1024, highlightLimit: 1024 * 1024 }) as unknown as Record<string, unknown>;
+  expect("textLoadLimit" in stored).toBe(false);
+  expect("highlightLimit" in stored).toBe(false);
+});
+
 it("highlights code unless turned off, and keeps a stored choice only when it is a boolean", () => {
   expect(DEFAULT_SETTINGS.highlightCode).toBe(true);
   expect(sanitizeSettings({ highlightCode: false }).highlightCode).toBe(false);
   expect(sanitizeSettings({ highlightCode: "no" }).highlightCode).toBe(true);
   expect(sanitizeSettings({}).highlightCode).toBe(true);
-});
-
-it("keeps the file viewer's wrap setting only when it is a boolean", () => {
-  expect(DEFAULT_SETTINGS.wrapCode).toBe(false);
-  expect(sanitizeSettings({ wrapCode: true }).wrapCode).toBe(true);
-  expect(sanitizeSettings({ wrapCode: "yes" }).wrapCode).toBe(false);
 });
 
 it("keeps the Markdown preview's width to readable or full, readable by default", () => {
@@ -766,4 +989,14 @@ it("keeps plain chat paging opt-in and saves the keyboard choice on this device"
     expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ chatPageKeys })))).chatPageKeys).toBe(chatPageKeys);
   }
   for (const chatPageKeys of [null, "true", 1]) expect(sanitizeSettings({ chatPageKeys }).chatPageKeys).toBe(false);
+});
+
+describe("comments", () => {
+  it("is on by default and keeps a stored choice", () => {
+    expect(sanitizeSettings({}).comments).toBe(true);
+    expect(sanitizeSettings({ comments: false }).comments).toBe(false);
+  });
+  it("falls back to on for a value that is not a boolean", () => {
+    expect(sanitizeSettings({ comments: "no" }).comments).toBe(true);
+  });
 });

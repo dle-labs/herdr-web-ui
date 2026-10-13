@@ -12,15 +12,17 @@
  * one notice instead of a TUI. A message sent from a chat gets a demo answer.
  * What does not: files, images, push and remote PCs, which need a real machine.
  */
-import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
+import type { DictationConfigResponse, AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PaneMoved, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
 import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
 import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLayoutPanes } from "../../src/lib/layoutTree.ts";
+import { DICTATION_DEFAULT_MODEL, DICTATION_MAX_BYTES, DICTATION_MAX_SECONDS } from "../../shared/dictation.ts";
 import { rollupStatus } from "../../src/lib/status.ts";
 import { CHATS, PROMPT, SPECS } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
+import { DEMO_COMMITS, demoGitChanges, demoGitDiff } from "./gitDiff.ts";
 import machinesFixture from "./fixtures/machines.json";
 import agentsFixture from "./fixtures/agents.json";
 import commandsFixture from "./fixtures/commands.json";
@@ -452,6 +454,12 @@ const now = () => new Date().toISOString();
 /** the id a pane answers to after a move took it to another workspace, for a mock turn begun under the old one */
 const movedPaneIds = new Map<string, string>();
 
+/** The demo agent's chat in a pane; a pane without one has no agent to take a message. */
+function chatOf(paneId: string) {
+  const key = keyOfPane.get(paneId);
+  return key ? chats.get(key) : undefined;
+}
+
 /** The bridge takes one accepted pending message when the current mock turn finishes. */
 function finishDemoTurn(paneId: string, status: "idle" | "done" = "done"): void {
   while (movedPaneIds.has(paneId)) paneId = movedPaneIds.get(paneId)!;
@@ -465,8 +473,7 @@ function finishDemoTurn(paneId: string, status: "idle" | "done" = "done"): void 
 
 /** A sent Enter joins the conversation now; another Enter steers the current mock turn. */
 function submitToChat(paneId: string, text: string): void {
-  const key = keyOfPane.get(paneId);
-  const chat = key ? chats.get(key) : undefined;
+  const chat = chatOf(paneId);
   if (!chat) return;
   chat.turns.push({ role: "user", ts: now(), parts: [{ kind: "text", text }] });
   conversationChanged(paneId);
@@ -1070,9 +1077,35 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     structureChanged();
     return json({ ok: true });
   }
+  if (path === "/api/workspace/commits" || path === "/api/workspace/files") {
+    if (method !== "GET") return error("method_not_allowed", "use GET", 400);
+    if (!query.get("pane_id")?.trim()) return error("missing_pane_id", "pane_id query parameter is required", 400);
+    const pane = snapshot().panes.find((pane) => pane.pane_id === query.get("pane_id"));
+    if (!pane) return error("pane_not_found", "no such demo pane", 404);
+    const needle = (query.get("query") ?? "").trim().toLowerCase();
+    if (path.endsWith("/commits")) return json({ commits: DEMO_COMMITS.filter((commit) => commit.id.includes(needle) || commit.subject.toLowerCase().includes(needle)), truncated: false });
+    const files = ["README.md", "src/greeting.ts", "src/new.ts"].filter((file) => {
+      let at = 0;
+      for (const character of file.toLowerCase()) if (character === needle[at]) at++;
+      return at === needle.length;
+    });
+    return json({ root: pane.foreground_cwd ?? pane.cwd ?? "/home/demo/project", files, truncated: false });
+  }
+  if (path === "/api/workspace/changes" || path === "/api/workspace/diff") {
+    const pane = snapshot().panes.find((pane) => pane.pane_id === query.get("pane_id"));
+    if (!pane) return error("pane_not_found", "no such demo pane", 404);
+    const mode = query.get("mode") ?? "all";
+    if (mode !== "all" && mode !== "unstaged" && mode !== "staged") return error("invalid_mode", "unknown comparison", 400);
+    const root = pane.foreground_cwd ?? pane.cwd ?? "/home/demo/project";
+    const baseCommit = query.get("base_commit")?.toLowerCase();
+    if (baseCommit !== undefined && (mode !== "all" || !DEMO_COMMITS.some((commit) => commit.id === baseCommit))) return error("invalid_base_commit", "base_commit must name a demo commit and requires mode=all", 400);
+    if (path === "/api/workspace/changes") return json(demoGitChanges(root, mode, baseCommit));
+    const diff = demoGitDiff(root, mode, query.get("path") ?? "", baseCommit);
+    return diff === null ? error("git_path_not_changed", "no such changed demo file", 404) : json(diff);
+  }
   if (path === "/api/workspace/directories") {
     const dir = query.get("path") || "/home/demo";
-    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "docs-site", "infra", "release", "web-dashboard"] : [], truncated: false, files: [] });
+    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "docs-site", "infra", "release", "web-dashboard"] : [], truncated: false, ...(query.get("files") === "1" ? { files: [], ignored_directories: [] } : {}) });
   }
   if (path === "/api/workspace/create") {
     const body = await bodyOf(init, input);
@@ -1115,7 +1148,11 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     structureChanged();
     return json({ workspace_id: id, pane_id: pane.pane_id, agent_started: agent !== null } satisfies WorkspaceCreated);
   }
-  // no key in the demo: the app falls back to the browser's own speech recognition
+  // Dictation stays disabled even with remembered consent; the demo never relays audio.
+  if (path === "/api/dictation/config" && method === "PUT") return error("not_configured", "the demo saves no speech server configuration", 409);
+  if (path === "/api/dictation/config") return json({ version: 2, enabled: false, generation: "demo", default_model: DICTATION_DEFAULT_MODEL, modes: [], max_seconds: DICTATION_MAX_SECONDS, max_bytes: DICTATION_MAX_BYTES } satisfies DictationConfigResponse, 200, { "cache-control": "no-store" });
+  if (path.startsWith("/api/dictation/")) return error("not_configured", "dictation is unavailable in the demo", 409);
+  // Legacy compatibility only; no speech transport is available in the demo.
   if (path === "/api/voice") return json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus, 200, { "cache-control": "no-store" });
   if (path === "/api/voice/config") return error("demo", "the demo saves no OpenAI key", 409);
   if (path === "/api/voice/transcribe") return error("voice_not_configured", "transcription is unavailable in the demo", 409);
@@ -1144,8 +1181,15 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
 const realFetch = window.fetch.bind(window);
 window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.href);
-  if (!url.pathname.startsWith("/api/")) return realFetch(input, init);
+  // Defense in depth: never let stale settings or model checks reach a private origin.
+  if (url.origin !== location.origin) return Promise.reject(new TypeError("External requests are unavailable in the demo"));
   const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  if (!url.pathname.startsWith("/api/")) {
+    if (method.toUpperCase() !== "GET" || /\/(?:models|audio\/transcriptions)\/?$/.test(url.pathname)) {
+      return Promise.reject(new TypeError("Direct speech requests are unavailable in the demo"));
+    }
+    return realFetch(input, init);
+  }
   return route(url, method.toUpperCase(), init, input);
 }) as typeof window.fetch;
 
@@ -1170,6 +1214,7 @@ class DemoEventSource extends EventTarget {
 }
 window.EventSource = function (url: string | URL, init?: EventSourceInit) {
   const target = new URL(String(url), location.href);
+  if (target.origin !== location.origin) throw new DOMException("External streams are unavailable in the demo", "SecurityError");
   return target.pathname === "/api/machines/events" ? (new DemoEventSource(target.href) as unknown as EventSource) : new RealEventSource(url, init);
 } as unknown as typeof EventSource;
 
@@ -1251,7 +1296,7 @@ class DemoSocket extends EventTarget {
       const open = new Event("open");
       this.onopen?.(open);
       this.dispatchEvent(open);
-      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "ping"] });
+      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "ping", "submit-agent-only"] });
     }, 20);
     this.timers.add(opening);
   }
@@ -1284,10 +1329,10 @@ class DemoSocket extends EventTarget {
 
   send(raw: string): void {
     if (this.readyState !== 1) return;
-    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; pending_id?: string; action?: unknown; enabled?: boolean };
+    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; pending_id?: string; action?: unknown; enabled?: boolean; agent_only?: boolean };
     try { message = JSON.parse(raw); } catch { return; }
     if ((message.type === "submit" || message.type === "pending-action") && Number.isSafeInteger(message.id)) {
-      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, pending_id: message.pending_id, action: message.action });
+      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, agent_only: message.agent_only, pending_id: message.pending_id, action: message.action });
       const previous = this.requests.get(message.id!);
       if (previous) {
         if (previous.signature !== signature) {
@@ -1382,7 +1427,12 @@ class DemoSocket extends EventTarget {
           else if (queued && (text.trim().length === 0 || text.length > 20_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text))) code = "invalid_submit_text";
           else if (queued) code = this.pendingTargetError(message.pane_id);
           if (code) {
-            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission." });
+            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission.", typed: false });
+            break;
+          }
+          // like the bridge: a message only an agent may get is refused where none runs
+          if (message.agent_only && !chatOf(message.pane_id)) {
+            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code: "agent_not_found", message: "no agent runs in this pane, and this message is only sent to one; nothing was typed", typed: false });
             break;
           }
           if (queued && (message.delivery === "hold" || paneOf(message.pane_id)?.agent_status === "working")) {
@@ -1461,7 +1511,7 @@ class DemoSocket extends EventTarget {
     if (!this.attached.has(paneId)) return "not_attached";
     const pane = paneOf(paneId);
     if (!pane) return "pane_not_found";
-    if (!(pane.agent ?? pane.agent_session?.agent)) return "agent_not_ready";
+    if (!(pane.agent ?? pane.agent_session?.agent)) return "agent_not_found";
     if (keyOfPane.get(paneId) === "web" && promptOpen) return "agent_blocked";
     if (pane.agent_status === "blocked") return "agent_blocked";
     if (!["working", "idle", "done"].includes(pane.agent_status)) return "agent_not_ready";
@@ -1615,7 +1665,12 @@ class DemoSocket extends EventTarget {
 const RealWebSocket = window.WebSocket;
 window.WebSocket = function (url: string | URL, protocols?: string | string[]) {
   const target = new URL(String(url), location.href);
-  return target.pathname === "/ws" ? (new DemoSocket(target.href) as unknown as WebSocket) : new RealWebSocket(url, protocols);
+  const page = new URL(location.href);
+  page.protocol = page.protocol === "https:" ? "wss:" : "ws:";
+  if (target.origin !== page.origin || target.pathname !== "/ws") {
+    throw new DOMException("Direct speech sockets are unavailable in the demo", "SecurityError");
+  }
+  return new DemoSocket(target.href) as unknown as WebSocket;
 } as unknown as typeof WebSocket;
 for (const name of ["CONNECTING", "OPEN", "CLOSING", "CLOSED"] as const) Object.defineProperty(window.WebSocket, name, { value: RealWebSocket[name] });
 

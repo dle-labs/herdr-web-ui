@@ -1,0 +1,53 @@
+.changes-view {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+}
+.diff-comment-actions, .diff-comment-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.changes-markdown-mode { display: flex; justify-content: flex-end; flex-shrink: 0; padding: var(--space-2); border-block-end: var(--hairline) solid var(--border); }
+.changes-layout { display: grid; grid-template-columns: minmax(180px, 26%) minmax(0, 1fr); flex: 1; min-height: 0; }
+.changes-navigation { min-height: 0; border-inline-end: var(--hairline) solid var(--border); }
+.changes-detail { min-height: 0; min-width: 0; overflow: auto; padding-inline-start: var(--space-3); }
+.changes-diff-section { border-block-end: var(--hairline) solid var(--border); padding-block-end: var(--space-4); scroll-margin-block-start: var(--space-2); }
+.changes-diff-placeholder { min-height: 180px; }
+.changes-note { padding: var(--space-4); color: var(--text-dim); }
+.changes-note[role="alert"] { color: var(--status-blocked); }
+.diff-viewer {
+  --diffs-font-family: var(--font-mono);
+  --diffs-header-font-family: var(--font-ui);
+  --diffs-font-size: var(--fs-sm);
+  --diffs-fg-number-override: var(--text-dim);
+  --diffs-addition-color-override: var(--status-done);
+  --diffs-deletion-color-override: var(--status-blocked);
+  --diffs-modified-color-override: var(--accent);
+  --diffs-bg-context-override: var(--bg-elevated);
+  --diffs-bg-context-gutter-override: var(--bg-elevated);
+  --diffs-bg-separator-override: var(--bg-elevated);
+  --diffs-bg-buffer-override: var(--bg-hover);
+}
+.diff-comment-plus { display: flex; align-items: center; justify-content: center; color: var(--primary-text); background: var(--primary); border: 0; border-radius: var(--radius-sm); cursor: pointer; width: var(--space-5); height: var(--space-5); }
+.diff-comment-plus svg { width: var(--space-4); height: var(--space-4); }
+.diff-comment-card { display: flex; flex-direction: column; text-align: start; gap: var(--space-2); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-elevated); color: var(--text); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); margin-block: var(--space-2); width: 100%; cursor: pointer; font-family: var(--font-ui); }
+.diff-comment-card span:first-child { font-size: var(--fs-xs); color: var(--text-dim); }
+.diff-comment-editor { width: 100%; margin-block: var(--space-2); box-shadow: none; }
+.diff-comment-heading { font-size: var(--fs-xs); overflow-wrap: anywhere; justify-content: space-between; }
+.diff-comment-actions { justify-content: space-between; font-size: var(--fs-xs); color: var(--text-dim); }
+.diff-outdated { margin-block-start: var(--space-4); }
+.diff-outdated h3 { font-size: var(--fs-sm); color: var(--text-dim); }
+.changes-orphan-comments { max-height: 35%; overflow: auto; flex-shrink: 0; }
+@media (max-width: 768px) {
+  .changes-layout { display: flex; }
+  .changes-navigation { width: 100%; border: 0; }
+  .changes-detail { display: none; width: 100%; padding: 0; }
+  .changes-view.is-showing-file .changes-navigation { display: none; }
+  .changes-view.is-showing-file .changes-detail { display: block; }
+  .diff-comment-plus { width: var(--touch-target); height: var(--touch-target); }
+}

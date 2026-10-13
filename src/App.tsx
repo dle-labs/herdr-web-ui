@@ -23,6 +23,9 @@ import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { paletteOpenQuery } from "./lib/paletteSeed.ts";
 import { MachineContext } from "./lib/machineContext.tsx";
+import { useWorkspaceChangesSnapshot } from "./lib/useWorkspaceChanges.ts";
+import { paneStatus } from "./lib/status.ts";
+import { BrowseFilesMenuIcon } from "./components/BrowseFilesIcon.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
@@ -60,11 +63,15 @@ import { LanExposureNotice } from "./components/LanExposureNotice.tsx";
 import { TelemetryNotice } from "./components/TelemetryControls.tsx";
 import { FilesDialog } from "./components/FilesDialog.tsx";
 import { folderQueryFor } from "./lib/paletteFolders.ts";
-import { FileViewer } from "./components/FileViewer.tsx";
 import { RepoDiffViewer } from "./components/RepoDiffViewer.tsx";
-import { OpenFileContext } from "./lib/filePaths.ts";
-import { useFileViewer } from "./lib/useFileViewer.ts";
 import { useRepoDiffViewer } from "./lib/useRepoDiffViewer.ts";
+import { WorkspaceFilesContext } from "./lib/workspaceFiles.ts";
+import type { WorkspaceFileIntent } from "./lib/workspaceBrowser.ts";
+import { OpenFileContext } from "./lib/filePaths.ts";
+import { FileCommentNavContext } from "./lib/fileCommentNav.ts";
+import type { FileComment } from "./lib/fileComments.ts";
+import { useFileViewer } from "./lib/useFileViewer.ts";
+import { changedField, revealField } from "./lib/commentDom.ts";
 import { useT } from "./lib/i18n.ts";
 import { markSelection, selectionStill, type SelectionMark } from "./lib/selectionMark.ts";
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
@@ -359,18 +366,48 @@ export function App() {
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
   }, [moreOpen]);
-  // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
+  // One Files browser, whether opened from its button, a path link or a comment.
   const [filesOpen, setFilesOpen] = useState(false);
+  const [filesTarget, setFilesTarget] = useState<{ machineId: string; paneId: string; start: string } | null>(null);
+  const canLeaveFiles = useCallback(() => {
+    // A scoped diff can open a source browser above the original Files list.
+    for (const surface of [...document.querySelectorAll(".files-dialog")].reverse()) {
+      const field = changedField(surface);
+      if (field !== null) { revealField(field); return false; }
+    }
+    return true;
+  }, []);
+  const openFilesFor = useCallback((paneId: string, machineId: string, intent: WorkspaceFileIntent) => {
+    if (!canLeaveFiles()) return;
+    const pane = machines.find((machine) => machine.id === machineId)?.snapshot?.panes.find((pane) => pane.pane_id === paneId);
+    setFilesTarget({ machineId, paneId, start: pane?.foreground_cwd ?? pane?.cwd ?? "" });
+    setDiffCommentView(null);
+    setFilesIntent(intent);
+    setFilesOpen(true);
+  }, [machines, canLeaveFiles]);
+  const [filesIntent, setFilesIntent] = useState<WorkspaceFileIntent>("browse");
   const [movingPane, setMovingPane] = useState<{ machineId: string; paneId: string; anchor: HTMLElement } | null>(null);
   const movingOwner = movingPane ? machines.find((machine) => machine.id === movingPane.machineId) : null;
   const movingLivePane = movingOwner?.state === "connected" ? movingOwner.snapshot?.panes.find((pane) => pane.pane_id === movingPane?.paneId) : null;
   useEffect(() => { if (movingPane && !movingLivePane) setMovingPane(null); }, [movingPane, movingLivePane]);
-  const { viewing, openFile, closeFile } = useFileViewer();
+  const [diffCommentView, setDiffCommentView] = useState<{ paneId: string; machineId: string; comment: FileComment } | null>(null);
+  const { viewing, openFile, closeFile } = useFileViewer(canLeaveFiles);
+  // Main's turn-level changed-file links retain their exact workspace/staged/commit scope.
+  const { viewing: diffViewing, openDiff, closeDiff } = useRepoDiffViewer();
   const viewFile = useCallback((path: string) => {
     openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
   }, [openFile, selectedPaneId, selectedMachineId]);
-  // a repository diff from the Files dialog's Changes tab, an entry of its own like a file
-  const { viewing: diffViewing, openDiff, closeDiff } = useRepoDiffViewer();
+  // the composer's walk stops at a file comment: its file opens in the viewer, at that comment
+  const viewFileComment = useCallback((paneId: string, machineId: string, comment: FileComment) => {
+    if (!canLeaveFiles()) return;
+    if (comment.diff !== undefined) {
+      setDiffCommentView({ paneId, machineId, comment });
+      setFilesIntent("changes");
+      setFilesOpen(true);
+      return;
+    }
+    openFile({ path: comment.path, paneId, machineId, comment: comment.id });
+  }, [openFile, canLeaveFiles]);
   // a link to Settings opens it on its page, for that first opening alone
   const [settingsOpen, setSettingsOpen] = useState(() => initialLink?.settings != null);
   const [settingsLinkPage, setSettingsLinkPage] = useState<string | null>(() => initialLink?.settings ?? null);
@@ -406,6 +443,7 @@ export function App() {
   const [connected, setConnected] = useState(false);
   // the active slot's pane could not be drawn: no terminal is attached there to say so itself
   const paneLost = useCallback(() => setConnected(false), []);
+  const [paneRole, setPaneRole] = useState<{ machineId: string; paneId: string; mode: "observe" | "interact" } | null>(null);
   const [outputStopped, setOutputStopped] = useState(false);
   const [notifications, setNotifications] = useState<NotificationState>(() => notificationState());
   // this device has a server-side push subscription: alerts come from the server, not the tab
@@ -828,6 +866,12 @@ export function App() {
     setDrawerOpen(false);
   }, [inOtherHalf, setSplit]);
 
+  const openWorkspaceFiles = useCallback((paneId: string) => {
+    if (!canLeaveFiles()) return;
+    selectPane(paneId, false);
+    openFilesFor(paneId, selectedMachineId, "browse");
+  }, [selectPane, selectedMachineId, openFilesFor, canLeaveFiles]);
+
   // a layout call the palette made and the PC refused: a bridge from before the route says so
   // over the pane (the tab's own menu has a line of its own); anything else is logged, as
   // other background failures are
@@ -861,6 +905,8 @@ export function App() {
 
 
   const selectedPane = snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId) ?? null;
+  const filesCwd = selectedPane?.foreground_cwd ?? selectedPane?.cwd ?? "";
+  const filesChanged = useWorkspaceChangesSnapshot(selectedPane ? { machineId: selectedMachineId, paneId: selectedPane.pane_id, cwd: filesCwd } : null);
   useScreenWakeLock(settings.keepScreenOn && locked === false && selectedPane !== null);
   const selectedWorkspace = selectedPane
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
@@ -1271,7 +1317,7 @@ export function App() {
       lock: canSignOut ? () => void lock() : null,
       enableNotifications: bellVisible && bell.run === enableNotifications ? () => void enableNotifications() : null,
       refresh: () => void load(),
-      openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); setFilesOpen(true); } : null,
+      openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); openFilesFor(selectedPaneId, selectedMachineId, "browse"); } : null,
       // herdr's layout calls on the selected pane (components/TabStrip.tsx has the same for the
       // tab's own menu): the new layout reaches every client as session-changed, so only a
       // refusal is left to say, and that is logged as other background failures are
@@ -1349,7 +1395,10 @@ export function App() {
       const anchor = document.querySelector<HTMLElement>(".header-more-button");
       if (anchor) setMovingPane({ machineId: selectedMachineId, paneId: selectedPane.pane_id, anchor });
     } }] : []),
-    ...(selectedPane ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
+    ...(selectedPane ? [{ id: "files", label: t("Browse files"), icon: FolderOpen,
+      title: filesChanged ? `${t("Browse files")} · ${t("Changed files")}` : t("Browse files"),
+      glyph: <MachineContext.Provider value={selectedMachineId}><BrowseFilesMenuIcon paneId={selectedPane.pane_id} cwd={filesCwd} connected={selectedMachine?.state === "connected" && !selectedPane.restore_error} status={paneStatus(selectedPane)} /></MachineContext.Provider>,
+      run: () => openFilesFor(selectedPane.pane_id, selectedMachineId, "browse") }] : []),
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
     ...(bellVisible ? [{ id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
@@ -1386,6 +1435,16 @@ export function App() {
     );
   }
   if (locked) return <AccessGate reason={lockReason} initialCode={pairCode} onUnlocked={unlock} />;
+
+  const browserMachineId = diffCommentView?.machineId ?? filesTarget?.machineId ?? selectedMachineId;
+  const browserPaneId = diffCommentView?.paneId ?? filesTarget?.paneId ?? selectedPaneId;
+  const browserPane = machines.find((machine) => machine.id === browserMachineId)?.snapshot?.panes.find((pane) => pane.pane_id === browserPaneId);
+  const browserComment = diffCommentView?.comment ?? null;
+  const viewedPane = viewing === null ? null : machines.find((machine) => machine.id === viewing.machineId)?.snapshot?.panes.find((pane) => pane.pane_id === viewing.paneId);
+  const closeBrowser = (): void => {
+    setFilesOpen(false);
+    setDiffCommentView(null);
+  };
 
   return (
     <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null ? undefined : { "--sidebar-user-w": `${sidebarWidth}px` } as CSSProperties}>
@@ -1525,6 +1584,8 @@ export function App() {
 
         {/* a file path in the chat opens in the viewer, relative to the selected pane's folder */}
         <OpenFileContext.Provider value={selectedPaneId !== null ? viewFile : null}>
+        <WorkspaceFilesContext.Provider value={openWorkspaceFiles}>
+        <FileCommentNavContext.Provider value={viewFileComment}>
         <div className={`pane-column${chatShown ? " is-chat" : ""}`}>
         {/* over the pane only: a bar across the window would cut the sidebar off from its top row in the header */}
         <UpdateNotice updates={updates} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
@@ -1559,6 +1620,7 @@ export function App() {
             };
             return (
               <MachineContext.Provider key={slot} value={machineId}>
+              <WorkspaceFilesContext.Provider value={(id) => { if (!canLeaveFiles()) return; onSelect(id, false); openFilesFor(id, machineId, "browse"); }}>
               <div
                 className={`pane-slot${showsChat(pane, slotView) ? " is-chat" : ""}${splitOn ? active ? " is-active" : " is-inactive" : ""}`}
                 data-slot={slot}
@@ -1622,6 +1684,7 @@ export function App() {
                         plan={machine?.state === "connected" ? (item as HerdrPane | undefined)?.plan ?? null : null}
                         backgroundWait={item?.background_wait === true}
                         cwd={item?.cwd ?? null}
+                        filesCwd={item?.foreground_cwd ?? item?.cwd ?? null}
                         machineName={machine?.name ?? machineId}
                         view={item ? lensOf(item) : slotView}
                         // the other half never takes the keyboard: a press in it makes it active first
@@ -1639,6 +1702,7 @@ export function App() {
                         theme={resolvedTheme}
                         palette={resolvedPalette}
                         onConnectionChange={active && itemActive ? (next) => { setConnected(next); if (next) setOutputStopped(false); } : undefined}
+                        onRoleAck={active && itemActive && item ? (mode) => setPaneRole({ machineId, paneId: item.pane_id, mode }) : undefined}
                         onServerMessage={active && itemActive ? handleServerMessage : undefined}
                       />
                     </OpenFileContext.Provider>} />
@@ -1646,12 +1710,15 @@ export function App() {
                 </main>
                 </RenderBoundary>
               </div>
+              </WorkspaceFilesContext.Provider>
               </MachineContext.Provider>
             );
           })}
           <SplitDropPreview visible={splitDragOn && (paneDragging || tabDrag !== null)} side={dropAt} />
         </div>
         </div>
+        </FileCommentNavContext.Provider>
+        </WorkspaceFilesContext.Provider>
         </OpenFileContext.Provider>
       </div>
 
@@ -1677,24 +1744,38 @@ export function App() {
         // an ended pane's card outlives the pane: the refetch has dropped it, and selecting it attaches nothing
         if (!machinesRef.current.find((m) => m.id === machineId)?.snapshot?.panes.some((p) => p.pane_id === paneId)) return;
         // Files lists the pane it was opened on, and would open its paths on the new one
+        if (!canLeaveFiles()) return;
         setFilesOpen(false);
         selectTargetRef.current(machineId, paneId);
       }} />
       {movingPane && movingLivePane && movingOwner?.snapshot && <MachineContext.Provider value={movingPane.machineId}><MovePaneMenu anchor={movingPane.anchor} snapshot={movingOwner.snapshot} pane={movingLivePane}
         paneTitle={displayPaneTitle(movingLivePane)} onMoved={(moved) => actions.paneMoved(movingPane.machineId, moved.previous_pane_id, moved.pane.pane_id)}
         onError={(reason) => setLayoutNotice(t("Move failed: {reason}", { reason }))} onClose={() => setMovingPane(null)} /></MachineContext.Provider>}
-      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={viewing !== null || diffViewing !== null} />
-      {filesOpen && selectedPane && (
-        <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={selectedPane.pane_id} viewing={viewing !== null || diffViewing !== null} onOpenFile={viewFile}
-          onOpenDiff={(comparison, file) => openDiff({ machineId: selectedMachineId, paneId: selectedPane.pane_id, directory: selectedPane.foreground_cwd ?? selectedPane.cwd ?? null, ...comparison, path: file.path, oldPath: file.old_path })}
-          onBrowseFolders={(path) => actions.openPalette(folderQueryFor(path, null))}
-          onClose={() => setFilesOpen(false)} />
-      )}
+      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={filesOpen || viewing !== null || diffViewing !== null} />
+      {filesOpen && browserPaneId !== null && <MachineContext.Provider value={browserMachineId}>
+        <FilesDialog key={`${browserMachineId}:${browserPaneId}:${browserComment?.id ?? filesIntent}`}
+          initialIntent={filesIntent}
+          start={browserComment?.diff?.repository ?? filesTarget?.start ?? browserPane?.foreground_cwd ?? browserPane?.cwd ?? ""} paneId={browserPaneId}
+          initialPath={browserComment?.diff ? null : browserComment?.path ?? null} initialComment={browserComment}
+          connected={connected && paneRole?.mode === "interact" && paneRole.machineId === browserMachineId && paneRole.paneId === browserPaneId}
+          viewing={viewing !== null || diffViewing !== null} keyboardActive={!settingsOpen}
+          onOpenDiff={(comparison, file) => openDiff({ machineId: browserMachineId, paneId: browserPaneId, directory: browserComment?.diff?.repository ?? filesTarget?.start ?? browserPane?.foreground_cwd ?? browserPane?.cwd ?? null, ...comparison, path: file.path, oldPath: file.old_path })}
+          onBrowseFolders={(path) => {
+            const owner = machines.find((machine) => machine.id === browserMachineId);
+            if (owner?.state !== "connected" || !owner.snapshot?.panes.some((pane) => pane.pane_id === browserPaneId)) return;
+            selectTargetRef.current(browserMachineId, browserPaneId);
+            actions.openPalette(folderQueryFor(path, null));
+          }}
+          onClose={closeBrowser} />
+      </MachineContext.Provider>}
       {diffViewing !== null && <MachineContext.Provider value={diffViewing.machineId}>
         <RepoDiffViewer key={`${diffViewing.scope}:${diffViewing.path}`} target={diffViewing} onClose={closeDiff} onOpenFile={(path) => openFile({ path, paneId: diffViewing.paneId, machineId: diffViewing.machineId })} keyboardActive={!settingsOpen && viewing === null} />
       </MachineContext.Provider>}
       {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
-        <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path })} keyboardActive={!settingsOpen} />
+        <FilesDialog key={`${viewing.machineId}:${viewing.paneId}:${viewing.path}`} initialIntent="browse" initialPath={viewing.path} initialCommentId={viewing.comment ?? null}
+          forcePreview={diffViewing !== null} start={viewedPane?.foreground_cwd ?? viewedPane?.cwd ?? diffViewing?.directory ?? ""} paneId={viewing.paneId}
+          connected={connected && paneRole?.mode === "interact" && paneRole.machineId === viewing.machineId && paneRole.paneId === viewing.paneId}
+          keyboardActive={!settingsOpen} onClose={closeFile} />
       </MachineContext.Provider>}
       <CommandPalette key={selectedMachineId} machines={machines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId} view={view} actions={actions} />
     </div></MachineContext.Provider></MachineSessionsProvider>

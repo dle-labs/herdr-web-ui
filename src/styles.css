@@ -1377,6 +1377,15 @@ button {
   color: var(--danger-text);
 }
 
+/* under the pointer it stays a danger button, a shade stronger: the neutral .btn:hover would
+   turn it into the grey of Cancel beside it */
+@media (hover: hover) {
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--status-blocked) 22%, transparent);
+    border-color: var(--status-blocked);
+  }
+}
+
 .btn-ghost {
   background: transparent;
   border-color: transparent;

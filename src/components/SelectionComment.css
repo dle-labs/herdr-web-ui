@@ -1,0 +1,7 @@
+/** Non-modal: selection and native Copy remain available until Comment is pressed. */
+.comment-selection {
+  position: fixed;
+  z-index: var(--z-popover);
+  min-height: var(--touch-target);
+  box-shadow: var(--shadow-pop);
+}

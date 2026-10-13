@@ -315,6 +315,7 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   // Native tab menu: pane actions live on the pane itself. A split tab drawn one pane at a time
   // has no other way to its panes, so they lead its menu, the open one marked.
   // The touch menu also holds the open pane's actions, between its panes and the tab's own.
+  // File browsing stays in that pane's composer, not in either action menu.
   const pickerItems = (tab: HerdrTab, touch: boolean): RowMenuItem[] => {
     const own = soloPanes ? panesOf(tab) : [];
     const paneItems = touch && tab.tab_id === selectedPane.tab_id ? paneActions?.(selectedPane.pane_id) ?? [] : [];

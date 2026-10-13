@@ -37,6 +37,7 @@ export default defineConfig({
   },
   // Keep Vite 6's syntax targets when changing the bundler, including installed mobile clients.
   build: { outDir: "dist", target: ["es2020", "edge88", "firefox78", "chrome87", "safari14"] },
+  worker: { format: "es" },
   // The Bun patch targets xterm's readable source, not its minified distribution. Build that
   // source so dev, production and the website use the same reviewed IME backport.
   resolve: { alias: [

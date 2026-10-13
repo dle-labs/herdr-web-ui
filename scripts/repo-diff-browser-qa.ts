@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import { build as viteBuild } from "vite";
 import { repoDiffResponse } from "../server/repo-diff.ts";
+import { GitDiffError, gitChanges, gitFileDiff, isGitDiffMode } from "../server/git-diff.ts";
 import { serveStatic } from "../server/static.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { runMoreItem } from "./header-more.ts";
@@ -127,6 +128,23 @@ async function api(request: Request, url: URL): Promise<Response | null> {
     const cwd = (paneId !== null ? panes.get(paneId) : undefined) ?? url.searchParams.get("directory");
     if (!cwd) return Response.json({ error: { code: "pane_not_found", message: "no such pane" } }, { status: 404 });
     return repoDiffResponse(diff[2] === "files" ? "files" : "file", cwd, url.searchParams);
+  }
+  // The unified source browser still reads its real inventory; scoped comparisons above
+  // continue through repoDiffResponse, so this does not substitute or weaken their coverage.
+  const unified = /^\/api\/(?:machines\/([^/]+)\/)?workspace\/(changes|diff)$/.exec(url.pathname);
+  if (unified) {
+    requests.push(url.pathname);
+    const cwd = panes.get(url.searchParams.get("pane_id") ?? "");
+    if (!cwd) return Response.json({ error: { code: "pane_not_found", message: "no such pane" } }, { status: 404 });
+    const mode = url.searchParams.get("mode");
+    if (!isGitDiffMode(mode)) return Response.json({ error: { code: "invalid_mode", message: "invalid mode" } }, { status: 400 });
+    try {
+      const base = url.searchParams.get("base_commit") ?? undefined;
+      return Response.json(unified[2] === "changes" ? await gitChanges(cwd, mode, base) : await gitFileDiff(cwd, mode, url.searchParams.get("path") ?? "", base));
+    } catch (error) {
+      if (!(error instanceof GitDiffError)) throw error;
+      return Response.json({ error: { code: error.code, message: error.message } }, { status: error.status });
+    }
   }
   const fs = /^\/api\/(?:machines\/([^/]+)\/)?fs\/(stat|file)$/.exec(url.pathname);
   if (fs) {
@@ -294,7 +312,7 @@ try {
     page.on("console", (message) => {
       if (message.type() !== "error") return;
       // the refusals asked for on purpose (a missing commit, a folder outside git) are logged by the browser as failed loads
-      if (/Failed to load resource/.test(message.text()) && /\/workspace\/diff\//.test(message.location().url ?? "") && /status of (?:404|409)/.test(message.text())) return;
+      if (/Failed to load resource/.test(message.text()) && /\/workspace\/(?:diff(?:\/|\?)|changes\?)/.test(message.location().url ?? "") && /status of (?:404|409)/.test(message.text())) return;
       errors.push(`console: ${message.text()}`);
     });
     await page.goto(origin);
@@ -463,7 +481,7 @@ try {
 
     // the file itself opens on the owning PC, above the diff; Escape closes one surface at a time
     await page.getByRole("button", { name: "Open file", exact: true }).click();
-    const file = page.getByRole("dialog", { name: "money.ts", exact: true });
+    const file = page.getByRole("region", { name: "money.ts", exact: true });
     await file.waitFor();
     assert.ok(requests.some((path) => path === "/api/fs/stat"), `${label}: the file is read through the file routes`);
     await file.locator(".file-viewer-text .hl-line").first().waitFor();
@@ -527,6 +545,21 @@ try {
     assert.ok(renamed?.includes("Renamed") && renamed.includes("Staged"), `${label}: a renamed file's header: ${renamed}`);
     assert.equal(await page.locator(".repo-diff-meta").first().getAttribute("title"), "Renamed from docs/old-name.md", `${label}: the old path is the tooltip`);
     await closeDiff(page);
+    // Open file means the current source, not the staged patch or the unified browser's
+    // automatic changed-file diff. Closing it must preserve the list's chosen scope.
+    await openChange(page, "src/staged.ts");
+    await waitRows(page);
+    await page.getByRole("button", { name: "Open file", exact: true }).click();
+    const stagedSource = page.getByRole("region", { name: "staged.ts", exact: true });
+    await stagedSource.locator(".file-viewer-text .hl-line").first().waitFor();
+    assert.ok((await stagedSource.locator(".file-viewer-text").textContent())?.includes("export const staged = 3;"), `${label}: Open file reads current source rather than the index`);
+    await page.keyboard.press("Escape");
+    await stagedSource.waitFor({ state: "detached" });
+    await page.locator(".repo-diff-viewer").waitFor();
+    assert.ok((await page.locator(".repo-diff-meta").first().textContent())?.includes("Staged"), `${label}: the source closes back to its staged comparison`);
+    await page.keyboard.press("Escape");
+    await page.locator(".repo-diff-viewer").waitFor({ state: "detached" });
+    assert.deepEqual(await changeRows(page, "staged"), staged, `${label}: opening source does not reset the list's staged scope`);
     await page.getByRole("button", { name: "Commits", exact: true }).click();
     await page.getByLabel("From commit", { exact: true }).fill("HEAD~1");
     await page.getByRole("button", { name: "Compare", exact: true }).click();
@@ -571,7 +604,7 @@ try {
     await openChange(page, "src/money.ts");
     await waitRows(page);
     await page.getByRole("button", { name: "Open file", exact: true }).click();
-    await page.getByRole("dialog", { name: "money.ts", exact: true }).waitFor();
+    await page.getByRole("region", { name: "money.ts", exact: true }).waitFor();
     assert.deepEqual(requests.filter((path) => path.includes("/workspace/diff/")), ["/api/machines/remote-fixture/workspace/diff/files", "/api/machines/remote-fixture/workspace/diff/file"], `remote diff requests: ${requests.join(", ")}`);
     assert.ok(requests.some((path) => path === "/api/machines/remote-fixture/fs/stat"), `remote file requests: ${requests.join(", ")}`);
     await context.close();

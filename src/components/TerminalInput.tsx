@@ -39,7 +39,7 @@ interface SendAttempt {
 }
 
 /**
- * The terminal's input line on a touch screen. A phone's keyboard rewrites what it typed
+ * The terminal's draft input line on desktop and touch screens. A phone's keyboard rewrites what it typed
  * (dictation revising a phrase, an IME finishing a syllable), and a terminal cannot take back
  * keys it already sent: every revision arrived as more text. Here the line is written with the
  * keyboard's own editing and goes to the pane whole, then Enter. Autocorrect and spell-check stay
@@ -47,6 +47,7 @@ interface SendAttempt {
  */
 export function TerminalInput({ owner, active = true, connected, onSend, onEnter, onComposing, onFocus }: TerminalInputProps) {
   const t = useT();
+  const { settings } = useSettings();
   const text = useSyncExternalStore(subscribeTerminalDraft, () => readTerminalDraft(owner));
   const setText = useCallback((value: string | ((previous: string) => string)) => {
     // Read the owner record even after unmount: a late acknowledgement must not erase
@@ -65,24 +66,17 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
   const box = useRef<HTMLTextAreaElement>(null);
   const textRef = useRef(text);
   textRef.current = text;
-  const { settings } = useSettings();
   const dictation = useDictation({
     mode: "terminal",
     active,
     connected,
-    polish: settings.voicePolishTerminal,
+    owner,
+    maxLength: TERMINAL_LINE_LIMIT,
     box,
     read: () => textRef.current,
-    write: (value, caret) => {
+    write: (value) => {
       textRef.current = value;
       setText(value);
-      requestAnimationFrame(() => {
-        const element = box.current;
-        if (!element) return;
-        element.selectionStart = element.selectionEnd = caret;
-        // without focus the browser does not follow the caret: a wrapped dictation's end would stay hidden
-        if (caret === element.value.length) element.scrollTop = element.scrollHeight;
-      });
     },
     onNote: setNote,
   });
@@ -135,6 +129,12 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
       if (deferred) { clearPendingSend(); setNote(connected ? null : t("Not sent: the terminal is disconnected.")); }
       return;
     }
+    if (dictation.voice.state === "recording") {
+      if (!settings.voiceFinishAndSend || deferred) return;
+      dictation.finishAndSubmit(() => { if (textRef.current.trim()) sendRef.current(false); });
+      return;
+    }
+    if (dictation.voice.state !== "idle" || dictation.recovery !== null) return;
     if (composing.current) {
       if (deferred) {
         // a new composition after the commit: wait out what is left of the tap's window, no more
@@ -165,11 +165,10 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
       else if (!entered) setNote(t("Not sent: the terminal is disconnected."));
       return;
     }
+    // No late dictation result may rewrite a command while its receipt is pending.
+    dictation.cancel();
     const sent = onSend(draft);
     if (sent === false) { setNote(t("Not sent: the terminal is disconnected.")); return; }
-    // a polish that lands before the acknowledgement would read as text typed meanwhile, and
-    // leave the sent command in the line
-    dictation.forget();
     setTerminalDraftSending(owner, true);
     void sent.then((result) => {
       if (result === true) {
@@ -177,14 +176,20 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
         acknowledgeTerminalDraft(owner);
       } else setNote(result);
     }).catch(() => setNote(t("Not confirmed. Check the terminal before sending again."))).finally(() => { setTerminalDraftSending(owner, false); });
-  }, [awaitCommit, clearPendingSend, connected, dictation.forget, onEnter, onSend, owner, t]);
+  }, [awaitCommit, clearPendingSend, connected, dictation.cancel, dictation.finishAndSubmit, dictation.voice.state, dictation.recovery, settings.voiceFinishAndSend, onEnter, onSend, owner, t]);
   sendRef.current = send;
+  const enterOnly = text.length === 0 && dictation.voice.state !== "recording";
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     // Enter sends; Shift+Enter breaks the line; an IME keeps its Enter, including the committing
     // one WebKit can send after compositionend as key code 229
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     event.preventDefault();
+    // Enter always finishes for review, independent of the explicit Send preference.
+    if (dictation.voice.state === "recording") {
+      dictation.press();
+      return;
+    }
     send();
   };
 
@@ -241,14 +246,14 @@ export function TerminalInput({ owner, active = true, connected, onSend, onEnter
       <button
         type="button"
         className="terminal-input-send"
-        aria-label={t(text.length === 0 ? "Press Enter in the terminal" : "Send to the terminal")}
-        title={t(text.length === 0 ? "Press Enter in the terminal" : "Send to the terminal")}
-        disabled={!connected || sending}
+        aria-label={t(enterOnly ? "Press Enter in the terminal" : "Send to the terminal")}
+        title={t(enterOnly ? "Press Enter in the terminal" : "Send to the terminal")}
+        disabled={!connected || sending || dictation.recovery !== null || (dictation.voice.state !== "idle" && !(settings.voiceFinishAndSend && dictation.voice.state === "recording"))}
         // the soft keyboard stays up for the next line
         onPointerDown={(event) => event.preventDefault()}
         onClick={() => send()}
       >
-        {text.length === 0 ? <CornerDownLeft aria-hidden="true" /> : <SendHorizontal aria-hidden="true" />}
+        {enterOnly ? <CornerDownLeft aria-hidden="true" /> : <SendHorizontal aria-hidden="true" />}
       </button>
       {note !== null && <p className="terminal-input-note" role="alert">{note}</p>}
       {dictation.shown && <VoiceRecordingPill dictation={dictation} align="end" />}

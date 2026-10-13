@@ -218,7 +218,8 @@ setInterval(() => {}, 1000);
     const longBox = (await long.boundingBox())!;
     const endRow = page.locator(".pane-terminal .xterm-rows > div", { hasText: "-END" });
     const endBox = (await endRow.boundingBox())!;
-    await drag({ x: longBox.x + 1, y: longBox.y + longBox.height / 2 }, { x: endBox.x + 600, y: endBox.y + endBox.height / 2 });
+    // Fixed pixel endpoints can stop inside -END when font metrics or terminal columns change.
+    await drag({ x: longBox.x + 1, y: longBox.y + longBox.height / 2 }, { x: endBox.x + endBox.width - 1, y: endBox.y + endBox.height / 2 });
     await page.waitForTimeout(300);
     assert.equal(await clipboard(page), `LONG-${"x".repeat(300)}-END`, "a soft-wrapped line must copy without line breaks");
 

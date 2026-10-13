@@ -63,6 +63,7 @@ run_script scripts/key-bar-customization-demo-regression.ts
 run_script scripts/key-bar-hold-repeat-regression.ts
 run_script scripts/settings-pages-demo-regression.ts
 run_script scripts/portal-regression.ts
+run_script scripts/dictation-regression.ts
 run_script scripts/deep-link-demo-regression.ts
 run_script scripts/chat-history-browser-qa.ts
 run_script scripts/chat-virtual-browser-qa.ts
@@ -75,6 +76,8 @@ run_script scripts/pwa-update-browser-qa.ts
 run_script scripts/file-preview-text-browser-qa.ts
 run_script scripts/virtual-source-browser-qa.ts
 run_script scripts/repo-diff-browser-qa.ts
+run_script scripts/file-viewer-comments-regression.ts
+run_script scripts/git-diff-demo-regression.ts
 run_script scripts/keyboard-viewport-regression.ts
 run_script scripts/file-viewer-mobile-regression.ts
 run_script scripts/droplet-demo-regression.ts
@@ -82,6 +85,7 @@ run_script scripts/chat-greeting-demo-regression.ts
 run_script scripts/restored-draft-demo-regression.ts
 run_script scripts/composer-fit-demo-regression.ts
 run_script scripts/held-rows-demo-regression.ts
+run_script scripts/block-comments-regression.ts
 run_script scripts/sidebar-activity-demo-regression.ts
 run_script scripts/sidebar-spacing-demo-regression.ts
 run_script scripts/workspace-touch-reorder-demo-regression.ts
