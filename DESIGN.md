@@ -209,6 +209,8 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   document controls, without a magnifying-glass icon or a separate toolbar in the body. On
   narrow screens the finder and comparison button wrap into a second header row. Opening Files
   does not automatically focus the finder or open its dropdown over a requested document.
+  Header controls use `--space-4` horizontal gaps and `--space-6` inline padding; narrow
+  headers use `--space-3` gaps and `--space-4` padding so the icons remain separated without overflow.
   **Find files…** searches filenames/paths across the repository (tracked and untracked,
   nonignored), or through a bounded directory walk outside Git. Arrow keys and Enter choose a
   result; Mod+P focuses this finder only while focus is inside Files, never in a terminal.
@@ -216,8 +218,12 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   fixed-height path rows are visible, with long paths ellipsized and the remaining results
   scrollable; keyboard navigation scrolls only that list. Requests are debounced, stale
   responses ignored, and incomplete results are explicitly marked.
-- **Compare with…** opens a searchable commit combobox. The header button compares all files; a file's
-  right-click/Shift+F10 menu compares just that file. Choosing a commit compares its contents with
+- **Compare with…** opens a header-anchored searchable commit overlay, without shifting or
+  shrinking the file view. Its list shows up to five fixed-height, two-line rows, with remaining
+  commits scrollable and long subjects/authors ellipsized; full text remains in tooltips.
+  Keyboard navigation scrolls only that list. Escape, its close button, or moving focus/clicking
+  outside dismisses the picker without closing Files. The header button compares all files; a
+  file's right-click/Shift+F10 menu compares just that file. Choosing a commit compares its contents with
   the current working tree; **Working changes** restores the HEAD baseline. The chosen hash is
   visible and is preserved in saved comment coordinates. Comparisons are read-only and keep
   dirty drafts until saved or cleared. Deleted, renamed and binary paths retain their semantics.

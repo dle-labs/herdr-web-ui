@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
@@ -15,6 +15,8 @@ export function CommitPicker({ paneId, onSelect, onClose, label }: CommitPickerP
   const api = useMachineApi();
   const t = useT();
   const id = useId();
+  const surface = useRef<HTMLElement>(null);
+  const input = useRef<HTMLInputElement>(null);
   const list = useRef<HTMLUListElement>(null);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -40,11 +42,31 @@ export function CommitPicker({ paneId, onSelect, onClose, label }: CommitPickerP
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [api, paneId, query]);
 
+  useLayoutEffect(() => { input.current?.focus({ preventScroll: true }); }, []);
   useEffect(() => {
-    list.current?.children[activeIndex]?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex]);
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || surface.current?.contains(target) || target.closest("[data-commit-picker-trigger]")) return;
+      onClose();
+    };
+    document.addEventListener("pointerdown", dismiss, true);
+    return () => document.removeEventListener("pointerdown", dismiss, true);
+  }, [onClose]);
+  useEffect(() => {
+    const container = list.current;
+    const option = container?.children[activeIndex];
+    if (!container || !(option instanceof HTMLElement)) return;
+    const bounds = container.getBoundingClientRect();
+    const row = option.getBoundingClientRect();
+    if (row.top < bounds.top) container.scrollTop += row.top - bounds.top;
+    else if (row.bottom > bounds.bottom) container.scrollTop += row.bottom - bounds.bottom;
+  }, [activeIndex, commits]);
 
-  return <section className="commit-picker" aria-labelledby={`${id}-label`} onKeyDown={(event) => {
+  return <section ref={surface} className="commit-picker" aria-labelledby={`${id}-label`} onBlur={(event) => {
+    const target = event.relatedTarget;
+    if (target instanceof Node && !event.currentTarget.contains(target)
+      && !(target instanceof Element && target.closest("[data-commit-picker-trigger]"))) onClose();
+  }} onKeyDown={(event) => {
     if (event.key === "Escape" && !event.nativeEvent.isComposing) {
       event.preventDefault(); event.stopPropagation(); onClose();
     }
@@ -53,7 +75,7 @@ export function CommitPicker({ paneId, onSelect, onClose, label }: CommitPickerP
       <span id={`${id}-label`} className="commit-picker-label" title={label}>{label}</span>
       <button type="button" className="icon-button" aria-label={t("Close")} onClick={onClose}><X aria-hidden="true" /></button>
     </header>
-    <input className="input commit-picker-input" autoFocus role="combobox" type="text"
+    <input ref={input} className="input commit-picker-input" role="combobox" type="text"
       aria-label={t("Search commits…")} placeholder={t("Search commits…")} autoComplete="off" spellCheck={false}
       aria-autocomplete="list" aria-expanded={true} aria-controls={id} aria-activedescendant={`${id}-${activeIndex}`}
       value={query} onChange={(event) => { setQuery(event.target.value); setActive(0); }}
@@ -75,8 +97,8 @@ export function CommitPicker({ paneId, onSelect, onClose, label }: CommitPickerP
       {commits.map((commit, index) => <li key={commit.id} id={`${id}-${index + 1}`} role="option"
         aria-selected={activeIndex === index + 1} className="commit-picker-option"
         onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index + 1)} onClick={() => onSelect(commit.id)}>
-        <span className="commit-picker-subject">{commit.subject}</span>
-        <span className="commit-picker-meta"><code title={commit.id}>{commit.id.slice(0, 10)}</code><span>{commit.author}</span><span>{commit.date}</span></span>
+        <span className="commit-picker-subject" title={commit.subject}>{commit.subject}</span>
+        <span className="commit-picker-meta"><code title={commit.id}>{commit.id.slice(0, 10)}</code><span title={commit.author}>{commit.author}</span><span>{commit.date}</span></span>
       </li>)}
     </ul>
     {!current && <p role="status" className="commit-picker-status">{t("Loading…")}</p>}

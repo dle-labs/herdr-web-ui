@@ -239,10 +239,11 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
   return <div ref={surface} data-show-file={showFile || undefined} className={`changes-view${narrow && showFile ? " is-showing-file" : ""}`}>
     {paneId !== null && toolsHost !== null && createPortal(<>
       <WorkspaceFileSearch paneId={paneId} refreshToken={refreshToken} onSelect={select} onReveal={onHideFile} />
-      <button type="button" className="btn" onClick={() => setCompareTarget(null)}><GitCompareArrows aria-hidden="true" />{t("Compare with…")}</button>
+      <button type="button" className="btn" data-commit-picker-trigger="" aria-expanded={compareTarget !== undefined}
+        onClick={() => setCompareTarget((target) => target === null ? undefined : null)}><GitCompareArrows aria-hidden="true" />{t("Compare with…")}</button>
       {baseCommit && <span className="changes-comparison-label" title={baseCommit}>{baseCommit.slice(0, 8)} → {t("Working tree")}</span>}
+      {compareTarget !== undefined && <CommitPicker paneId={paneId} label={compareTarget ?? t("All files")} onSelect={compare} onClose={() => setCompareTarget(undefined)} />}
     </>, toolsHost)}
-    {paneId !== null && compareTarget !== undefined && <CommitPicker paneId={paneId} label={compareTarget ?? t("All files")} onSelect={compare} onClose={() => setCompareTarget(undefined)} />}
     {markdownPath !== null && (!narrow || showFile) && <div className="changes-markdown-mode">
       <div className="segmented" role="group" aria-label={t("Markdown view")}>
         <button type="button" aria-pressed={preview !== null} onClick={() => showMarkdown("preview")}>{t("Preview")}</button>

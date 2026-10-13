@@ -116,6 +116,12 @@ try {
         if (markdown && parsed.pathname.endsWith("/fs/file")) return new Response(markdownBody(markdown), { headers: { "content-type": "text/markdown" } });
       }
       const response = await demoFetch(input, init);
+      if (window.gitManyCommitResults && parsed.pathname.endsWith("/workspace/commits") && response.ok) {
+        const data = await response.json();
+        data.commits = Array.from({ length: 12 }, (_, i) => ({ id: (i + 1).toString(16).padStart(40, "0"), subject: "Overlay commit " + i + " with a long fictional subject", author: "Fictional author", date: "2026-01-01" }));
+        data.truncated = false;
+        return Response.json(data);
+      }
       if (window.gitManySearchResults && parsed.pathname.endsWith("/workspace/files") && response.ok) {
         const data = await response.json();
         data.files = Array.from({ length: 12 }, (_, i) => "src/nested/long-search-result-path-" + String(i).padStart(2, "0") + ".ts");
@@ -228,6 +234,10 @@ try {
         assert.equal(await dialog.locator(".modal-header").getByRole("combobox", { name: "Find files…", exact: true }).count(), 1, "filename search is in the modal header");
         assert.equal(await dialog.locator(".modal-header").getByRole("button", { name: "Compare with…", exact: true }).count(), 1, "Compare with is in the modal header");
         assert.equal(await dialog.locator(".workspace-file-search-field svg").count(), 0, "the redundant search icon is removed");
+        assert.ok(await dialog.locator(".files-dialog-header").evaluate((node) => {
+          const style = getComputedStyle(node);
+          return Number.parseFloat(style.columnGap) > Number.parseFloat(style.getPropertyValue("--space-2"));
+        }), "header controls have wider horizontal spacing");
         assert.equal(await dialog.locator(".modal-body .workspace-file-search, .workspace-file-tools").count(), 0, "there is no separate search toolbar in the body");
         await frames(page);
         assert.equal(await dialog.getByRole("combobox", { name: "Find files…", exact: true }).getAttribute("aria-expanded"), "false", "opening Files never auto-opens a search dropdown over its content");
@@ -569,6 +579,43 @@ try {
         await quick.locator(".workspace-file-search").getByText("No matches", { exact: true }).waitFor();
         await page.keyboard.press("Escape");
         assert.ok(await quick.isVisible(), "Escape dismisses search results without closing Files");
+        await finder.focus();
+        await page.keyboard.press("Escape");
+        await frames(page);
+        const beforeCompare = await layout.boundingBox();
+        assert.ok(beforeCompare);
+        const diffTop = await quick.locator(".changes-detail").evaluate((node) => node.scrollTop);
+        await page.evaluate(() => { (window as any).gitManyCommitResults = true; });
+        const compareButton = quick.locator(".modal-header").getByRole("button", { name: "Compare with…", exact: true });
+        await compareButton.click();
+        const commitList = quick.getByRole("listbox", { name: "Search commits…", exact: true });
+        await commitList.getByRole("option").nth(12).waitFor({ state: "attached" });
+        assert.equal(await quick.locator(".modal-header .commit-picker").evaluate((node) => getComputedStyle(node).position), "absolute", "the commit picker floats from the header");
+        assert.equal(await quick.locator(".modal-body .commit-picker").count(), 0);
+        const compareOpen = await layout.boundingBox();
+        assert.ok(compareOpen && Math.abs(compareOpen.y - beforeCompare.y) <= 1 && Math.abs(compareOpen.height - beforeCompare.height) <= 1, "opening Compare with does not push or shrink the file view");
+        const commitRows = await commitList.evaluate((node) => ({ height: node.clientHeight, scrollHeight: node.scrollHeight, row: node.children[0]!.getBoundingClientRect().height }));
+        assert.ok(Math.abs(commitRows.height - commitRows.row * 5) <= 1, "the commit list displays up to five rows");
+        assert.ok(commitRows.scrollHeight > commitRows.height);
+        for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowDown");
+        await frames(page);
+        assert.equal(await commitList.getByRole("option").nth(6).getAttribute("aria-selected"), "true");
+        assert.ok(await commitList.evaluate((node) => node.scrollTop) > 0);
+        assert.equal(await quick.locator(".changes-detail").evaluate((node) => node.scrollTop), diffTop, "commit navigation scrolls only its results");
+        await compareButton.click();
+        await quick.locator(".commit-picker").waitFor({ state: "detached" });
+        assert.equal(await compareButton.getAttribute("aria-expanded"), "false", "the trigger toggles the overlay closed");
+        await compareButton.click();
+        await quick.getByRole("combobox", { name: "Search commits…", exact: true }).waitFor();
+        await page.keyboard.press("ControlOrMeta+p");
+        await quick.locator(".commit-picker").waitFor({ state: "detached" });
+        assert.equal(await finder.evaluate((node) => node === document.activeElement), true, "Mod+P dismisses comparison and focuses file search");
+        await page.keyboard.press("Escape");
+        await compareButton.click();
+        await quick.getByRole("combobox", { name: "Search commits…", exact: true }).waitFor();
+        await quick.locator(".modal-title").click();
+        await quick.locator(".commit-picker").waitFor({ state: "detached" });
+        await page.evaluate(() => { (window as any).gitManyCommitResults = false; });
         await treeFile(quick, "src/greeting.ts").click({ button: "right" });
         await quick.getByRole("menuitem", { name: "Compare with…", exact: true }).click();
         const commitSearch = quick.getByRole("combobox", { name: "Search commits…", exact: true });
@@ -633,7 +680,7 @@ try {
             await markdown.getByRole("button", { name: "Compare with…", exact: true }).click();
             await markdown.getByRole("option", { name: "Working changes", exact: true }).click();
             assert.equal(await field(markdown).inputValue(), "Keep the Markdown diff draft", "changing the comparison preserves a dirty comment");
-            await markdown.locator(".commit-picker").getByRole("button", { name: "Close", exact: true }).click();
+            await markdown.locator(".commit-picker").waitFor({ state: "detached" });
             await saveComment(markdown, "Saved Markdown diff note");
           }
           await preview.click();
