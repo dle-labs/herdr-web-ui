@@ -234,6 +234,7 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  */
 /** GET /api/workspace/changes?pane_id=&mode=all|unstaged|staged -> GitChangesResponse.
  * GET /api/workspace/diff?pane_id=&mode=&path= -> GitFileDiffResponse.
+ * Both accept optional base_commit (full hex commit ID, mode=all only), comparing it to the working tree.
  * Paths are repository-relative inventory paths; conflicts answer 409 git_conflict.
  * Full text sides are bounded to 2 MiB each; binary sides retain names with empty contents.
  * null means the side does not exist. Submodules answer 415 git_submodule.
@@ -247,11 +248,13 @@ export interface GitChangedFile {
   binary?: boolean;
 }
 export interface GitChangesResponse {
+  base_commit?: string;
   root: string;
   revision: string;
   files: GitChangedFile[];
 }
 export interface GitFileDiffResponse {
+  base_commit?: string;
   root: string;
   revision: string;
   path: string;
@@ -260,6 +263,28 @@ export interface GitFileDiffResponse {
   binary: boolean;
   old_file: { name: string; contents: string } | null;
   new_file: { name: string; contents: string } | null;
+}
+
+/** GET /api/workspace/commits?pane_id=&query= -> latest reachable HEAD commits.
+ * Empty query returns the latest 100; text queries search reachable history using
+ * Git's case-insensitive literal commit-message match (subject or body), not a
+ * newest-history window. Unambiguous hexadecimal commit IDs/prefixes (4+ digits)
+ * resolve only when reachable from HEAD; otherwise they are searched as text.
+ * Reads share a deadline/output budget. truncated means more than 100 matches or
+ * incomplete output; deadline expiry is an error. Responses are no-store.
+ */
+export interface GitCommitsResponse {
+  commits: { id: string; subject: string; author: string; date: string }[];
+  truncated: boolean;
+}
+/** GET /api/workspace/files?pane_id=&query= -> fuzzy filename/path search.
+ * Repository-relative tracked/untracked nonignored files, or cwd-relative bounded
+ * walk outside Git. At most 100 results; truncated includes incomplete inventories.
+ */
+export interface WorkspaceFilesResponse {
+  root: string;
+  files: string[];
+  truncated: boolean;
 }
 
 export interface ApiError {

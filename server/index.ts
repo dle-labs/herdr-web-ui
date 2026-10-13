@@ -15,7 +15,8 @@ import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
 import { remoteAccess, TailnetIdentitySource } from "./tailscale.ts";
 import { paneCommands } from "./commands.ts";
 import { paneFiles } from "./files.ts";
-import { GitDiffError, gitChanges, gitFileDiff, isGitDiffMode, paneGitCwd } from "./git-diff.ts";
+import { GitDiffError, gitChanges, gitFileDiff, isGitDiffMode, paneGitCwd, validateBaseCommit } from "./git-diff.ts";
+import { gitCommits, workspaceFiles } from "./workspace-search.ts";
 import { badRequest, conflictResponse, errorResponse, isCount, isJsonObject, jsonResponse, publicErrorResponse } from "./http.ts";
 import { parseMoveRequest } from "./pane-move.ts";
 import { serveStatic } from "./static.ts";
@@ -1735,7 +1736,7 @@ export function createServer(
       // (names and sizes are the shape of a repository the terminals never print), plus
       // every mutation except the two below.
       const fileRead = /^\/api\/(?:machines\/[^/]+\/)?fs\//.test(pathname);
-      const directoryListing = /^\/api\/(?:machines\/[^/]+\/)?workspace\/(?:directories|changes|diff)$/.test(pathname);
+      const directoryListing = /^\/api\/(?:machines\/[^/]+\/)?workspace\/(?:directories|changes|diff|commits|files)$/.test(pathname);
       // Signing a device's own alerts in is a preference of that device, so `watch` keeps
       // it. The endpoint it registers is https-only (server/push.ts), and that is the
       // protection: a watch device's subscription is delivered every status change anyway.
@@ -1904,6 +1905,22 @@ export function createServer(
         return pathname === "/api/fs/stat" ? jsonResponse(found.info) : fileResponse(found.info, url.searchParams.get("download") === "1", url.searchParams.get("render") === "1");
       }
 
+      if (pathname === "/api/workspace/commits" || pathname === "/api/workspace/files") {
+        if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+        const paneId = url.searchParams.get("pane_id");
+        if (!paneId?.trim()) return badRequest("missing_pane_id", "pane_id query parameter is required");
+        bunServer.timeout(request, 35);
+        try {
+          const cwd = await paneGitCwd(paneId);
+          const query = url.searchParams.get("query") ?? "";
+          const body = pathname.endsWith("/commits") ? await gitCommits(cwd, query) : await workspaceFiles(cwd, query);
+          return jsonResponse(body, 200, { "cache-control": "no-store" });
+        } catch (error) {
+          if (error instanceof GitDiffError) return publicErrorResponse(error.code, error.message, error.status, { "cache-control": "no-store" });
+          return errorResponse(error);
+        }
+      }
+
       if (pathname === "/api/workspace/changes" || pathname === "/api/workspace/diff") {
         if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
         const paneId = url.searchParams.get("pane_id");
@@ -1915,7 +1932,9 @@ export function createServer(
         bunServer.timeout(request, 35);
         try {
           const cwd = await paneGitCwd(paneId);
-          const body = pathname.endsWith("/changes") ? await gitChanges(cwd, mode) : await gitFileDiff(cwd, mode, path!);
+          const baseCommit = url.searchParams.get("base_commit") ?? undefined;
+          validateBaseCommit(mode, baseCommit);
+          const body = pathname.endsWith("/changes") ? await gitChanges(cwd, mode, baseCommit) : await gitFileDiff(cwd, mode, path!, baseCommit);
           return jsonResponse(body, 200, { "cache-control": "no-store" });
         } catch (error) {
           if (error instanceof GitDiffError) return publicErrorResponse(error.code, error.message, error.status, { "cache-control": "no-store" });

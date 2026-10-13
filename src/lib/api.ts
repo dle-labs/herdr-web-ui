@@ -13,6 +13,8 @@ import type {
   GitDiffMode,
   GitChangesResponse,
   GitFileDiffResponse,
+  GitCommitsResponse,
+  WorkspaceFilesResponse,
   HealthAuth,
   IntegrationsResponse,
   LanExposure,
@@ -558,13 +560,23 @@ export async function fetchDirectories(path: string, hidden: boolean, machineId 
   return getJson<DirectoryListing>(machinePath(machineId, `workspace/directories?${query.toString()}`));
 }
 
-export function fetchGitChanges(paneId: string, mode: GitDiffMode, machineId = "local"): Promise<GitChangesResponse> {
+export function fetchGitCommits(paneId: string, query = "", machineId = "local"): Promise<GitCommitsResponse> {
+  return getJson<GitCommitsResponse>(machinePath(machineId, `workspace/commits?${new URLSearchParams({ pane_id: paneId, query })}`));
+}
+
+export function fetchWorkspaceFiles(paneId: string, query = "", machineId = "local"): Promise<WorkspaceFilesResponse> {
+  return getJson<WorkspaceFilesResponse>(machinePath(machineId, `workspace/files?${new URLSearchParams({ pane_id: paneId, query })}`));
+}
+
+export function fetchGitChanges(paneId: string, mode: GitDiffMode, machineId = "local", baseCommit?: string): Promise<GitChangesResponse> {
   const query = new URLSearchParams({ pane_id: paneId, mode });
+  if (baseCommit !== undefined) query.set("base_commit", baseCommit);
   return getJson<GitChangesResponse>(machinePath(machineId, `workspace/changes?${query.toString()}`));
 }
 
-export function fetchGitDiff(paneId: string, mode: GitDiffMode, path: string, machineId = "local"): Promise<GitFileDiffResponse> {
+export function fetchGitDiff(paneId: string, mode: GitDiffMode, path: string, machineId = "local", baseCommit?: string): Promise<GitFileDiffResponse> {
   const query = new URLSearchParams({ pane_id: paneId, mode, path });
+  if (baseCommit !== undefined) query.set("base_commit", baseCommit);
   return getJson<GitFileDiffResponse>(machinePath(machineId, `workspace/diff?${query.toString()}`));
 }
 

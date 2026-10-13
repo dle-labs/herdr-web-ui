@@ -20,7 +20,7 @@ import { closeLayoutPane, resizeLayout, setLayoutSplitRatio, splitLayout, swapLa
 import { rollupStatus } from "../../src/lib/status.ts";
 import { CHATS, PROMPT, SPECS } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
-import { demoGitChanges, demoGitDiff } from "./gitDiff.ts";
+import { DEMO_COMMITS, demoGitChanges, demoGitDiff } from "./gitDiff.ts";
 import machinesFixture from "./fixtures/machines.json";
 import agentsFixture from "./fixtures/agents.json";
 import commandsFixture from "./fixtures/commands.json";
@@ -1027,14 +1027,30 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     structureChanged();
     return json({ ok: true });
   }
+  if (path === "/api/workspace/commits" || path === "/api/workspace/files") {
+    if (method !== "GET") return error("method_not_allowed", "use GET", 400);
+    if (!query.get("pane_id")?.trim()) return error("missing_pane_id", "pane_id query parameter is required", 400);
+    const pane = snapshot().panes.find((pane) => pane.pane_id === query.get("pane_id"));
+    if (!pane) return error("pane_not_found", "no such demo pane", 404);
+    const needle = (query.get("query") ?? "").trim().toLowerCase();
+    if (path.endsWith("/commits")) return json({ commits: DEMO_COMMITS.filter((commit) => commit.id.includes(needle) || commit.subject.toLowerCase().includes(needle)), truncated: false });
+    const files = ["README.md", "src/greeting.ts", "src/new.ts"].filter((file) => {
+      let at = 0;
+      for (const character of file.toLowerCase()) if (character === needle[at]) at++;
+      return at === needle.length;
+    });
+    return json({ root: pane.foreground_cwd ?? pane.cwd ?? "/home/demo/project", files, truncated: false });
+  }
   if (path === "/api/workspace/changes" || path === "/api/workspace/diff") {
     const pane = snapshot().panes.find((pane) => pane.pane_id === query.get("pane_id"));
     if (!pane) return error("pane_not_found", "no such demo pane", 404);
     const mode = query.get("mode") ?? "all";
     if (mode !== "all" && mode !== "unstaged" && mode !== "staged") return error("invalid_mode", "unknown comparison", 400);
     const root = pane.foreground_cwd ?? pane.cwd ?? "/home/demo/project";
-    if (path === "/api/workspace/changes") return json(demoGitChanges(root, mode));
-    const diff = demoGitDiff(root, mode, query.get("path") ?? "");
+    const baseCommit = query.get("base_commit")?.toLowerCase();
+    if (baseCommit !== undefined && (mode !== "all" || !DEMO_COMMITS.some((commit) => commit.id === baseCommit))) return error("invalid_base_commit", "base_commit must name a demo commit and requires mode=all", 400);
+    if (path === "/api/workspace/changes") return json(demoGitChanges(root, mode, baseCommit));
+    const diff = demoGitDiff(root, mode, query.get("path") ?? "", baseCommit);
     return diff === null ? error("git_path_not_changed", "no such changed demo file", 404) : json(diff);
   }
   if (path === "/api/workspace/directories") {

@@ -26,6 +26,28 @@ async function fault(run: Promise<unknown>, code: string): Promise<void> {
 }
 
 describe("read-only Git changes", () => {
+  it("compares full commit IDs to the working tree and fingerprints the selected base", async () => {
+    const root = repository();
+    const base = git(root, "rev-parse", "HEAD").trim();
+    writeFileSync(join(root, "file.txt"), "second\n");
+    git(root, "add", "."); git(root, "commit", "-qm", "second");
+    const head = git(root, "rev-parse", "HEAD").trim();
+    writeFileSync(join(root, "file.txt"), "working\n");
+    const selected = await gitChanges(root, "all", base);
+    expect(selected.base_commit).toBe(base);
+    expect(selected.revision).not.toBe((await gitChanges(root, "all", head)).revision);
+    expect(selected.revision).not.toBe((await gitChanges(root, "all")).revision);
+    const diff = await gitFileDiff(root, "all", "file.txt", base.toUpperCase());
+    expect(diff.base_commit).toBe(base);
+    expect(diff.revision).toBe(selected.revision);
+    expect(diff.old_file?.contents).toBe("base\n");
+    expect(diff.new_file?.contents).toBe("working\n");
+    for (const invalid of ["", "HEAD", "--output=/tmp/no", "HEAD~1", base.slice(0, 8), "0".repeat(40), git(root, "rev-parse", "HEAD^{tree}").trim()]) {
+      await fault(gitChanges(root, "all", invalid), "invalid_base_commit");
+    }
+    await fault(gitChanges(root, "staged", base), "invalid_base_commit");
+    await fault(gitFileDiff(root, "unstaged", "file.txt", base), "invalid_base_commit");
+  });
   it("compares all HEAD→working, unstaged index→working and staged HEAD→index", async () => {
     const root = repository();
     writeFileSync(join(root, "file.txt"), "index\n"); git(root, "add", ".");
@@ -78,6 +100,49 @@ describe("read-only Git changes", () => {
     unlinkSync(join(root, "renamed.txt"));
     const deleted = await gitFileDiff(root, "all", "file.txt");
     expect(deleted.new_file).toBeNull(); expect(deleted.old_file?.contents).toBe("base\n");
+  });
+  it("keeps cached removals consistent with deletion patches while preserving untracked sides", async () => {
+    const root = repository();
+    git(root, "rm", "--cached", "file.txt");
+    expect(readFileSync(join(root, "file.txt"), "utf8")).toBe("base\n");
+    for (const mode of ["all", "staged"] as const) {
+      expect((await gitChanges(root, mode)).files).toEqual([{ path: "file.txt", status: "deleted" }]);
+      const diff = await gitFileDiff(root, mode, "file.txt");
+      expect(diff.old_file).toEqual({ name: "file.txt", contents: "base\n" });
+      expect(diff.new_file).toBeNull();
+      expect(diff.binary).toBe(false);
+      expect(diff.patch).toContain("deleted file mode 100644");
+      expect(diff.patch).toContain("+++ /dev/null");
+      expect(diff.patch).toContain("-base\n");
+    }
+    expect((await gitChanges(root, "unstaged")).files).toEqual([{ path: "file.txt", status: "untracked" }]);
+    const untracked = await gitFileDiff(root, "unstaged", "file.txt");
+    expect(untracked.old_file).toBeNull();
+    expect(untracked.new_file).toEqual({ name: "file.txt", contents: "base\n" });
+    expect(untracked.patch).toContain("--- /dev/null");
+    expect(untracked.patch).toContain("+base\n");
+  });
+  it("skips embedded repositories without hiding unrelated tracked or untracked files", async () => {
+    const root = repository();
+    const embedded = join(root, "vendor", "example");
+    mkdirSync(embedded, { recursive: true });
+    git(embedded, "init", "-q");
+    writeFileSync(join(embedded, "nested.txt"), "embedded\n");
+    git(embedded, "add", "."); git(embedded, "commit", "-qm", "embedded fixture");
+    writeFileSync(join(root, "file.txt"), "changed\n");
+    writeFileSync(join(root, "vendor", "ordinary.txt"), "ordinary\n");
+    expect(git(root, "ls-files", "--others", "--exclude-standard", "-z").split("\0")).toContain("vendor/example/");
+    for (const mode of ["all", "unstaged"] as const) {
+      expect((await gitChanges(root, mode)).files).toEqual([
+        { path: "file.txt", status: "modified" },
+        { path: "vendor/ordinary.txt", status: "untracked" },
+      ]);
+      expect((await gitFileDiff(root, mode, "file.txt")).new_file?.contents).toBe("changed\n");
+      expect((await gitFileDiff(root, mode, "vendor/ordinary.txt")).new_file?.contents).toBe("ordinary\n");
+      await fault(gitFileDiff(root, mode, "vendor/example/"), "invalid_path");
+      await fault(gitFileDiff(root, mode, "vendor/example/nested.txt"), "git_path_not_changed");
+    }
+    expect((await gitChanges(root, "staged")).files).toEqual([]);
   });
   it("represents untracked empty files, no final newline and binary presence", async () => {
     const root = repository();
@@ -139,6 +204,8 @@ describe("read-only Git changes", () => {
   it("allowlists both remote GET paths without widening unrelated routes", () => {
     expect(MACHINE_PROXY_PATH.test("workspace/changes")).toBe(true);
     expect(MACHINE_PROXY_PATH.test("workspace/diff")).toBe(true);
+    expect(MACHINE_PROXY_PATH.test("workspace/commits")).toBe(true);
+    expect(MACHINE_PROXY_PATH.test("workspace/files")).toBe(true);
     expect(MACHINE_PROXY_PATH.test("workspace/stage")).toBe(false);
   });
 });

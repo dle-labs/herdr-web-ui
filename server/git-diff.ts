@@ -30,10 +30,11 @@ export async function paneGitCwd(paneId: string): Promise<string> {
   return cwd;
 }
 
-class GitReader {
+export class GitReader {
   readonly deadline = Date.now() + REQUEST_MS;
   bytes = 0;
-  async run(cwd: string, args: string[], allowFailure = false, input?: Uint8Array): Promise<Buffer> {
+  truncated = false;
+  async run(cwd: string, args: string[], allowFailure = false, input?: Uint8Array, truncate = false): Promise<Buffer> {
     const remaining = this.deadline - Date.now();
     if (remaining <= 0) throw new GitDiffError("git_timeout", "Git inspection timed out", 504);
     const env = { ...process.env };
@@ -54,8 +55,15 @@ class GitReader {
         while (true) {
           const { done, value: chunk } = await source.read();
           if (done) break;
+          const available = Math.max(0, OUTPUT_BYTES - this.bytes);
           this.bytes += chunk.length;
-          if (this.bytes > OUTPUT_BYTES) { proc.kill(); throw new GitDiffError("git_too_large", "Git inspection exceeds the output budget", 413); }
+          if (this.bytes > OUTPUT_BYTES) {
+            proc.kill();
+            if (!truncate) throw new GitDiffError("git_too_large", "Git inspection exceeds the output budget", 413);
+            this.truncated = true;
+            parts.push(chunk.subarray(0, available));
+            break;
+          }
           parts.push(chunk);
         }
       } finally { source.releaseLock(); }
@@ -64,6 +72,7 @@ class GitReader {
     try {
       const [out, , code] = await Promise.all([collect(proc.stdout), collect(proc.stderr), proc.exited]);
       if (timedOut) throw new GitDiffError("git_timeout", "Git inspection timed out", 504);
+      if (truncate && this.truncated) return out;
       if (code !== 0 && !allowFailure) throw new GitDiffError("git_failed", "Git could not inspect this repository", 422);
       return code === 0 ? out : Buffer.alloc(0);
     } finally { clearTimeout(timer); }
@@ -96,19 +105,32 @@ interface Entry { file: GitChangedFile; oldMode: string; newMode: string; oldOid
 interface Inventory { root: string; revision: string; entries: Entry[]; compare: string[] }
 const statuses: Record<string, GitChangedFile["status"]> = { A: "added", M: "modified", T: "modified", D: "deleted", R: "renamed", C: "added", U: "conflicted" };
 const diffFlags = ["--no-ext-diff", "--no-textconv", "--ignore-submodules=none", "--find-renames", "--no-relative"];
-async function inventory(reader: GitReader, cwd: string, mode: GitDiffMode): Promise<Inventory> {
+export function validateBaseCommit(mode: GitDiffMode, baseCommit?: string): void {
+  if (baseCommit !== undefined && (mode !== "all" || !/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/.test(baseCommit))) {
+    throw new GitDiffError("invalid_base_commit", "base_commit must be a full commit ID and requires mode=all");
+  }
+}
+
+async function inventory(reader: GitReader, cwd: string, mode: GitDiffMode, baseCommit?: string): Promise<Inventory> {
+  validateBaseCommit(mode, baseCommit);
   const rootOutput = await reader.run(cwd, ["rev-parse", "--show-toplevel"], true);
   if (!rootOutput.length) throw new GitDiffError("not_git_repository", "The pane is not in a Git working tree", 404);
   const root = realpathSync(rootOutput.toString().replace(/\r?\n$/, ""));
   const head = (await reader.run(root, ["rev-parse", "--verify", "HEAD"], true)).toString().trim();
-  const base = head || (await reader.run(root, ["hash-object", "-t", "tree", "--stdin"], false, new Uint8Array())).toString().trim();
+  if (baseCommit !== undefined) {
+    const resolved = (await reader.run(root, ["rev-parse", "--verify", `${baseCommit}^{commit}`], true)).toString().trim();
+    if (resolved !== baseCommit.toLowerCase()) throw new GitDiffError("invalid_base_commit", "base_commit does not name a commit in this repository");
+  }
+  const base = baseCommit?.toLowerCase() || head || (await reader.run(root, ["hash-object", "-t", "tree", "--stdin"], false, new Uint8Array())).toString().trim();
   const compare = mode === "unstaged" ? [] : mode === "staged" ? ["--cached", base] : [base];
   const index = (await reader.run(root, ["ls-files", "--stage", "-z"])).toString();
   const tracked = index.split("\0").filter(Boolean).map((record) => record.slice(record.indexOf("\t") + 1));
-  const untracked = mode === "staged" ? [] : (await reader.run(root, ["ls-files", "--others", "--exclude-standard", "-z"])).toString().split("\0").filter(Boolean);
+  // Git reports embedded repositories as directory entries ending in '/'. Their contents
+  // are unsupported here; omit them without relaxing validation for ordinary file paths.
+  const untracked = mode === "staged" ? [] : (await reader.run(root, ["ls-files", "--others", "--exclude-standard", "-z"])).toString().split("\0").filter((path) => path && !path.endsWith("/"));
   const paths = [...new Set([...tracked, ...untracked])].sort();
   if (paths.length > MAX_FILES) throw new GitDiffError("git_too_large", "Repository inventory exceeds the file budget", 413);
-  const fingerprint = createHash("sha256").update(mode).update(head).update(index);
+  const fingerprint = createHash("sha256").update(mode).update(head).update(baseCommit?.toLowerCase() ?? "").update(index);
   if (mode !== "staged") for (const path of paths) {
     if (Date.now() > reader.deadline) throw new GitDiffError("git_timeout", "Git inspection timed out", 504);
     const stat = workingStat(root, path);
@@ -142,9 +164,9 @@ async function inventory(reader: GitReader, cwd: string, mode: GitDiffMode): Pro
   return { root, revision: fingerprint.digest("hex"), entries: unique, compare };
 }
 
-export async function gitChanges(cwd: string, mode: GitDiffMode): Promise<GitChangesResponse> {
-  const { root, revision, entries } = await inventory(new GitReader(), cwd, mode);
-  return { root, revision, files: entries.map((entry) => entry.file) };
+export async function gitChanges(cwd: string, mode: GitDiffMode, baseCommit?: string): Promise<GitChangesResponse> {
+  const { root, revision, entries } = await inventory(new GitReader(), cwd, mode, baseCommit);
+  return { root, revision, ...(baseCommit === undefined ? {} : { base_commit: baseCommit.toLowerCase() }), files: entries.map((entry) => entry.file) };
 }
 
 function workingBytes(root: string, path: string): Buffer | null {
@@ -174,10 +196,10 @@ function workingBytes(root: string, path: string): Buffer | null {
   } finally { closeSync(fd); }
 }
 
-export async function gitFileDiff(cwd: string, mode: GitDiffMode, path: string): Promise<GitFileDiffResponse> {
+export async function gitFileDiff(cwd: string, mode: GitDiffMode, path: string, baseCommit?: string): Promise<GitFileDiffResponse> {
   checkedPath(path);
   const reader = new GitReader();
-  const before = await inventory(reader, cwd, mode);
+  const before = await inventory(reader, cwd, mode, baseCommit);
   const entry = before.entries.find((candidate) => candidate.file.path === path);
   if (!entry) throw new GitDiffError("git_path_not_changed", "The path is not in this changes inventory", 404);
   if (entry.file.status === "conflicted") throw new GitDiffError("git_conflict", "Resolve this file's conflict before comparing two sides", 409);
@@ -189,7 +211,8 @@ export async function gitFileDiff(cwd: string, mode: GitDiffMode, path: string):
     return reader.run(before.root, ["cat-file", "blob", oid]);
   };
   const oldBytes = await blob(entry.oldOid);
-  const newBytes = mode === "staged" ? await blob(entry.newOid) : workingBytes(before.root, path);
+  // A raw deletion has no new side even when `git rm --cached` leaves the file on disk.
+  const newBytes = entry.newMode === "000000" ? null : mode === "staged" ? await blob(entry.newOid) : workingBytes(before.root, path);
   let binary = [oldBytes, newBytes].some((bytes) => bytes !== null && (bytes.includes(0) || !Buffer.from(bytes.toString("utf8")).equals(bytes)));
   let patch = "";
   if (entry.file.status === "untracked") {
@@ -204,9 +227,9 @@ export async function gitFileDiff(cwd: string, mode: GitDiffMode, path: string):
     patch = (await reader.run(before.root, ["diff", ...diffFlags, "--no-color", "--src-prefix=a/", "--dst-prefix=b/", "--unified=3", ...before.compare, "--", ...(entry.file.old_path ? [entry.file.old_path] : []), path])).toString();
   }
   binary ||= /^Binary files .* differ$/m.test(patch) || /^GIT binary patch$/m.test(patch);
-  const after = await inventory(reader, cwd, mode);
+  const after = await inventory(reader, cwd, mode, baseCommit);
   if (before.revision !== after.revision) throw new GitDiffError("git_changed", "The repository changed during inspection; refresh changes", 409);
   const side = (bytes: Buffer | null, name: string) => bytes === null ? null : { name, contents: binary ? "" : bytes.toString("utf8") };
-  return { root: before.root, revision: before.revision, path, ...(entry.file.old_path ? { old_path: entry.file.old_path } : {}), patch, binary,
+  return { root: before.root, revision: before.revision, ...(baseCommit === undefined ? {} : { base_commit: baseCommit.toLowerCase() }), path, ...(entry.file.old_path ? { old_path: entry.file.old_path } : {}), patch, binary,
     old_file: side(oldBytes, entry.file.old_path ?? path), new_file: side(newBytes, path) };
 }
