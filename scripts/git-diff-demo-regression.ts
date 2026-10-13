@@ -196,7 +196,7 @@ try {
     for (const mobile of [true, false]) {
       const context = await browser.newContext({ viewport: { width: mobile ? 390 : 1280, height: mobile ? 844 : 900 }, isMobile: mobile, hasTouch: mobile, locale: "en-US", serviceWorkers: "block" });
       try {
-        await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", comments: true, view: "chat", theme: "dark" })));
+        await context.addInitScript(() => { if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", comments: true, view: "chat", theme: "dark" })); });
         const page = await context.newPage(); activePage = page;
         page.setDefaultTimeout(10_000);
         const errors: string[] = []; page.on("pageerror", (error) => errors.push(error.message));
@@ -208,6 +208,29 @@ try {
         await page.getByRole(mobile ? "button" : "menuitem", { name: "Split right", exact: true }).waitFor();
         assert.equal(await page.getByRole(mobile ? "button" : "menuitem", { name: "Changed files", exact: true }).count(), 0, "Changed files is no longer a pane/tab menu action");
         await page.keyboard.press("Escape");
+        await page.locator(".composer-browse .browse-files-dot").waitFor();
+        await page.keyboard.press("ControlOrMeta+Shift+Comma");
+        await openSettingsPage(page, "File viewer");
+        let shortcutSettings = page.getByRole("dialog", { name: "Settings", exact: true });
+        await shortcutSettings.getByRole("switch", { name: "Show Browse files shortcut", exact: true }).click();
+        assert.equal(await page.locator(".composer-browse").count(), 0, "shortcut can be hidden without removing the menu action");
+        await shortcutSettings.getByRole("button", { name: "Close settings", exact: true }).click();
+        await page.reload();
+        await page.locator(".conn-live").waitFor({ state: "attached" });
+        await page.locator(".composer").waitFor();
+        assert.equal(await page.locator(".composer-browse").count(), 0, "shortcut setting survives reload");
+        await page.locator(".header-more-button").click();
+        const browseEntry = page.getByRole(mobile ? "button" : "menuitem", { name: "Browse files", exact: true });
+        await browseEntry.locator(".browse-files-dot").waitFor();
+        await page.keyboard.press("Escape");
+        await page.keyboard.press("ControlOrMeta+Shift+Comma");
+        await openSettingsPage(page, "File viewer");
+        shortcutSettings = page.getByRole("dialog", { name: "Settings", exact: true });
+        assert.equal(await shortcutSettings.getByRole("switch", { name: "Show Browse files shortcut", exact: true }).getAttribute("aria-checked"), "false");
+        await shortcutSettings.getByRole("switch", { name: "Show Browse files shortcut", exact: true }).click();
+        await shortcutSettings.getByRole("button", { name: "Close settings", exact: true }).click();
+        await page.locator(".composer-browse .browse-files-dot").waitFor();
+        console.log(`PASS Git Changes: ${mobile ? "phone" : "desktop"} shortcut setting, persistence and menu/shortcut dots`);
         const openPaneChanges = async () => {
           assert.ok(await page.locator(".composer-browse").evaluate((button) => button.previousElementSibling?.matches(".voice-mic, .composer-attach")), "file quick action is immediately beside microphone or plus");
           await page.locator(".composer").getByRole("button", { name: "Browse files", exact: true }).click();
@@ -512,6 +535,7 @@ try {
         await empty.getByRole("option", { name: "Working changes", exact: true }).click();
         await empty.getByText("No changes in this comparison.", { exact: true }).waitFor({ state: "attached" });
         assert.equal(await empty.locator("[data-diff-path]").count(), 0);
+        assert.equal(await page.locator(".composer-browse .browse-files-dot").count(), 0, "empty working inventory clears the shortcut dot");
         assert.equal(await empty.locator(".modal-header").getByRole("group", { name: "Diff layout", exact: true }).count(), 0, "empty inventory hides layout controls");
         if (mobile) {
           await empty.getByRole("button", { name: "Back to files", exact: true }).click();
@@ -529,6 +553,9 @@ try {
 
         await empty.getByRole("button", { name: "Close files", exact: true }).click();
         await page.waitForFunction(() => !history.state?.["herdr-web-ui:sheet"]);
+        await page.locator(".header-more-button").click();
+        assert.equal(await page.getByRole(mobile ? "button" : "menuitem", { name: "Browse files", exact: true }).locator(".browse-files-dot").count(), 0, "clean workspace has no menu dot");
+        await page.keyboard.press("Escape");
         await page.evaluate(() => { (window as any).gitEmpty = false; (window as any).gitRevision = 0; });
         await openPaneChanges();
         const quick = page.getByRole("dialog", { name: "Files", exact: true });

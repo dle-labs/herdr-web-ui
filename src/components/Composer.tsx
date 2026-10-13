@@ -14,7 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, FolderOpen, MessageSquare, Plus, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, FileText, MessageSquare, Plus, Square, TriangleAlert, X } from "lucide-react";
 
 import "./Composer.css";
 
@@ -57,12 +57,16 @@ import { popoverOutlived } from "../lib/commentPopover.ts";
 import { lastFileStop } from "../lib/commentWalk.ts";
 import { FileCommentNavContext } from "../lib/fileCommentNav.ts";
 import { WorkspaceFilesContext } from "../lib/workspaceFiles.ts";
+import { useWorkspaceChanges } from "../lib/useWorkspaceChanges.ts";
+import { BrowseFilesIcon } from "./BrowseFilesIcon.tsx";
 import { sortFileComments, type FileComment } from "../lib/fileComments.ts";
 import { CommentPopover } from "./CommentPopover.tsx";
 
 export interface ComposerProps {
   connected: boolean;
   paneId: string;
+  /** Current file-browser directory, including a foreground process's cwd. */
+  cwd?: string | null;
   /** false: appearing must not take the keyboard (App switched to this pane on its own) */
   autoFocus?: boolean;
   active?: boolean;
@@ -235,6 +239,7 @@ function useMediaQuery(query: string): boolean {
 export function Composer({
   connected,
   paneId,
+  cwd = null,
   autoFocus = true,
   active = true,
   agent,
@@ -258,6 +263,7 @@ export function Composer({
   const openFiles = useContext(WorkspaceFilesContext);
   const { fetchPaneCommands, fetchPaneFiles } = useMachineApi();
   const { settings } = useSettings();
+  const filesChanged = useWorkspaceChanges(paneId, cwd ?? "", connected && active && openFiles !== null && settings.showBrowseFilesShortcut, paneStatus({ agent_status: agentStatus, background_wait: backgroundWait ? true : undefined }));
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
   const usageEnabled = settings.showUsage && !mobile && machineId === "local" && providerForAgent(agent) !== null;
   const { report: usageReport } = useUsage(usageEnabled);
@@ -1323,18 +1329,18 @@ export function Composer({
             <Plus aria-hidden="true" />
           </button>
           {dictation.shown && <MicButton dictation={dictation} />}
-          {openFiles && <button
+          {openFiles && settings.showBrowseFilesShortcut && <button
             type="button"
             className="icon-button composer-browse"
             aria-label={t("Browse files")}
-            title={t("Browse files")}
+            title={filesChanged ? `${t("Browse files")} · ${t("Changed files")}` : t("Browse files")}
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
               openFiles(paneId);
             }}
           >
-            <FolderOpen aria-hidden="true" />
+            <BrowseFilesIcon changed={filesChanged} />
           </button>}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} plan={plan} />
         </div>

@@ -22,6 +22,9 @@ import { fileFromLink, followMoved, isNavigation, linkSearch, linksSomewhere, NA
 import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { MachineContext } from "./lib/machineContext.tsx";
+import { useWorkspaceChangesSnapshot } from "./lib/useWorkspaceChanges.ts";
+import { paneStatus } from "./lib/status.ts";
+import { BrowseFilesMenuIcon } from "./components/BrowseFilesIcon.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
@@ -833,6 +836,8 @@ export function App() {
 
 
   const selectedPane = snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId) ?? null;
+  const filesCwd = selectedPane?.foreground_cwd ?? selectedPane?.cwd ?? "";
+  const filesChanged = useWorkspaceChangesSnapshot(selectedPane ? { machineId: selectedMachineId, paneId: selectedPane.pane_id, cwd: filesCwd } : null);
   useScreenWakeLock(settings.keepScreenOn && locked === false && selectedPane !== null);
   const selectedWorkspace = selectedPane
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
@@ -1316,7 +1321,10 @@ export function App() {
       const anchor = document.querySelector<HTMLElement>(".header-more-button");
       if (anchor) setMovingPane({ machineId: selectedMachineId, paneId: selectedPane.pane_id, anchor });
     } }] : []),
-    ...(selectedPane ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => openFilesFor(selectedPane.pane_id, selectedMachineId, "browse") }] : []),
+    ...(selectedPane ? [{ id: "files", label: t("Browse files"), icon: FolderOpen,
+      title: filesChanged ? `${t("Browse files")} · ${t("Changed files")}` : t("Browse files"),
+      glyph: <MachineContext.Provider value={selectedMachineId}><BrowseFilesMenuIcon paneId={selectedPane.pane_id} cwd={filesCwd} connected={selectedMachine?.state === "connected" && !selectedPane.restore_error} status={paneStatus(selectedPane)} /></MachineContext.Provider>,
+      run: () => openFilesFor(selectedPane.pane_id, selectedMachineId, "browse") }] : []),
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
     ...(bellVisible ? [{ id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
@@ -1593,6 +1601,7 @@ export function App() {
                         plan={machine?.state === "connected" ? (item as HerdrPane | undefined)?.plan ?? null : null}
                         backgroundWait={item?.background_wait === true}
                         cwd={item?.cwd ?? null}
+                        filesCwd={item?.foreground_cwd ?? item?.cwd ?? null}
                         machineName={machine?.name ?? machineId}
                         view={item ? lensOf(item) : slotView}
                         // the other half never takes the keyboard: a press in it makes it active first

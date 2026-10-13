@@ -201,7 +201,13 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   pane selection changes. Initial file-comment navigation is consumed when selecting another file.
 - **Browse files** is a quick action beside the composer's microphone, or beside `+` when
   dictation is unavailable. It targets that composer's pane/PC without background polling;
-  pane and tab menus do not contain Changed files. Wrap and highlight controls live in Settings.
+  pane and tab menus do not contain Changed files. Settings → File viewer → **Show Browse files
+  shortcut** controls this device's folder button (on by default); the header menu entry stays
+  available. Both folder icons carry a small `--notice` dot for known uncommitted changes,
+  including untracked files, never for historical comparison differences. Shared read-only
+  snapshots refresh on activation, window focus/visibility return, menu opening and transitions
+  into/out of agent work; normal browser inventories also update the dot. There is no timer
+  polling, and unknown/non-Git inventories show no dot. Wrap and highlight controls live in Settings.
   **Unified / Split** sits beside Refresh in the browser header only when the current comparison
   inventory contains diffs, and shares the Settings layout preference. Phones remain unified.
   Dirty comment drafts block layout changes.

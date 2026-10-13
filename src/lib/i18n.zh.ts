@@ -203,6 +203,8 @@ export const ZH: Record<string, string> = {
   "reconnecting": "正在重连",
   "herdr offline": "herdr 离线",
   "Browse files": "浏览文件",
+  "Show Browse files shortcut": "显示浏览文件快捷按钮",
+  "The folder button appears beside the composer controls. Browse files stays available in the menu.": "在输入框控件旁显示文件夹按钮。菜单中的浏览文件仍然可用。",
   "Copy link": "复制链接",
   "Link copied": "已复制链接",
   "That agent has closed: its workspace is open": "该代理已关闭，已改为打开其工作区",

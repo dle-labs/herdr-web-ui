@@ -88,6 +88,8 @@ export interface PaneTerminalProps {
   backgroundWait?: boolean;
   /** the pane's working directory and its PC's name: an empty chat's greeting names them */
   cwd?: string | null;
+  /** Directory used by file actions; a foreground process can differ from the greeting's cwd. */
+  filesCwd?: string | null;
   machineName?: string;
   /** the lens over the pane: the chat transcript, or the live xterm grid (App remembers it per pane) */
   view: PaneView;
@@ -144,6 +146,7 @@ export function PaneTerminal({
   plan = null,
   backgroundWait = false,
   cwd = null,
+  filesCwd = cwd,
   machineName = "",
   view,
   findRequest = 0,
@@ -2514,6 +2517,7 @@ export function PaneTerminal({
         <Composer
           key={paneId}
           paneId={paneId}
+          cwd={filesCwd}
           autoFocus={active && !autoSelected && !coarse}
           active={active}
           agent={agent}

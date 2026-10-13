@@ -358,6 +358,9 @@ function FileViewerPage() {
   const markdownWidthLabel = { readable: t("Default"), full: t("Full width") };
   return (
     <SettingsGroup>
+      <SettingsRow label={t("Show Browse files shortcut")} description={t("The folder button appears beside the composer controls. Browse files stays available in the menu.")}>
+        <Toggle label={t("Show Browse files shortcut")} checked={settings.showBrowseFilesShortcut} onChange={(showBrowseFilesShortcut) => update({ showBrowseFilesShortcut })} />
+      </SettingsRow>
       <SettingsRow label={t("Diff layout")}>
         <Segmented label={t("Diff layout")} value={settings.splitDiff ? "split" : "unified"} onChange={(layout) => update({ splitDiff: layout === "split" })}
           options={[{ value: "unified", label: t("Unified") }, { value: "split", label: t("Split") }]} />

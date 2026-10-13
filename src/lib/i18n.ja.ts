@@ -201,6 +201,8 @@ export const JA: Record<string, string> = {
   "reconnecting": "再接続中",
   "herdr offline": "herdr オフライン",
   "Browse files": "ファイルを参照",
+  "Show Browse files shortcut": "ファイル参照のショートカットを表示",
+  "The folder button appears beside the composer controls. Browse files stays available in the menu.": "入力欄の操作ボタンの横にフォルダボタンを表示します。メニューのファイル参照は引き続き利用できます。",
   "Copy link": "リンクをコピー",
   "Link copied": "リンクをコピーしました",
   "That agent has closed: its workspace is open": "そのエージェントは閉じられました。代わりにワークスペースを開きました",

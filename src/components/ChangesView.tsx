@@ -9,6 +9,7 @@ import type { GitChangesResponse, GitFileDiffResponse } from "../../shared/proto
 import { changedField, revealField } from "../lib/commentDom.ts";
 import type { FileComment } from "../lib/fileComments.ts";
 import { useMachineApi, useMachineId } from "../lib/machineContext.tsx";
+import { workspaceChanges } from "../lib/workspaceChanges.ts";
 import { paneStorageId } from "../../shared/machines.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useSettings } from "../lib/settings.ts";
@@ -135,6 +136,7 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     setLoading(true);
     fetchGitChanges(paneId, "all", baseCommit).then((next) => {
       if (!live || !canLeave()) return;
+      if (baseCommit === undefined) workspaceChanges.publish({ machineId, paneId, cwd: start }, next);
       setInventory(next);
       setError(null);
       const requested = initialRequest.current && initialComment?.diff

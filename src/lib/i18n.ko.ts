@@ -199,6 +199,8 @@ export const KO: Record<string, string> = {
   "reconnecting": "재연결 중",
   "herdr offline": "herdr 꺼짐",
   "Browse files": "파일 찾아보기",
+  "Show Browse files shortcut": "파일 찾아보기 바로가기 표시",
+  "The folder button appears beside the composer controls. Browse files stays available in the menu.": "작성기 컨트롤 옆에 폴더 버튼을 표시합니다. 메뉴에서는 계속 파일 찾아보기를 사용할 수 있습니다.",
   "Copy link": "링크 복사",
   "Link copied": "링크를 복사했습니다",
   "That agent has closed: its workspace is open": "그 에이전트는 닫혔습니다. 대신 워크스페이스를 열었습니다",

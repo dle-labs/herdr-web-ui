@@ -8,6 +8,16 @@ import { SHARED_SETTING_KEYS } from "../../shared/preferences.ts";
 import { NOTICE_VERSION, telemetrySettings } from "../../shared/telemetry.ts";
 import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
 
+it("shows the file browser shortcut by default and keeps this device's choice outside telemetry", () => {
+  expect(DEFAULT_SETTINGS.showBrowseFilesShortcut).toBe(true);
+  expect(sanitizeSettings({}).showBrowseFilesShortcut).toBe(true);
+  expect(sanitizeSettings({ showBrowseFilesShortcut: false }).showBrowseFilesShortcut).toBe(false);
+  expect(sanitizeSettings(JSON.parse(JSON.stringify(sanitizeSettings({ showBrowseFilesShortcut: false })))).showBrowseFilesShortcut).toBe(false);
+  for (const value of [null, "false", 0]) expect(sanitizeSettings({ showBrowseFilesShortcut: value }).showBrowseFilesShortcut).toBe(true);
+  expect(SETTING_SCOPE.showBrowseFilesShortcut).toBe("device");
+  expect(telemetrySettingsSnapshot(DEFAULT_SETTINGS)).not.toHaveProperty("showBrowseFilesShortcut");
+});
+
 it("shares the diff layout preference with the file browser and sanitizes saved values", () => {
   expect(DEFAULT_SETTINGS.splitDiff).toBe(true);
   expect(sanitizeSettings({}).splitDiff).toBe(true);

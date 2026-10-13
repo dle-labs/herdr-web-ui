@@ -188,6 +188,8 @@ export const TR: Record<string, string> = {
   "reconnecting": "yeniden bağlanıyor",
   "herdr offline": "herdr çevrimdışı",
   "Browse files": "Dosyalara göz at",
+  "Show Browse files shortcut": "Dosyalara göz at kısayolunu göster",
+  "The folder button appears beside the composer controls. Browse files stays available in the menu.": "Klasör düğmesi yazma alanı kontrollerinin yanında görünür. Dosyalara göz at menüde kullanılabilir olmaya devam eder.",
   "Copy link": "Bağlantıyı kopyala",
   "Link copied": "Bağlantı kopyalandı",
   "That agent has closed: its workspace is open": "Ajan sona erdi; çalışma alanı hâlâ açık",

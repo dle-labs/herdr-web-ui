@@ -163,6 +163,8 @@ export interface Settings {
   voicePolishTerminal: boolean;
   /** the file viewer wraps long lines instead of scrolling sideways */
   wrapCode: boolean;
+  /** Folder quick action in the composer; Browse files stays available in the menu. */
+  showBrowseFilesShortcut: boolean;
   /** Side-by-side diffs on wide screens; narrow browsers always use unified. */
   splitDiff: boolean;
   /** code in the chat and the file viewer is colored by syntax; off, it is plain text */
@@ -180,7 +182,7 @@ type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
   | "quickReplies" | "usageOrder" | "usageHidden"
   // New review-surface preferences are deliberately not collected by the existing telemetry schema.
-  | "comments" | "splitDiff">;
+  | "comments" | "splitDiff" | "showBrowseFilesShortcut">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -264,7 +266,7 @@ export const SETTING_SCOPE = {
   keepScreenOn: "device", alertsOn: "device", alertInput: "device", alertDone: "device", alertInApp: "device", alertSound: "device",
   voiceInput: "device", voiceLanguage: "device", voicePolishChat: "device", voicePolishTerminal: "device",
   // Viewer layout follows this screen, as chatWidth does; highlighting remains shared.
-  wrapCode: "device", splitDiff: "device", comments: "device", markdownWidth: "device",
+  wrapCode: "device", showBrowseFilesShortcut: "device", splitDiff: "device", comments: "device", markdownWidth: "device",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 /** The shared part of `settings`, by the names shared/preferences.ts lists. */
@@ -326,6 +328,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voicePolishChat: true,
   voicePolishTerminal: false,
   wrapCode: false,
+  showBrowseFilesShortcut: true,
   splitDiff: true,
   highlightCode: true,
   markdownWidth: "readable",
@@ -506,6 +509,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     voicePolishChat: typeof record["voicePolishChat"] === "boolean" ? record["voicePolishChat"] : DEFAULT_SETTINGS.voicePolishChat,
     voicePolishTerminal: typeof record["voicePolishTerminal"] === "boolean" ? record["voicePolishTerminal"] : DEFAULT_SETTINGS.voicePolishTerminal,
     wrapCode: typeof record["wrapCode"] === "boolean" ? record["wrapCode"] : DEFAULT_SETTINGS.wrapCode,
+    showBrowseFilesShortcut: typeof record["showBrowseFilesShortcut"] === "boolean" ? record["showBrowseFilesShortcut"] : DEFAULT_SETTINGS.showBrowseFilesShortcut,
     splitDiff: typeof record["splitDiff"] === "boolean" ? record["splitDiff"] : DEFAULT_SETTINGS.splitDiff,
     highlightCode: typeof record["highlightCode"] === "boolean" ? record["highlightCode"] : DEFAULT_SETTINGS.highlightCode,
     markdownWidth: MARKDOWN_WIDTHS.find((width) => width === record["markdownWidth"]) ?? DEFAULT_SETTINGS.markdownWidth,
