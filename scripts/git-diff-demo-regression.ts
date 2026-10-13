@@ -482,11 +482,23 @@ try {
           await sourceLine.waitFor();
           // Read both rectangles atomically: focusing a phone editor can hide
           // its tools between separate browser calls and skew the subtraction.
-          const sourceOffset = () => sourceLine.evaluate((node) => {
-            const tree = node.getRootNode();
-            const host = tree instanceof ShadowRoot ? tree.host : node;
-            return node.getBoundingClientRect().y - host.closest(".changes-detail")!.getBoundingClientRect().y;
-          });
+          const sourceOffset = async (): Promise<number> => {
+            const deadline = Date.now() + 3000;
+            while (Date.now() < deadline) {
+              const offset = await sourceLine.evaluate((node) => {
+                if (!node.isConnected) return null;
+                let host: Element = node;
+                while (host.getRootNode() instanceof ShadowRoot) host = (host.getRootNode() as ShadowRoot).host;
+                const viewport = host.closest(".changes-detail");
+                return viewport ? node.getBoundingClientRect().y - viewport.getBoundingClientRect().y : null;
+              });
+              if (offset !== null) return offset;
+              // React 19/Pierre may replace a gutter between locator resolution and evaluation.
+              // Retry only disconnected nodes; the connected geometry assertion stays exact.
+              await frames(page);
+            }
+            throw new Error("Source gutter never remained attached for measurement");
+          };
           const sourceBefore = await sourceOffset();
           await sourceLine.click();
           await field(scrolling).waitFor();

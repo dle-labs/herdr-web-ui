@@ -24,7 +24,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, devices, type Browser, type BrowserContextOptions, type Locator, type Page } from "playwright-core";
 import { createServer } from "../server/index.ts";
-import { TEXT_LOAD_LIMIT } from "../src/lib/textPreview.ts";
+import { SOURCE_PREVIEW_BYTES } from "../src/lib/filePreviewText.ts";
+import { VIRTUAL_SOURCE_LINES } from "../src/lib/sourcePreview.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { openSettingsPage } from "./settings-page.ts";
 import { commentClearOfSource } from "./comment-placement-assertions.ts";
@@ -115,10 +116,15 @@ mkdirSync(join(root, "src"));
 writeFileSync(join(root, "src", "sync.ts"), `${SYNC_LINES.join("\n")}\n`);
 mkdirSync(join(root, "docs"));
 writeFileSync(join(root, "docs", "spec.md"), `${SPEC_LINES.join("\n")}\n`);
-// `src/big.txt`, a little past the viewer's load limit, opens cut short
-writeFileSync(join(root, "src", "big.txt"), "a line of plain text, 0123456789\n".repeat(Math.ceil((TEXT_LOAD_LIMIT + 1024) / 33)));
-/** One line longer than the load limit: it opens cut inside its only line, which is then no whole line to comment on. */
-writeFileSync(join(root, "src", "long.txt"), "one long line ".repeat(Math.ceil((TEXT_LOAD_LIMIT + 1024) / 14)));
+// Exercise the source byte limit, not the old Markdown preview budget. Keep fewer than
+// VIRTUAL_SOURCE_LINES rows so these comment checks use the element-backed source surface;
+// main's windowed source is covered by the virtual-source regression script.
+const BIG_LINE = `a line of plain text, 0123456789 ${"x".repeat(8160)}\n`;
+const BIG_ROWS = Math.ceil((SOURCE_PREVIEW_BYTES + BIG_LINE.length) / BIG_LINE.length);
+assert.ok(BIG_ROWS < VIRTUAL_SOURCE_LINES, "the cut-prefix comment fixture uses source line elements");
+writeFileSync(join(root, "src", "big.txt"), BIG_LINE.repeat(BIG_ROWS));
+/** One line longer than the source byte limit: no whole line to comment on. */
+writeFileSync(join(root, "src", "long.txt"), "one long line ".repeat(Math.ceil((SOURCE_PREVIEW_BYTES + 1024) / 14)));
 /** `src/wide.ts`: line 2 ends well inside the code view, line 3 runs far past it, so the view (no wrapping) scrolls sideways. */
 const WIDE_LINES = [
   "// one line here runs far past the view",
@@ -255,7 +261,7 @@ const assertNoButton = async (page: Page, what: string): Promise<void> => {
 
 const selectionButtonOf = (page: Page): Locator => page.getByRole("button", { name: "Comment", exact: true }).and(page.locator(".comment-selection"));
 
-/** Selection alone offers Comment while leaving focus, selected text and native copying intact. */
+/** Selection alone offers Comment without changing focus or the copied text; files keep native copy. */
 async function assertSelectionButton(page: Page, what: string): Promise<void> {
   const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
   const focus = await page.evaluateHandle(() => document.activeElement);
@@ -269,10 +275,16 @@ async function assertSelectionButton(page: Page, what: string): Promise<void> {
   const copied = await page.evaluate(() => {
     const selection = window.getSelection()!;
     const event = new ClipboardEvent("copy", { clipboardData: new DataTransfer(), bubbles: true, cancelable: true });
-    selection.anchorNode!.parentElement!.dispatchEvent(event);
-    return { text: selection.toString(), prevented: event.defaultPrevented };
+    const target = selection.anchorNode!.parentElement!;
+    const inFile = target.closest(".file-viewer-body") !== null;
+    target.dispatchEvent(event);
+    // ChatTimeline intentionally writes semantic markdown/virtualized selections. A
+    // synthetic event has no browser default copy: read its payload when intercepted,
+    // otherwise the native selection that the browser would copy.
+    return { text: event.defaultPrevented ? event.clipboardData!.getData("text/plain") : selection.toString(), prevented: event.defaultPrevented, inFile };
   });
-  assert.deepEqual(copied, { text: selected, prevented: false }, `${what}: copying remains native`);
+  assert.equal(copied.text, selected, `${what}: clipboard contents preserve the selection`);
+  if (copied.inFile) assert.equal(copied.prevented, false, `${what}: file copying remains native`);
   await focus.dispose();
 }
 
@@ -375,7 +387,7 @@ const pendingPinIn = (scope: Locator): Locator => scope.locator(".comment-pin.is
 /** The open comment's popover, wherever it is drawn. */
 const popoverOf = (page: Page): Locator => page.locator(".comment-popover");
 /** The popover beside its pin, inside `scope` (a viewer's body, the chat). */
-const besidePinIn = (scope: Locator): Locator => scope.locator(".comment-popover").or(scope.locator("..").locator(".comment-editor-host .comment-popover"));
+const besidePinIn = (scope: Locator): Locator => scope.locator(".comment-popover").or(scope.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' comment-surface-layout ')][1]").locator(":scope > .comment-editor-host .comment-popover"));
 /** The popover as a dialog of its own (the shared modal: a bottom sheet on a phone), portalled to the body. */
 const dialogOf = (page: Page): Locator => page.locator(".modal-scrim > .modal.comment-popover");
 const fieldOf = (page: Page): Locator => popoverOf(page).getByRole("textbox", { name: "Comment", exact: true });
