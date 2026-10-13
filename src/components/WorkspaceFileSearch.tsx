@@ -63,8 +63,15 @@ export function WorkspaceFileSearch({ paneId, onSelect, refreshToken, disabled =
   }, [disabled, onReveal]);
 
   useEffect(() => {
-    list.current?.children[active]?.scrollIntoView({ block: "nearest" });
-  }, [active]);
+    const container = list.current;
+    const option = container?.children[active];
+    if (!container || !(option instanceof HTMLElement)) return;
+    // Reveal within the floating list only, never scroll its dialog ancestors.
+    const bounds = container.getBoundingClientRect();
+    const row = option.getBoundingClientRect();
+    if (row.top < bounds.top) container.scrollTop += row.top - bounds.top;
+    else if (row.bottom > bounds.bottom) container.scrollTop += row.bottom - bounds.bottom;
+  }, [active, visible, files]);
 
   const choose = (file: string) => {
     if (!current || disabled) return;
@@ -102,7 +109,7 @@ export function WorkspaceFileSearch({ paneId, onSelect, refreshToken, disabled =
       <ul ref={list} id={id} role="listbox" aria-label={t("Find files…")} className="workspace-file-search-list">
         {files.map((file, index) => <li key={file} id={`${id}-${index}`} role="option" aria-selected={active === index}
           className="workspace-file-search-option" onMouseDown={(event) => event.preventDefault()}
-          onMouseMove={() => setActive(index)} onClick={() => choose(file)} title={file}>{file}</li>)}
+          onMouseMove={() => setActive(index)} onClick={() => choose(file)} title={file}><span>{file}</span></li>)}
       </ul>
       {!current && <p className="workspace-file-search-status" role="status">{t("Loading…")}</p>}
       {current?.error && <p className="workspace-file-search-error" role="alert">{t("Could not load files")}</p>}

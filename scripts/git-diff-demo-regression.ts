@@ -116,6 +116,12 @@ try {
         if (markdown && parsed.pathname.endsWith("/fs/file")) return new Response(markdownBody(markdown), { headers: { "content-type": "text/markdown" } });
       }
       const response = await demoFetch(input, init);
+      if (window.gitManySearchResults && parsed.pathname.endsWith("/workspace/files") && response.ok) {
+        const data = await response.json();
+        data.files = Array.from({ length: 12 }, (_, i) => "src/nested/long-search-result-path-" + String(i).padStart(2, "0") + ".ts");
+        data.truncated = false;
+        return Response.json(data);
+      }
       if (parsed.pathname === "/api/voice" && response.ok) {
         const data = await response.json(); data.configured = !!window.gitVoiceConfigured; return Response.json(data);
       }
@@ -434,13 +440,20 @@ try {
           await sourceLine.waitFor();
           const before = await detail.evaluate((node) => node.scrollTop);
           await sourceLine.waitFor();
-          const sourceBefore = await sourceLine.evaluate((node) => node.getBoundingClientRect().y) - await detail.evaluate((node) => node.getBoundingClientRect().y);
+          // Read both rectangles atomically: focusing a phone editor can hide
+          // its tools between separate browser calls and skew the subtraction.
+          const sourceOffset = () => sourceLine.evaluate((node) => {
+            const tree = node.getRootNode();
+            const host = tree instanceof ShadowRoot ? tree.host : node;
+            return node.getBoundingClientRect().y - host.closest(".changes-detail")!.getBoundingClientRect().y;
+          });
+          const sourceBefore = await sourceOffset();
           await sourceLine.click();
           await field(scrolling).waitFor();
           await frames(page);
           assert.ok(Math.abs(await detail.evaluate((node) => node.scrollTop) - before) <= 1, `${name}: opening an old-side comment does not scroll the document`);
-          const sourceAfter = await sourceLine.evaluate((node) => node.getBoundingClientRect().y) - await detail.evaluate((node) => node.getBoundingClientRect().y);
-          assert.ok(Math.abs(sourceAfter - sourceBefore) <= 1, `${name}: the selected source line stays in place inside the diff viewport`);
+          const sourceAfter = await sourceOffset();
+          assert.ok(Math.abs(sourceAfter - sourceBefore) <= 1, `${name}: the selected source line stays in place inside the diff viewport (${sourceBefore} → ${sourceAfter})`);
           assert.equal(await section(scrolling).locator('[data-code] [data-column-number="120"]').count(), 0, "opening a comment does not expand unrelated context");
           assert.equal(await field(scrolling).evaluate((node) => node === document.activeElement), true, "the editor receives focus without scrolling");
           // Scrolling to an offscreen editor is the reader's choice. Typing in
@@ -504,6 +517,38 @@ try {
         await openPaneChanges();
         const quick = page.getByRole("dialog", { name: "Files", exact: true });
         const finder = quick.getByRole("combobox", { name: "Find files…", exact: true });
+        await quick.locator(".modal-header").getByRole("group", { name: "Diff layout", exact: true }).waitFor();
+        const layout = quick.locator(".changes-layout");
+        await finder.focus();
+        await page.waitForFunction(() => document.querySelector(".files-dialog")?.getAnimations().every((animation) => animation.playState !== "running"));
+        await frames(page);
+        const layoutBefore = await layout.boundingBox();
+        assert.ok(layoutBefore);
+        await page.evaluate(() => { (window as any).gitManySearchResults = true; });
+        await finder.fill("search-result");
+        const searchList = quick.getByRole("listbox", { name: "Find files…", exact: true });
+        await searchList.getByRole("option").nth(11).waitFor({ state: "attached" });
+        assert.equal(await quick.locator(".workspace-file-search-results").evaluate((node) => getComputedStyle(node).position), "absolute", "search results float over the content below");
+        const layoutOpen = await layout.boundingBox();
+        assert.ok(layoutOpen && Math.abs(layoutOpen.y - layoutBefore.y) <= 1 && Math.abs(layoutOpen.height - layoutBefore.height) <= 1, "opening search results does not move or shrink the browser content");
+        const rows = await searchList.evaluate((node) => ({ height: node.clientHeight, scrollHeight: node.scrollHeight, rows: [...node.children].map((row) => row.getBoundingClientRect().height) }));
+        assert.equal(rows.rows.length, 12, "remaining results are retained, not truncated to five");
+        assert.ok(rows.rows.every((height) => Math.abs(height - rows.rows[0]!) <= 1), "long paths retain one fixed-height row");
+        assert.ok(Math.abs(rows.height - rows.rows[0]! * 5) <= 1, "the list displays five rows at a time");
+        assert.ok(rows.scrollHeight > rows.height, "the rest of the results are scrollable");
+        const pageTop = await page.evaluate(() => window.scrollY);
+        for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowDown");
+        await frames(page);
+        assert.equal(await searchList.getByRole("option").nth(5).getAttribute("aria-selected"), "true");
+        assert.ok(await searchList.evaluate((node) => node.scrollTop) > 0, "keyboard navigation scrolls to the sixth result");
+        assert.equal(await page.evaluate(() => window.scrollY), pageTop, "result navigation never scrolls the page");
+        const layoutScrolled = await layout.boundingBox();
+        assert.ok(layoutScrolled && Math.abs(layoutScrolled.y - layoutBefore.y) <= 1, "result navigation leaves the browser content in place");
+        await page.keyboard.press("Escape");
+        await searchList.waitFor({ state: "detached" });
+        const layoutClosed = await layout.boundingBox();
+        assert.ok(layoutClosed && Math.abs(layoutClosed.y - layoutBefore.y) <= 1 && Math.abs(layoutClosed.height - layoutBefore.height) <= 1, "closing the result overlay does not shift the browser content");
+        await page.evaluate(() => { (window as any).gitManySearchResults = false; });
         await finder.fill("greeting");
         await quick.getByRole("option", { name: "src/greeting.ts", exact: true }).waitFor();
         await page.keyboard.press("Enter");

@@ -22,7 +22,11 @@
 }
 
 .workspace-file-search-results {
-  margin-top: var(--space-1);
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + var(--space-1));
+  z-index: var(--z-popover);
+  box-shadow: var(--shadow-pop);
   border: var(--hairline) solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-elevated);
@@ -33,7 +37,7 @@
   list-style: none;
   padding: 0;
   margin: 0;
-  max-height: min(35dvh, 20rem);
+  max-height: min(calc(var(--app-height, 100dvh) * 0.35), calc(5 * var(--touch-target)));
   overflow: auto;
   overscroll-behavior: contain;
 }
@@ -41,13 +45,21 @@
 .workspace-file-search-option {
   display: flex;
   align-items: center;
+  height: var(--touch-target);
   min-height: var(--touch-target);
   padding: var(--space-2) var(--space-3);
-  overflow-wrap: anywhere;
+  min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--text);
   cursor: pointer;
+}
+
+.workspace-file-search-option > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-file-search-option[aria-selected="true"] {

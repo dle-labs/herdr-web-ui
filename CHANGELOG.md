@@ -80,6 +80,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#860](https://github.com/devswha/herdr-web-ui/pull/860))
 
 ### Fixed
+- File search results float over the browser content instead of moving it down. The list shows up to five rows, with remaining results scrollable and keyboard navigation confined to the list.
 - Comment fields measure wrapping outside the source/diff layout and change their visible height only when needed, avoiding expensive per-character height resets while preserving growth and shrinking.
 - Opening a diff comment keeps the selected source line and viewport in place instead of expanding every unchanged region and scrolling to the editor. Explicit comment links still reveal their saved target.
 - Unsaved diff comments have an explicit Discard action in unified and split views. Deleting a saved comment also removes an update from another tab on the same target, without touching other sides or revisions.
