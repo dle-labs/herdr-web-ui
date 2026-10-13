@@ -17,33 +17,33 @@ import { useCommentPopover, type OpenComment } from "./useCommentPopover.ts";
 import { MicButton, VoiceRecordingPill } from "./VoiceInput.tsx";
 import "./DiffViewer.css";
 
-function DiffCommentEditor({ open, connected, text, onSave, onClose, onDelete }: {
+function DiffCommentEditor({ open, connected, text, onSave, onClose, onDelete, reveal = false }: {
   open: OpenComment<FileTarget>; connected: boolean; text: { read: () => string; write: (value: string) => void };
-  onSave: (text: string) => void; onClose: () => void; onDelete: () => void;
+  onSave: (text: string) => void; onClose: () => void; onDelete: () => void; reveal?: boolean;
 }) {
   const t = useT();
   const draft = useCommentDraft(open.initialComment, onSave, onClose, {
     owner: open.owner, connected, inline: true, fallback: () => null, startValue: text.read(), onText: text.write,
   });
   const showDictation = draft.dictation.shown;
-  // Annotation portals can mount before Pierre has laid out their slots. Reveal
-  // once only when the editor really occupies space, not on subsequent typing.
+  // Annotation children can mount before Pierre has laid out their slots. Focus
+  // without moving the document; only an explicit comment link requests reveal.
   useEffect(() => {
     const node = draft.surface.current;
     if (node === null) return;
     let revealed = false;
-    const observer = new ResizeObserver(() => reveal());
-    const reveal = () => {
+    const observer = new ResizeObserver(() => focusEditor());
+    const focusEditor = () => {
       if (revealed || node.getBoundingClientRect().height === 0) return;
       revealed = true;
       observer.disconnect();
-      node.scrollIntoView({ block: "nearest" });
+      if (reveal) node.scrollIntoView({ block: "nearest" });
       node.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
     };
     observer.observe(node);
-    const frame = requestAnimationFrame(reveal);
+    const frame = requestAnimationFrame(focusEditor);
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
-  }, [draft.surface]);
+  }, [draft.surface, reveal]);
   return <div ref={draft.surface} className="comment-popover diff-comment-editor" {...changedAttrs(draft.changed)} onKeyDown={draft.onKeyDown}>
     <div className="diff-comment-heading"><span>{open.target.label}:{linesText(open.target.lines)} · {open.target.diff?.side === "old" ? t("Old") : t("New")}</span>
       <button type="button" className="icon-button" aria-label={t("Close comment")} onClick={draft.leave}><X aria-hidden="true" /></button></div>
@@ -72,20 +72,23 @@ export function DiffOrphanComments({ owner, connected, root, mode, paths, initia
     && (onlyPaths === undefined || onlyPaths.includes(comment.diff.path)));
   const popover = useCommentPopover<FileTarget>({ enabled: settings.comments, persist: (owner, target, text) => { blockComments.saveFile(owner, target, text); } });
   const initialOpened = useRef<string>();
+  const [linkedCommentId, setLinkedCommentId] = useState<string | null>(null);
   useEffect(() => {
     if (initialId === undefined || initialOpened.current === initialId) return;
     const comment = comments.find((comment) => comment.id === initialId);
     if (comment === undefined) return;
     initialOpened.current = initialId;
     if (!popover.show(owner, { ...comment, anchor: comment.anchor }, comment)) focusOpenField(surface.current);
+    else setLinkedCommentId(comment.id);
   }, [initialId, comments, owner, popover.show]);
   if (comments.length === 0 && popover.open === null) return null;
   return <div ref={surface} className="diff-outdated changes-orphan-comments" data-comment-surface="">
     <h3>{t("Outdated comments")}</h3>
     {comments.map((comment) => <button type="button" className="diff-comment-card" key={comment.id} onClick={() => {
       if (!popover.show(owner, { ...comment, anchor: comment.anchor }, comment)) focusOpenField(surface.current);
+      else setLinkedCommentId(null);
     }}><span>{comment.label}:{linesText(comment.lines)} · {comment.diff?.side === "old" ? t("Old") : t("New")}</span><span>{comment.comment}</span></button>)}
-    {popover.open !== null && <DiffCommentEditor key={popover.open.id} open={popover.open} connected={connected} text={popover.text}
+    {popover.open !== null && <DiffCommentEditor key={popover.open.id} open={popover.open} connected={connected} text={popover.text} reveal={linkedCommentId !== null && linkedCommentId === popover.open.commentId}
       onSave={popover.save} onClose={popover.close} onDelete={popover.remove} />}
   </div>;
 }
@@ -161,6 +164,8 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
   const shown = comments.filter((comment) => comment.diff?.revision === file.revision);
   const outdated = comments.filter((comment) => comment.diff?.revision !== file.revision);
   const metadata = useMemo(() => diffMetadata(file, mode), [file, mode]);
+  const [linkedCommentId, setLinkedCommentId] = useState<string | null>(null);
+  const [expandLinkedContext, setExpandLinkedContext] = useState(false);
   const initialOpened = useRef<string>();
   useEffect(() => {
     if (initialId === undefined || initialOpened.current === initialId) return;
@@ -168,7 +173,11 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
     if (comment === undefined) return;
     initialOpened.current = initialId;
     if (!popover.show(owner, { ...comment, anchor: comment.anchor }, comment)) focusOpenField(surface.current);
-  }, [initialId, comments, owner, popover.show]);
+    else {
+      setLinkedCommentId(comment.id);
+      if (comment.diff?.revision === file.revision) setExpandLinkedContext(true);
+    }
+  }, [initialId, comments, owner, popover.show, file.revision]);
   const annotations: DiffLineAnnotation<Annotation>[] = shown.map((comment) => ({
     side: comment.diff?.side === "old" ? "deletions" : "additions", lineNumber: comment.lines[1], metadata: { comment },
   }));
@@ -179,6 +188,7 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
   });
   function edit(comment: FileComment): void {
     if (!popover.show(owner, { ...comment, anchor: comment.anchor }, comment)) focusOpenField(surface.current);
+    else setLinkedCommentId(null);
   }
   function add(range: SelectedLineRange, toggle = false): void {
     if (!settings.comments) return;
@@ -192,7 +202,7 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
       return;
     }
     if (!popover.show(owner, target, fileCommentAt(comments, target) ?? null, !toggle)) focusOpenField(surface.current);
-    else setSelected(range);
+    else { setLinkedCommentId(null); setSelected(range); }
   }
   // Pierre compares option callback identities before rendering. A new handler
   // on parent hover updates would rebuild its gutter and lose the active button.
@@ -203,7 +213,7 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
     pointerLine.current = { lineNumber: line.lineNumber, side: line.annotationSide };
   });
   const editor = popover.open === null ? null : <DiffCommentEditor key={popover.open.id} open={popover.open} connected={connected}
-    text={popover.text}
+    text={popover.text} reveal={linkedCommentId !== null && linkedCommentId === popover.open.commentId}
     onSave={(text) => { popover.save(text); setSelected(null); }}
     onClose={() => { popover.close(); setSelected(null); }}
     onDelete={() => { popover.remove(); setSelected(null); }} />;
@@ -218,9 +228,10 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
         plain-text threshold change. The draft text lives outside this subtree. */}
     {metadata !== null && <FileDiff key={String(settings.highlightCode)} fileDiff={metadata} lineAnnotations={annotations} selectedLines={selected} options={{
       diffStyle: split ? "split" : "unified", theme: PIERRE_THEME, themeType: resolvedTheme,
-      // A saved comment reached by deep link can lie in collapsed context.
-      // Keep it expanded for the lifetime of the editor.
-      expandUnchanged: popover.open !== null && popover.open.target.diff?.revision === file.revision,
+      // Explicit links can target collapsed context. Once revealed, keep that
+      // context open for this document; ordinary comment edits never expand or
+      // collapse the file underneath the selected source line.
+      expandUnchanged: expandLinkedContext,
       overflow: settings.wrapCode ? "wrap" : "scroll", disableFileHeader: true, diffIndicators: "classic", enableLineSelection: settings.comments,
       // Pierre's zero threshold takes its plain-text rendering path (including
       // async highlights), rather than tokenizing and merely hiding the colors.

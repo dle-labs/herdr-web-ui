@@ -80,6 +80,7 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#860](https://github.com/devswha/herdr-web-ui/pull/860))
 
 ### Fixed
+- Opening a diff comment keeps the selected source line and viewport in place instead of expanding every unchanged region and scrolling to the editor. Explicit comment links still reveal their saved target.
 - Unsaved diff comments have an explicit Discard action in unified and split views. Deleting a saved comment also removes an update from another tab on the same target, without touching other sides or revisions.
 - Changed files mark every ancestor folder, including collapsed folders, with color and an accessible indicator.
 - File browsers keep their opening pane and unsaved comments through pane selection and refused Back navigation. Comment links are consumed once and open the requested diff comment, including renamed paths and unavailable-diff fallbacks.

@@ -146,6 +146,20 @@ try {
         }
         if (window.gitNested && url.includes("/workspace/changes")) data.files.push({ path: "deep/inside/nested/changed.ts", status: "modified" });
         if (window.gitRevision) data.revision += "-follow-" + window.gitRevision;
+        if (window.gitLongContext) {
+          data.revision += "-long-context";
+          if (data.path === "src/greeting.ts") {
+            const oldLines = Array.from({ length: 240 }, (_, i) => "export const context" + (i + 1) + " = " + i + ";");
+            const newLines = oldLines.slice();
+            for (const line of [70, 180]) newLines[line - 1] = "export const context" + line + " = updated;";
+            data.old_file.contents = oldLines.join("\\n") + "\\n";
+            data.new_file.contents = newLines.join("\\n") + "\\n";
+            data.patch = "diff --git a/src/greeting.ts b/src/greeting.ts\\n--- a/src/greeting.ts\\n+++ b/src/greeting.ts\\n" + [70, 180].map(line => {
+              const start = line - 23, end = line + 23;
+              return "@@ -" + start + ",47 +" + start + ",47 @@\\n" + oldLines.slice(start - 1, end).map((text, i) => start + i === line ? "-" + text + "\\n+" + newLines[line - 1] : " " + text).join("\\n") + "\\n";
+            }).join("");
+          }
+        }
         if (url.includes("/workspace/changes") && window.gitEmpty) data.files = [];
         if (data.path === "src/new.ts") {
           data.new_file.contents = Array.from({ length: 90 }, (_, i) => "export const line" + i + " = " + (i + (window.gitRevision || 0)) + ";").join("\\n") + "\\n";
@@ -403,6 +417,47 @@ try {
           assert.match(sent, /Review the new greeting/); assert.match(sent, /Explain the old greeting/);
           console.log("PASS Git Changes: continuous scroll, embedded preview, Settings controls, refresh, gutter toggle, mouse range, dirty guards and composer send");
         }
+        await page.evaluate(() => { (window as any).gitLongContext = true; });
+        const scrolling = await openChanges(page);
+        await treeFile(scrolling, "src").click();
+        await treeFile(scrolling, "src/greeting.ts").click();
+        for (const name of mobile ? ["Unified"] : ["Split", "Unified"]) {
+          await scrolling.locator(".modal-header").getByRole("group", { name: "Diff layout", exact: true }).getByRole("button", { name, exact: true }).click();
+          await section(scrolling).locator(`[data-diff-type="${name === "Split" ? "split" : "single"}"]`).waitFor();
+          const sourceLine = number(section(scrolling), "old", 180);
+          await sourceLine.waitFor();
+          const detail = scrolling.locator(".changes-detail");
+          const lineBounds = await sourceLine.boundingBox();
+          assert.ok(lineBounds);
+          await detail.evaluate((node, top) => { node.scrollTop += top - node.getBoundingClientRect().top - node.clientHeight + 48; }, lineBounds.y);
+          await frames(page);
+          await sourceLine.waitFor();
+          const before = await detail.evaluate((node) => node.scrollTop);
+          await sourceLine.waitFor();
+          const sourceBefore = await sourceLine.evaluate((node) => node.getBoundingClientRect().y) - await detail.evaluate((node) => node.getBoundingClientRect().y);
+          await sourceLine.click();
+          await field(scrolling).waitFor();
+          await frames(page);
+          assert.ok(Math.abs(await detail.evaluate((node) => node.scrollTop) - before) <= 1, `${name}: opening an old-side comment does not scroll the document`);
+          const sourceAfter = await sourceLine.evaluate((node) => node.getBoundingClientRect().y) - await detail.evaluate((node) => node.getBoundingClientRect().y);
+          assert.ok(Math.abs(sourceAfter - sourceBefore) <= 1, `${name}: the selected source line stays in place inside the diff viewport`);
+          assert.equal(await section(scrolling).locator('[data-code] [data-column-number="120"]').count(), 0, "opening a comment does not expand unrelated context");
+          assert.equal(await field(scrolling).evaluate((node) => node === document.activeElement), true, "the editor receives focus without scrolling");
+          // Scrolling to an offscreen editor is the reader's choice. Typing in
+          // that now-visible editor must not trigger another application reveal.
+          await field(scrolling).scrollIntoViewIfNeeded();
+          await frames(page);
+          const typingTop = await detail.evaluate((node) => node.scrollTop);
+          await page.keyboard.type("Keep reading here");
+          await frames(page);
+          assert.ok(Math.abs(await detail.evaluate((node) => node.scrollTop) - typingTop) <= 1, "typing in the visible editor does not scroll the diff");
+          await scrolling.getByRole("button", { name: "Discard comment", exact: true }).click();
+          await field(scrolling).waitFor({ state: "detached" });
+        }
+        await scrolling.getByRole("button", { name: "Close files", exact: true }).click();
+        await page.evaluate(() => { (window as any).gitLongContext = false; });
+        console.log(`PASS Diff comments: ${mobile ? "phone" : "desktop"} old-side opening and typing preserve the viewport and collapsed context`);
+
         // An empty repository uses the same response contract, mocked only in this page.
         await page.evaluate(() => { (window as any).gitEmpty = true; });
         const empty = await openChanges(page);

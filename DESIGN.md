@@ -224,8 +224,11 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   releasing a dragged line range opens the same editor. Configured dictation inserts text without
   sending. Comments use the shared comment field and save/delete behavior. Saved cards always name the file, line range and side. Changed comparison
   revisions move cards into Outdated comments, never onto unrelated source lines.
-- Comment links reveal and open the requested current or outdated editor, including old-side
-  rename paths. A failed diff keeps its saved comments editable in the fallback section.
+- Opening an inline diff comment keeps the viewport and collapsed context unchanged, on either
+  side and in either layout. Comment links explicitly reveal and open the requested current or
+  outdated editor, including old-side rename paths; context expanded for a link stays open for
+  that document rather than collapsing underneath the reader when its editor closes.
+  A failed diff keeps its saved comments editable in the fallback section.
 - Saving adds a pending chat comment; it neither changes source files nor sends a message.
   A new diff comment has an explicit **Discard comment** trash action, which closes its draft
   without touching saved comments. Saved comments use **Delete comment**, including when another
