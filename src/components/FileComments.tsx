@@ -333,12 +333,27 @@ export function useFileCommentWalk({ owner, connected, view, comments, surface, 
       clearCurrent();
     };
     document.addEventListener("click", onClick, true);
+    // Highlighting can replace a pin or reset its class. Restore only a marker
+    // still owned by the walk; a real click clears current before this runs.
+    const watching = new MutationObserver(() => {
+      const note = current.current;
+      const body = surface.current;
+      const id = note?.dataset.commentId;
+      if (note === null || body === null || !id) return;
+      const pin = pinById(body, id);
+      if (pin === null || pin === note && pin.classList.contains("is-current")) return;
+      pin.classList.add("is-current");
+      current.current = pin;
+      markCurrentComment(body, pin);
+    });
+    if (surface.current) watching.observe(surface.current, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
     return () => {
+      watching.disconnect();
       document.removeEventListener("click", onClick, true);
       window.cancelAnimationFrame(frame.current);
       clearCurrent();
     };
-  }, [clearCurrent]);
+  }, [clearCurrent, surface]);
 
   /**
    * Stands on the pin of comment `id` once it is drawn in the view shown: its lines unfolded first (`unfoldAt`), then

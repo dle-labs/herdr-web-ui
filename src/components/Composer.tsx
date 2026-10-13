@@ -14,7 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, MessageSquare, Plus, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, FileText, FolderOpen, MessageSquare, Plus, Square, TriangleAlert, X } from "lucide-react";
 
 import "./Composer.css";
 
@@ -56,6 +56,7 @@ import { changedField, inUnchangedPopover, revealField, savedPins } from "../lib
 import { popoverOutlived } from "../lib/commentPopover.ts";
 import { lastFileStop } from "../lib/commentWalk.ts";
 import { FileCommentNavContext } from "../lib/fileCommentNav.ts";
+import { WorkspaceFilesContext } from "../lib/workspaceFiles.ts";
 import { sortFileComments, type FileComment } from "../lib/fileComments.ts";
 import { CommentPopover } from "./CommentPopover.tsx";
 
@@ -254,6 +255,7 @@ export function Composer({
   const activeRef = useRef(active);
   activeRef.current = active;
   const machineId = useMachineId();
+  const openFiles = useContext(WorkspaceFilesContext);
   const { fetchPaneCommands, fetchPaneFiles } = useMachineApi();
   const { settings } = useSettings();
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
@@ -1321,6 +1323,19 @@ export function Composer({
             <Plus aria-hidden="true" />
           </button>
           {dictation.shown && <MicButton dictation={dictation} />}
+          {openFiles && <button
+            type="button"
+            className="icon-button composer-browse"
+            aria-label={t("Browse files")}
+            title={t("Browse files")}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              openFiles(paneId);
+            }}
+          >
+            <FolderOpen aria-hidden="true" />
+          </button>}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} plan={plan} />
         </div>
         {/* between the two control groups of the card's last row. The agent's name, its separator and the

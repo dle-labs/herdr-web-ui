@@ -46,7 +46,11 @@ export function FilesDialog({ start, paneId, connected, initialIntent = "browse"
     revealField(field);
     return false;
   };
-  const close = (): void => { if (leave()) onClose(); };
+  const close = (): boolean => {
+    if (!leave()) return false;
+    onClose();
+    return true;
+  };
   useSheetSwipe(surface, keyboardActive ? close : null);
   // A file link already owns useFileViewer's history entry; ordinary browsing owns a sheet entry.
   usePhoneSheetBack(close, keyboardActive && initialPath === null);

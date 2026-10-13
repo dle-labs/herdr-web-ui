@@ -20,22 +20,43 @@ function previewFromState(state: unknown): FilePreview | null {
 }
 
 /** Android Back traverses history: a preview must be an entry above the chat, not just a modal. */
-export function useFileViewer() {
+export function useFileViewer(canLeave: () => boolean = () => true) {
   const [viewing, setViewing] = useState(() => previewFromState(window.history.state));
   const closing = useRef(false);
+  const current = useRef(viewing);
+  current.current = viewing;
+  const leave = useRef(canLeave);
+  leave.current = canLeave;
+  const entry = useRef({ state: window.history.state, url: window.location.href });
+  useEffect(() => {
+    // App writes its deep-link URL in an effect too: capture after those effects.
+    let live = true;
+    queueMicrotask(() => { if (live && current.current) entry.current = { state: window.history.state, url: window.location.href }; });
+    return () => { live = false; };
+  });
 
   useEffect(() => {
     const onPop = (event: PopStateEvent): void => {
       closing.current = false;
+      const next = previewFromState(event.state);
+      const previous = current.current;
+      const replacing = previous !== null && (next?.path !== previous.path || next?.paneId !== previous.paneId || next?.machineId !== previous.machineId || next?.comment !== previous.comment);
+      if (replacing && !leave.current()) {
+        // Keep the document and its draft mounted; restore a Back entry before
+        // App's selection/deep-link listeners can act on the refused destination.
+        window.history.pushState({ ...entry.current.state, [HISTORY_KEY]: previous }, "", entry.current.url);
+        event.stopImmediatePropagation();
+        return;
+      }
       // Forward restores the preview with its original PC/pane, including after reload.
-      setViewing(previewFromState(event.state));
+      setViewing(next);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   const openFile = useCallback((preview: FilePreview) => {
-    if (closing.current) return;
+    if (closing.current || !leave.current()) return;
     const state = { ...window.history.state, [HISTORY_KEY]: preview };
     // Choosing a different file inside an open preview must not add another Back step.
     if (previewFromState(window.history.state)) window.history.replaceState(state, "");
@@ -44,7 +65,7 @@ export function useFileViewer() {
   }, []);
 
   const closeFile = useCallback(() => {
-    if (closing.current) return;
+    if (closing.current || !leave.current()) return;
     if (previewFromState(window.history.state)) {
       closing.current = true;
       // X, Escape and scrim clicks consume the same entry as the system Back button.

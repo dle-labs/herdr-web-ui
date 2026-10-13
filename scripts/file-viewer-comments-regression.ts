@@ -510,6 +510,51 @@ const wordPoint = (element: Locator, word: string): Promise<{ x: number; y: numb
 }, word);
 
 const cases: Record<string, Case> = {
+  async "comment-once"(open) {
+    const note = "Only open this comment on its original file";
+    const { page, errors, close } = await open(DESKTOP, [seededComment("initial-sync", join(root, "src", "sync.ts"), "sync.ts", "code", SYNC_LINES, 8, 8, note, 1)]);
+    try {
+      await walkOf(page).click();
+      const viewer = page.getByRole("dialog", { name: "Files", exact: true });
+      await eventually("the requested source comment to open", async () => await popoverText(page) === note);
+      await page.keyboard.press("Escape");
+      await popoverOf(page).waitFor({ state: "detached" });
+      await viewer.locator('.workspace-tree-row[title="docs"]').click();
+      await viewer.locator('.workspace-tree-row[title="docs/spec.md"]').click();
+      await previewLine(viewer, FOLD_HEAD_LAST).waitFor();
+      await frames(page);
+      assert.equal(await popoverOf(page).count(), 0, "changing files does not replay the initial comment as an outdated editor");
+      assert.deepEqual(errors, []);
+    } finally { await close(); }
+  },
+  async "back-draft"(open) {
+    for (const touch of [false, true]) {
+      const { page, errors, close } = await open(touch ? PHONE : DESKTOP);
+      try {
+        const viewer = await openSync(page, touch);
+        await lineOf(viewer, 8).click();
+        await fieldOf(page).fill("Keep this unsaved comment through Back");
+        const field = await fieldOf(page).elementHandle();
+        const entry = await page.evaluate(() => history.state["herdr-web-ui:file-preview"]);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const before = await page.evaluate(() => { const count = (window as any).fileBackCount; history.back(); return count; });
+          await page.waitForFunction((count) => (window as any).fileBackCount > count, before);
+          await eventually("Back to restore the guarded file entry", () => page.evaluate((expected) => JSON.stringify(history.state?.["herdr-web-ui:file-preview"]) === JSON.stringify(expected), entry));
+          await frames(page);
+          assert.ok(await viewer.isVisible());
+          assert.equal(await fieldOf(page).inputValue(), "Keep this unsaved comment through Back");
+          assert.ok(await fieldOf(page).evaluate((node, original) => node === original, field), "Back never remounts the draft");
+        }
+        await fieldOf(page).fill("");
+        await page.keyboard.press("Escape");
+        await popoverOf(page).waitFor({ state: "detached" });
+        await page.evaluate(() => history.back());
+        await viewer.waitFor({ state: "detached" });
+        assert.deepEqual(errors, []);
+      } finally { await close(); }
+    }
+    console.log("PASS back-draft: repeated desktop/phone Back preserves the same unsaved editor, then closes once cleared");
+  },
   /** The chat's comment flow: the pins, the popover and the highlights it shares with the viewer. */
   async chat(open) {
     const { page, errors, close } = await open(DESKTOP);
@@ -1464,6 +1509,12 @@ const cases: Record<string, Case> = {
     await eventually("the viewer to open the comment on line 8", () => openedInViewer(sync, line8, "Compare with <=."))
       .catch(async (error: Error) => { throw new Error(`${error.message}: ${JSON.stringify(await page.evaluate(() => ({ fields: [...document.querySelectorAll<HTMLTextAreaElement>(".comment-popover textarea")].map((node) => node.value), pins: [...document.querySelectorAll(".file-viewer .comment-pin")].map((node) => ({ id: (node as HTMLElement).dataset.commentId, current: node.classList.contains("is-current") })), dialogs: document.querySelectorAll(".modal.comment-popover").length })))}`); });
     await assertPinAtLineEnd(sync.locator(".file-viewer-body"), `.comment-pin[data-comment-id="${line8}"]`, '.hl-line[data-source-line="8"]', "line 8's comment");
+    const walkedPin = sync.locator(`.comment-pin[data-comment-id="${line8}"]`);
+    await walkedPin.evaluate((pin) => pin.classList.remove("is-current"));
+    await eventually("the walk marker to survive a pin redraw", () => walkedPin.evaluate((pin) => pin.classList.contains("is-current")));
+    await sync.locator(".file-viewer-meta").click();
+    await frames(page);
+    assert.equal(await walkedPin.evaluate((pin) => pin.classList.contains("is-current")), false, "real clicks clear the marker without observation restoring it");
     await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await sync.waitFor({ state: "detached" });
     console.log("PASS composer: tap 3 opens src/sync.ts in the code view at its comment on line 8");
@@ -1628,6 +1679,8 @@ try {
     const page = await context.newPage();
     activePage = page;
     await page.addInitScript((id) => {
+      (window as any).fileBackCount = 0;
+      window.addEventListener("popstate", () => { (window as any).fileBackCount++; }, { capture: true });
       localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
       localStorage.setItem(`herdr-web-ui:view:${id.pane}`, "chat");
       // No browser-vendor capture in this non-recording fixture; the comment mic explains its unavailable state.

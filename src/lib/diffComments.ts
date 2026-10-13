@@ -19,6 +19,6 @@ export function diffCommentTarget(file: GitFileDiffResponse, mode: GitDiffMode, 
   const source = lines.slice(first - 1, last);
   return {
     path: `${file.root.replace(/[\\/]$/, "")}/${path}`, label: path, view: "code", lines: [first, last], source, quoteLines: source,
-    diff: { side: side === "deletions" ? "old" : "new", mode, revision: file.revision, repository: file.root, path },
+    diff: { side: side === "deletions" ? "old" : "new", mode, revision: file.revision, ...(file.base_commit ? { base_commit: file.base_commit } : {}), repository: file.root, path },
   };
 }

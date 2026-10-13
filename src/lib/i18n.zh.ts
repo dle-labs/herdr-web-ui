@@ -10,6 +10,15 @@
  * Placeholders in braces keep their English names.
  */
 export const ZH: Record<string, string> = {
+  "Find files…": "查找文件…",
+  "Search commits…": "搜索提交…",
+  "Working changes": "工作区更改",
+  "Could not load files": "无法加载文件",
+  "Could not load commits": "无法加载提交",
+  "More results available. Refine your search.": "还有更多结果，请缩小搜索范围。",
+  "Compare with…": "比较对象…",
+  "Working tree": "工作树",
+  "All files": "所有文件",
   "PageUp / PageDown scroll chat": "PageUp / PageDown 滚动聊天",
   "Scroll the conversation even while typing. In the terminal, plain page keys stay with the running program.": "输入时也可滚动对话。在终端中，普通翻页键仍由正在运行的程序处理。",
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravity 聊天暂不可用。请打开终端查看运行状态和工具调用。",
@@ -1033,6 +1042,8 @@ export const ZH: Record<string, string> = {
   "Couldn't read the plan. Trying again…": "无法读取计划，正在重试…",
   "Only part of this file is shown. Download it to read the rest.": "仅显示文件的一部分。请下载文件以阅读其余内容。",
   "Add comment": "添加评论",
+  "Comment side": "评论侧",
+  "Comment line": "评论行",
   "Back to files": "返回文件列表",
   "Binary files cannot be displayed as a text diff.": "二进制文件无法显示为文本差异。",
   "Changed files": "已更改的文件",

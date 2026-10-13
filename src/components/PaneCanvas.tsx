@@ -1,5 +1,5 @@
-import { useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from "react";
-import { Columns2, Ellipsis, Eraser, Maximize2, MousePointer2, Pencil, Rows2, ArrowLeftRight, GitCompareArrows, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent, type MutableRefObject, type PointerEvent, type ReactNode } from "react";
+import { Columns2, Ellipsis, Eraser, Maximize2, MousePointer2, Pencil, Rows2, ArrowLeftRight, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { HerdrPane, PaneLayoutSnapshot, SessionSnapshot } from "../../shared/protocol.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
@@ -10,7 +10,6 @@ import { ApiError, routeMissing } from "../lib/api.ts";
 import { layoutCells, zoomMode } from "../lib/layoutMap.ts";
 import { layoutTopology, paneContextPress, SOLO_PANE_QUERY, soloPane, splitPath, splitRatioAt } from "../lib/paneCanvas.ts";
 import { useT } from "../lib/i18n.ts";
-import { WorkspaceFilesContext } from "../lib/workspaceFiles.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
@@ -59,7 +58,6 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
   const coarse = useMediaQuery("(pointer: coarse)");
   const narrow = useMediaQuery(SOLO_PANE_QUERY);
   const api = useMachineApi();
-  const openChanges = useContext(WorkspaceFilesContext);
   const canvas = useRef<HTMLDivElement>(null);
   // Survives workspace/tab switches, but the PC-keyed canvas owns this memory exclusively.
   const awayReleased = useRef(false);
@@ -159,7 +157,6 @@ export function PaneCanvas({ snapshot, pane, selectedPaneId, onSelect, onChanged
     ...(target.label ? [{ id: "clear-name", label: t("Clear pane name"), icon: Eraser, run: () => run(() => api.renamePane(target.pane_id, "")) }] : []),
     ...(pane && target.pane_id !== pane.pane_id ? [{ id: "swap-focused", label: t("Swap with focused pane"), icon: ArrowLeftRight,
       run: () => run(() => api.swapPaneWith(pane.pane_id, target.pane_id)) }] : []),
-    ...(openChanges ? [{ id: "changes", label: t("Changed files"), icon: GitCompareArrows, run: () => openChanges(target.pane_id) }] : []),
     { id: "split-right", label: t("Split right"), icon: Columns2, run: () => run(() => split(target, "right")) },
     { id: "split-down", label: t("Split down"), icon: Rows2, run: () => run(() => split(target, "down")) },
     { id: "zoom", label: t(layout && zoomMode(layout, target.pane_id) === "off" ? "Unzoom pane" : "Zoom pane"), icon: Maximize2,

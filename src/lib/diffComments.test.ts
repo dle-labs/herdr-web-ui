@@ -14,6 +14,10 @@ describe("diffCommentTarget", () => {
       diff: { repository: "/repo", revision: "snapshot-1", mode: "unstaged", side: "new", path: "src/new.ts" },
     });
   });
+  test("historical comments retain their exact base for reopening", () => {
+    const base = "a".repeat(40);
+    expect(diffCommentTarget({ ...file, base_commit: base }, "all", { start: 1, end: 1 })?.diff?.base_commit).toBe(base);
+  });
   test("deleted lines use the previous filename and side", () => {
     const target = diffCommentTarget(file, "staged", { start: 2, end: 2, side: "deletions" });
     expect(target?.path).toBe("/repo/src/old.ts");

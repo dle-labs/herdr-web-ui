@@ -184,30 +184,46 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
 
 ### Git Changes view
 
-- Browse files opens a full-viewport workspace viewer directly, with a file tree beside the
-  document. Changed paths open their Git diff, except Markdown opened through ordinary browsing
+- Browse files opens a bounded workspace dialog (a full-width phone sheet), with a file tree
+  beside an initially empty document area. No first diff is selected or loaded automatically. Changed paths open their Git diff, except Markdown opened through ordinary browsing
   or a file link: even a new or staged Markdown file opens its rendered preview. The
-  pane-menu Changed files action and diff-comment links keep Markdown in Diff. A changed Markdown document
+  explicit comparisons and diff-comment links keep Markdown in Diff. A changed Markdown document
   offers **Preview | Diff** above the tree/document; deleted and binary paths offer no preview.
   Switching keeps saved comments and is refused while a comment field is dirty. Unchanged paths
-  open the existing file preview in the same surface. Diffs form one continuous scroll region, with the tree selection following
-  the viewed file. On narrow screens the tree and document are separate steps.
+  open the existing file preview in the same surface. All-file comparisons form one continuous
+  scroll region; layout-driven scrolling never changes the selected file. On narrow screens the tree and document are separate steps.
   **Close file** closes only the embedded document, clears its selection and returns focus to
   navigation; the browser, expanded folders, saved comments and history entry stay open. The
   desktop detail says **Select a file to view.** until another file is selected; refresh does not
   reopen the closed document. **Close files**, Escape without an open comment, the scrim and
-  system Back dismiss the whole browser. Both close buttons protect dirty comment drafts.
-- **Changed files** lives in the pane's right-click menu beside its split actions (and in the
-  phone's tab actions), targeting that pane rather than the focused pane. The composer has no
-  changes button or background inventory polling. Follow edits is opt-in, refreshes only while visible and connected, and preserves
-  dirty comment drafts. Wrap and highlight controls share the file viewer's settings.
+  system Back dismiss the whole browser. Close buttons and repeated browser/system Back protect
+  dirty comment drafts. A browser retains the machine, pane and folder it opened on even when
+  pane selection changes. Initial file-comment navigation is consumed when selecting another file.
+- **Browse files** is a quick action beside the composer's microphone, or beside `+` when
+  dictation is unavailable. It targets that composer's pane/PC without background polling;
+  pane and tab menus do not contain Changed files. Wrap and highlight controls live in Settings.
+- **Find files…** searches filenames/paths across the repository (tracked and untracked,
+  nonignored), or through a bounded directory walk outside Git. Arrow keys and Enter choose a
+  result; Mod+P focuses this finder only while focus is inside Files, never in a terminal.
+  Requests are debounced, stale responses ignored, and incomplete results are explicitly marked.
+- **Compare with…** opens a searchable commit combobox. The toolbar compares all files; a file's
+  right-click/Shift+F10 menu compares just that file. Choosing a commit compares its contents with
+  the current working tree; **Working changes** restores the HEAD baseline. The chosen hash is
+  visible and is preserved in saved comment coordinates. Comparisons are read-only and keep
+  dirty drafts until saved or cleared. Deleted, renamed and binary paths retain their semantics.
 - Pierre's shadow-root variables map to existing surfaces, text, fonts and focus tokens. Added
   lines use `--status-done`, deleted lines `--status-blocked`, and renamed paths `--notice`;
-  Git letters and +/- indicators convey the same meaning without color. Tree icons use Lucide.
+  Git letters and +/- indicators convey the same meaning without color. Every ancestor folder
+  of a changed file uses `--notice` for its label/icon and a visible, accessibly named `*` marker,
+  even when collapsed; mixed descendant statuses use one deterministic contains-changes state.
+  Ignored folders remain muted. Tree icons use Lucide.
 - The gutter plus toggles a plain-text comment in the flow below the selected old/new line;
   releasing a dragged line range opens the same editor. Configured dictation inserts text without
   sending. Comments use the shared comment field and save/delete behavior. Saved cards always name the file, line range and side. Changed comparison
   revisions move cards into Outdated comments, never onto unrelated source lines.
+- Comment links reveal and open the requested current or outdated editor, including old-side
+  rename paths. A failed diff keeps its saved comments editable in the fallback section.
+  Keyboard users can select a diff side and line and add a comment without hovering a gutter.
 - Saving adds a pending chat comment; it neither changes source files nor sends a message.
   Dirty fields block close, comparison switches and refresh until saved or explicitly cleared.
 

@@ -1,0 +1,79 @@
+.commit-picker {
+  min-width: 0;
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.commit-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.commit-picker-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.commit-picker-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.commit-picker-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  max-height: min(40dvh, 24rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.commit-picker-option {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--touch-target);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.commit-picker-option[aria-selected="true"] {
+  background: var(--accent-tint);
+  color: var(--text-strong);
+}
+
+.commit-picker-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.commit-picker-meta code {
+  font-family: var(--font-mono);
+}
+
+.commit-picker-status,
+.commit-picker-error {
+  margin: var(--space-2) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.commit-picker-error {
+  color: var(--danger-text);
+}

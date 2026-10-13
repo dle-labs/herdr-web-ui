@@ -25,6 +25,8 @@ export interface DiffCommentTarget {
   side: "old" | "new";
   mode: "all" | "unstaged" | "staged";
   revision: string;
+  /** The historical base, when this is not the default HEAD comparison. */
+  base_commit?: string;
   repository: string;
   path: string;
 }
@@ -223,7 +225,7 @@ export function sortFileComments(comments: readonly FileComment[]): FileComment[
 }
 
 function diffIdentity(diff: DiffCommentTarget | undefined): string {
-  return diff === undefined ? "" : JSON.stringify([diff.repository, diff.path, diff.side, diff.mode, diff.revision]);
+  return diff === undefined ? "" : JSON.stringify([diff.repository, diff.path, diff.side, diff.mode, diff.revision, ...(diff.base_commit ? [diff.base_commit] : [])]);
 }
 
 /** Reject ambiguous/noncanonical Git paths and header-breaking metadata, without rewriting saved coordinates. */
@@ -232,6 +234,7 @@ export function isDiffCommentTarget(value: unknown): value is DiffCommentTarget 
   const d = value as Record<string, unknown>;
   const text = (v: unknown): v is string => typeof v === "string" && v.trim() !== "" && !/[\u0000-\u001f\u007f]/.test(v);
   if (d.side !== "old" && d.side !== "new" || d.mode !== "all" && d.mode !== "unstaged" && d.mode !== "staged") return false;
+  if (d.base_commit !== undefined && (typeof d.base_commit !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(d.base_commit))) return false;
   if (!text(d.revision) || typeof d.repository !== "string" || !d.repository || d.repository.includes("\0") || typeof d.path !== "string" || !d.path || d.path.includes("\0")) return false;
   // Git separators are '/', but a backslash or newline can be a literal Unix filename character.
   // Quotes escape those characters rather than silently losing the saved comment on reload.

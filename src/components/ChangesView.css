@@ -12,6 +12,10 @@
   align-items: center;
   gap: var(--space-2);
 }
+.workspace-file-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2); border-block-end: var(--hairline) solid var(--border); flex-shrink: 0; }
+.workspace-file-tools > :first-child { flex: 1; min-width: 160px; }
+.workspace-file-tools .btn svg { width: var(--space-4); height: var(--space-4); }
+.changes-comparison-label { font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim); }
 .changes-markdown-mode { display: flex; justify-content: flex-end; flex-shrink: 0; padding: var(--space-2); border-block-end: var(--hairline) solid var(--border); }
 .changes-layout { display: grid; grid-template-columns: minmax(180px, 26%) minmax(0, 1fr); flex: 1; min-height: 0; }
 .changes-navigation { min-height: 0; border-inline-end: var(--hairline) solid var(--border); }
@@ -43,6 +47,9 @@
 .diff-outdated { margin-block-start: var(--space-4); }
 .diff-outdated h3 { font-size: var(--fs-sm); color: var(--text-dim); }
 .changes-orphan-comments { max-height: 35%; overflow: auto; flex-shrink: 0; }
+/* With a phone keyboard raised, retain the document controls and comment field.
+   Back to files restores search; a focused finder itself is never hidden. */
+[data-keyboard] .changes-view[data-show-file] .workspace-file-tools:not(:focus-within) { display: none; }
 @media (max-width: 768px) {
   .changes-layout { display: flex; }
   .changes-navigation { width: 100%; border: 0; }

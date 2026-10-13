@@ -12,7 +12,7 @@ async function checkLayout(): Promise<void> {
   const repo = join(import.meta.dir, "..");
   const sharedCss = readFileSync(join(repo, "src/styles.css"), "utf8");
   const viewerCss = readFileSync(process.env.FILE_VIEWER_CSS ?? join(repo, "src/components/FileViewer.css"), "utf8");
-  const browserCss = ["FilesDialog", "ChangesView", "WorkspaceFileTree"].map((name) => readFileSync(join(repo, `src/components/${name}.css`), "utf8")).join("\n");
+  const browserCss = ["FilesDialog", "ChangesView", "WorkspaceFileTree", "CommentSurfaceLayout", "WorkspaceFileSearch", "CommitPicker"].map((name) => readFileSync(join(repo, `src/components/${name}.css`), "utf8")).join("\n");
   const entry = join(fixture, "entry.ts");
   // Render the actual component, with only its HTTP file data supplied by the fixture.
   writeFileSync(entry, `

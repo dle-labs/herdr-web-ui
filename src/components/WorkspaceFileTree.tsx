@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Database, File, FileArchive, FileAudio, FileCode, FileJson, FileText, FileType, FileVideo, Folder, FolderOpen, GitBranch, Image, LockKeyhole, NotebookText, FileSliders, FileTerminal, Type } from "lucide-react";
+import { GitCompareArrows } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { fileIconCategory, type FileIconCategory } from "../lib/fileTypeIcon.ts";
 import type { DirectoryListing, GitChangedFile } from "../../shared/protocol.ts";
@@ -11,6 +12,8 @@ interface Props {
   root: string; paneId: string | null; files: readonly GitChangedFile[];
   selected: string | null; onSelect: (absolutePath: string) => void;
   refreshToken?: number;
+  onCompare?: (relativePath: string) => void;
+  onFileMenu?: (anchor: HTMLButtonElement, path: string, point?: { x: number; y: number }) => void;
 }
 
 const FILE_ICONS: Record<FileIconCategory, LucideIcon> = {
@@ -24,6 +27,15 @@ const FILE_ICONS: Record<FileIconCategory, LucideIcon> = {
 export function WorkspaceFileTree(props: Props) {
   const t = useT();
   const navigation = useRef<HTMLElement>(null);
+  const [menu, setMenu] = useState<{ anchor: HTMLElement; path: string; point?: { x: number; y: number } } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const dismiss = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setMenu(null); };
+    document.addEventListener("pointerdown", dismiss, true);
+    return () => document.removeEventListener("pointerdown", dismiss, true);
+  }, [menu]);
   useEffect(() => {
     const nav = navigation.current;
     if (!nav) return;
@@ -42,11 +54,17 @@ export function WorkspaceFileTree(props: Props) {
     return () => observer.disconnect();
   }, [props.selected]);
   return <nav ref={navigation} className="workspace-file-tree" aria-label={t("Files")}>
-    <Directory key={props.root} {...props} relative="" />
+    <Directory key={props.root} {...props} relative="" onFileMenu={props.onCompare ? (anchor, path, point) => setMenu({ anchor, path, point }) : undefined} />
+    {menu && props.onCompare && <div ref={menuRef} className="workspace-file-menu" role="menu" aria-label={menu.path}
+      style={{ left: Math.max(8, Math.min(menu.point?.x ?? menu.anchor.getBoundingClientRect().left, window.innerWidth - 220)), top: Math.max(8, Math.min(menu.point?.y ?? menu.anchor.getBoundingClientRect().bottom, window.innerHeight - 60)) }}
+      onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setMenu(null); }}
+      onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setMenu(null); menu.anchor.focus(); } }}>
+      <button type="button" role="menuitem" className="btn" onClick={() => { const path = menu.path; setMenu(null); props.onCompare?.(path); }}><GitCompareArrows aria-hidden="true" />{t("Compare with…")}</button>
+    </div>}
   </nav>;
 }
 
-function Directory({ root, paneId, files, selected, onSelect, refreshToken, relative, ignored = false }: Props & { relative: string; ignored?: boolean }) {
+function Directory({ root, paneId, files, selected, onSelect, onCompare, onFileMenu, refreshToken, relative, ignored = false, containsChanges = false }: Props & { relative: string; ignored?: boolean; containsChanges?: boolean }) {
   const t = useT();
   const { fetchDirectories } = useMachineApi();
   const absolute = relative ? join(root, relative) : root;
@@ -70,8 +88,9 @@ function Directory({ root, paneId, files, selected, onSelect, refreshToken, rela
   const entries = workspaceTreeEntries(listing, files, relative, ignored);
   const prefix = relative ? `${relative}/` : "";
   return <div className="workspace-tree-branch">
-    {relative !== "" && <button type="button" className="workspace-tree-row" data-ignored={ignored || undefined} title={relative} aria-expanded={open} onClick={() => setOpen(!open)}>
+    {relative !== "" && <button type="button" className="workspace-tree-row" data-ignored={ignored || undefined} data-contains-changes={containsChanges || undefined} title={relative} aria-expanded={open} onClick={() => setOpen(!open)}>
       {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}{open ? <FolderOpen className="workspace-tree-icon" data-file-type="folder" aria-hidden="true" /> : <Folder className="workspace-tree-icon" data-file-type="folder" aria-hidden="true" />}<span className="workspace-tree-label">{relative.split("/").at(-1)}</span>
+      {containsChanges && <small role="img" aria-label={t("Changed files")} title={t("Changed files")}>*</small>}
     </button>}
     {open && <div className={relative ? "workspace-tree-children" : undefined}>
       {listing === null && !failed && <p role="status">{t("Loading…")}</p>}
@@ -80,8 +99,8 @@ function Directory({ root, paneId, files, selected, onSelect, refreshToken, rela
         const path = `${prefix}${name}`;
         const category = fileIconCategory(name);
         const Icon = FILE_ICONS[category];
-        return entry.directory ? <Directory key={name} root={resolvedRoot} paneId={paneId} files={files} selected={selected} onSelect={onSelect} refreshToken={refreshToken} relative={path} ignored={entry.ignored} />
-          : <button key={name} type="button" className="workspace-tree-row" data-status={entry.status} data-ignored={entry.ignored || undefined} aria-current={selected === join(resolvedRoot, path) ? "true" : undefined} title={path} onClick={() => onSelect(join(resolvedRoot, path))}>
+        return entry.directory ? <Directory key={name} root={resolvedRoot} paneId={paneId} files={files} selected={selected} onSelect={onSelect} onCompare={onCompare} onFileMenu={onFileMenu} refreshToken={refreshToken} relative={path} ignored={entry.ignored} containsChanges={entry.containsChanges} />
+          : <button key={name} type="button" className="workspace-tree-row" data-status={entry.status} data-ignored={entry.ignored || undefined} aria-current={selected === join(resolvedRoot, path) ? "true" : undefined} title={path} onContextMenu={(event) => { if (onFileMenu) { event.preventDefault(); event.stopPropagation(); onFileMenu(event.currentTarget, path, { x: event.clientX, y: event.clientY }); } }} onKeyDown={(event) => { if (onFileMenu && (event.key === "ContextMenu" || event.shiftKey && event.key === "F10")) { event.preventDefault(); event.stopPropagation(); onFileMenu(event.currentTarget, path); } }} onClick={() => onSelect(join(resolvedRoot, path))}>
             <span className="workspace-tree-caret" aria-hidden="true" /><Icon className="workspace-tree-icon" data-file-type={category} aria-hidden="true" /><span className="workspace-tree-label">{name}</span>{entry.status && <small aria-label={entry.status}>{entry.status === "deleted" ? "D" : entry.status === "added" || entry.status === "untracked" ? "A" : entry.status === "renamed" ? "R" : "M"}</small>}
           </button>;
       })}

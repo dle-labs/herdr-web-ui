@@ -6,6 +6,15 @@
  * braces keep their English names.
  */
 export const KO: Record<string, string> = {
+  "Find files…": "파일 찾기…",
+  "Search commits…": "커밋 검색…",
+  "Working changes": "작업 중인 변경 사항",
+  "Could not load files": "파일을 불러오지 못했습니다",
+  "Could not load commits": "커밋을 불러오지 못했습니다",
+  "More results available. Refine your search.": "결과가 더 있습니다. 검색어를 구체화하세요.",
+  "Compare with…": "다음과 비교…",
+  "Working tree": "작업 트리",
+  "All files": "모든 파일",
   "PageUp / PageDown scroll chat": "PageUp / PageDown으로 채팅 스크롤",
   "Scroll the conversation even while typing. In the terminal, plain page keys stay with the running program.": "입력 중에도 대화를 스크롤합니다. 터미널에서는 일반 페이지 키가 실행 중인 프로그램에 전달됩니다.",
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravity 채팅을 사용할 수 없습니다. 터미널을 열어 작업 상태와 도구 호출을 확인하세요.",
@@ -1029,6 +1038,8 @@ export const KO: Record<string, string> = {
   "Couldn't read the plan. Trying again…": "계획을 읽지 못했습니다. 다시 시도하는 중…",
   "Only part of this file is shown. Download it to read the rest.": "파일의 일부만 표시됩니다. 나머지는 다운로드해 확인하세요.",
   "Add comment": "댓글 추가",
+  "Comment side": "댓글 방향",
+  "Comment line": "댓글 줄",
   "Back to files": "파일 목록으로 돌아가기",
   "Binary files cannot be displayed as a text diff.": "바이너리 파일은 텍스트 비교로 표시할 수 없습니다.",
   "Changed files": "변경된 파일",

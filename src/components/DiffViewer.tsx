@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, MessageSquarePlus, Trash2, X } from "lucide-react";
 import { FileDiff, useStableCallback, type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs/react";
-import { parseDiffFromFile, type DiffLineEventBaseProps } from "@pierre/diffs";
+import type { DiffLineEventBaseProps } from "@pierre/diffs";
+import { diffMetadata } from "../lib/diffMetadata.ts";
 import type { GitDiffMode, GitFileDiffResponse } from "../../shared/protocol.ts";
 import { blockComments, useBlockComments } from "../lib/blockComments.ts";
 import { changedAttrs, focusOpenField } from "../lib/commentDom.ts";
@@ -25,6 +26,24 @@ function DiffCommentEditor({ open, connected, text, onSave, onClose, onDelete }:
     owner: open.owner, connected, inline: true, fallback: () => null, startValue: text.read(), onText: text.write,
   });
   const showDictation = draft.dictation.shown;
+  // Annotation portals can mount before Pierre has laid out their slots. Reveal
+  // once only when the editor really occupies space, not on subsequent typing.
+  useEffect(() => {
+    const node = draft.surface.current;
+    if (node === null) return;
+    let revealed = false;
+    const observer = new ResizeObserver(() => reveal());
+    const reveal = () => {
+      if (revealed || node.getBoundingClientRect().height === 0) return;
+      revealed = true;
+      observer.disconnect();
+      node.scrollIntoView({ block: "nearest" });
+      node.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
+    };
+    observer.observe(node);
+    const frame = requestAnimationFrame(reveal);
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); };
+  }, [draft.surface]);
   return <div ref={draft.surface} className="comment-popover diff-comment-editor" {...changedAttrs(draft.changed)} onKeyDown={draft.onKeyDown}>
     <div className="diff-comment-heading"><span>{open.target.label}:{linesText(open.target.lines)} · {open.target.diff?.side === "old" ? t("Old") : t("New")}</span>
       <button type="button" className="icon-button" aria-label={t("Close comment")} onClick={draft.leave}><X aria-hidden="true" /></button></div>
@@ -41,15 +60,24 @@ function DiffCommentEditor({ open, connected, text, onSave, onClose, onDelete }:
 }
 
 /** Saved comparisons remain editable even after their files leave the changed-path inventory. */
-export function DiffOrphanComments({ owner, connected, root, mode, paths, initialId }: {
-  owner: string; connected: boolean; root: string; mode: GitDiffMode; paths: readonly string[]; initialId?: string;
+export function DiffOrphanComments({ owner, connected, root, mode, paths, initialId, onlyPaths }: {
+  owner: string; connected: boolean; root: string; mode: GitDiffMode; paths: readonly string[]; initialId?: string; onlyPaths?: readonly string[];
 }) {
   const t = useT();
   const { settings } = useSettings();
   const surface = useRef<HTMLDivElement>(null);
   const comments = useBlockComments(owner).filter((comment): comment is FileComment => comment.kind === "file" && comment.diff !== undefined
-    && (comment.id === initialId || comment.diff.repository === root) && comment.diff.mode === mode && !paths.includes(comment.diff.path));
+    && comment.diff.repository === root && comment.diff.mode === mode && !paths.includes(comment.diff.path)
+    && (onlyPaths === undefined || onlyPaths.includes(comment.diff.path)));
   const popover = useCommentPopover<FileTarget>({ enabled: settings.comments, persist: (owner, target, text) => { blockComments.saveFile(owner, target, text); } });
+  const initialOpened = useRef<string>();
+  useEffect(() => {
+    if (initialId === undefined || initialOpened.current === initialId) return;
+    const comment = comments.find((comment) => comment.id === initialId);
+    if (comment === undefined) return;
+    initialOpened.current = initialId;
+    if (!popover.show(owner, { ...comment, anchor: comment.anchor }, comment)) focusOpenField(surface.current);
+  }, [initialId, comments, owner, popover.show]);
   if (comments.length === 0 && popover.open === null) return null;
   return <div ref={surface} className="diff-outdated changes-orphan-comments" data-comment-surface="">
     <h3>{t("Outdated comments")}</h3>
@@ -117,8 +145,8 @@ function DiffGutterButton({ hovered, pointerLine, onRange, onPreview }: {
     }}><MessageSquarePlus aria-hidden="true" /></button>;
 }
 
-export function DiffViewer({ file, mode, owner, connected, split }: {
-  file: GitFileDiffResponse; mode: GitDiffMode; owner: string; connected: boolean; split: boolean;
+export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
+  file: GitFileDiffResponse; mode: GitDiffMode; owner: string; connected: boolean; split: boolean; initialId?: string;
 }) {
   const t = useT();
   const { settings, resolvedTheme } = useSettings();
@@ -131,10 +159,17 @@ export function DiffViewer({ file, mode, owner, connected, split }: {
   const popover = useCommentPopover<FileTarget>({ enabled: settings.comments, persist: (owner, target, text) => { blockComments.saveFile(owner, target, text); } });
   const shown = comments.filter((comment) => comment.diff?.revision === file.revision);
   const outdated = comments.filter((comment) => comment.diff?.revision !== file.revision);
-  const metadata = useMemo(() => file.binary ? null : parseDiffFromFile(
-    file.old_file === null ? null : { ...file.old_file, cacheKey: `${file.root}:${mode}:${file.revision}:old:${file.old_path ?? file.path}` },
-    file.new_file === null ? null : { ...file.new_file, cacheKey: `${file.root}:${mode}:${file.revision}:new:${file.path}` },
-  ), [file, mode]);
+  const metadata = useMemo(() => diffMetadata(file, mode), [file, mode]);
+  const [keyboardSide, setKeyboardSide] = useState<"deletions" | "additions">(file.new_file === null ? "deletions" : "additions");
+  const [keyboardLine, setKeyboardLine] = useState("1");
+  const initialOpened = useRef<string>();
+  useEffect(() => {
+    if (initialId === undefined || initialOpened.current === initialId) return;
+    const comment = comments.find((comment) => comment.id === initialId);
+    if (comment === undefined) return;
+    initialOpened.current = initialId;
+    if (!popover.show(owner, { ...comment, anchor: comment.anchor }, comment)) focusOpenField(surface.current);
+  }, [initialId, comments, owner, popover.show]);
   const annotations: DiffLineAnnotation<Annotation>[] = shown.map((comment) => ({
     side: comment.diff?.side === "old" ? "deletions" : "additions", lineNumber: comment.lines[1], metadata: { comment },
   }));
@@ -179,11 +214,26 @@ export function DiffViewer({ file, mode, owner, connected, split }: {
       <span>{metadata.comment.comment}</span>
     </button>
   );
+  const keyboardRange = { start: Number(keyboardLine), end: Number(keyboardLine), side: keyboardSide };
+  const canAddKeyboard = useMemo(() => diffCommentTarget(file, mode, {
+    start: Number(keyboardLine), end: Number(keyboardLine), side: keyboardSide,
+  }) !== null, [file, mode, keyboardLine, keyboardSide]);
   return <div className="diff-viewer" ref={surface} data-comment-surface="">
+    {settings.comments && !file.binary && <form className="diff-comment-keyboard" onSubmit={(event) => { event.preventDefault(); if (canAddKeyboard) add(keyboardRange); }}>
+      <label>{t("Comment side")}<select className="select" aria-label={t("Comment side")} value={keyboardSide} onChange={(event) => setKeyboardSide(event.target.value as "deletions" | "additions")}>
+        <option value="deletions" disabled={file.old_file === null}>{t("Old")}</option>
+        <option value="additions" disabled={file.new_file === null}>{t("New")}</option>
+      </select></label>
+      <label>{t("Comment line")}<input className="input" type="number" min="1" step="1" value={keyboardLine} onChange={(event) => setKeyboardLine(event.target.value)} /></label>
+      <button className="btn" type="submit" disabled={!canAddKeyboard}>{t("Add comment")}</button>
+    </form>}
     {/* A fresh renderer prevents a worker's previous token AST from surviving the
         plain-text threshold change. The draft text lives outside this subtree. */}
     {metadata !== null && <FileDiff key={String(settings.highlightCode)} fileDiff={metadata} lineAnnotations={annotations} selectedLines={selected} options={{
       diffStyle: split ? "split" : "unified", theme: PIERRE_THEME, themeType: resolvedTheme,
+      // A target can lie in collapsed context, including a saved comment reached
+      // by keyboard/deep link. Keep it expanded for the lifetime of the editor.
+      expandUnchanged: popover.open !== null && popover.open.target.diff?.revision === file.revision,
       overflow: settings.wrapCode ? "wrap" : "scroll", disableFileHeader: true, diffIndicators: "classic", enableLineSelection: settings.comments,
       // Pierre's zero threshold takes its plain-text rendering path (including
       // async highlights), rather than tokenizing and merely hiding the colors.

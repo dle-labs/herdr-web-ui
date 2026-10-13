@@ -7,6 +7,15 @@
  * keep their English names.
  */
 export const TR: Record<string, string> = {
+  "Find files…": "Dosya bul…",
+  "Search commits…": "Commit ara…",
+  "Working changes": "Çalışma değişiklikleri",
+  "Could not load files": "Dosyalar yüklenemedi",
+  "Could not load commits": "Commitler yüklenemedi",
+  "More results available. Refine your search.": "Daha fazla sonuç var. Aramanızı daraltın.",
+  "Compare with…": "Şununla karşılaştır…",
+  "Working tree": "Çalışma ağacı",
+  "All files": "Tüm dosyalar",
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravity sohbeti kullanılamıyor. Etkinliği ve araç çağrılarını görmek için Terminal'i açın.",
   "Chat read timed out.": "Sohbet okunurken zaman aşımına uğradı.",
   "Thinking…": "Düşünüyor…",
@@ -984,6 +993,8 @@ export const TR: Record<string, string> = {
   "Couldn't read the plan. Trying again…": "Plan okunamadı. Tekrar deneniyor…",
   "Only part of this file is shown. Download it to read the rest.": "Bu dosyanın yalnızca bir bölümü gösteriliyor. Gerisini okumak için indirin.",
   "Add comment": "Yorum ekle",
+  "Comment side": "Yorum tarafı",
+  "Comment line": "Yorum satırı",
   "Back to files": "Dosyalara dön",
   "Binary files cannot be displayed as a text diff.": "İkili dosyalar metin farkı olarak görüntülenemez.",
   "Changed files": "Değişen dosyalar",

@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { GitCompareArrows } from "lucide-react";
+import { WorkspaceFileSearch } from "./WorkspaceFileSearch.tsx";
+import { CommitPicker } from "./CommitPicker.tsx";
 import { WorkerPoolContextProvider } from "@pierre/diffs/react";
 import DiffWorker from "@pierre/diffs/worker/worker.js?worker";
 import type { GitChangesResponse, GitFileDiffResponse } from "../../shared/protocol.ts";
@@ -35,10 +38,10 @@ function createDiffQueue() {
   return (job: () => Promise<void>) => { waiting.push(job); pump(); };
 }
 
-function DiffSection({ paneId, inventory, path, owner, connected, split, scrollRoot, queue, selected, onActive }: {
+function DiffSection({ paneId, inventory, path, owner, connected, split, scrollRoot, queue, selected, onActive, initialId }: {
   paneId: string; inventory: GitChangesResponse; path: string; owner: string;
   connected: boolean; split: boolean; scrollRoot: RefObject<HTMLDivElement>;
-  queue: ReturnType<typeof createDiffQueue>; selected: boolean; onActive: (path: string) => void;
+  queue: ReturnType<typeof createDiffQueue>; selected: boolean; onActive: (path: string) => void; initialId?: string;
 }) {
   const t = useT();
   const { fetchGitDiff } = useMachineApi();
@@ -64,7 +67,7 @@ function DiffSection({ paneId, inventory, path, owner, connected, split, scrollR
     queue(async () => {
       if (!live) return;
       try {
-        const next = await fetchGitDiff(paneId, "all", path);
+        const next = await fetchGitDiff(paneId, "all", path, inventory.base_commit);
         if (!live) return;
         if (next.revision !== inventory.revision || next.root !== inventory.root) {
           setError(t("Files changed while this diff was loading. Refresh to review the latest changes."));
@@ -76,12 +79,14 @@ function DiffSection({ paneId, inventory, path, owner, connected, split, scrollR
       }
     });
     return () => { live = false; };
-  }, [near, queue, fetchGitDiff, paneId, path, inventory.revision, inventory.root, attempt, t]);
-  return <section ref={surface} className="changes-diff-section" aria-label={path} data-diff-path={path} onMouseEnter={() => onActive(path)}>
+  }, [near, queue, fetchGitDiff, paneId, path, inventory.revision, inventory.root, inventory.base_commit, attempt, t]);
+  const fallbackComments = <DiffOrphanComments owner={owner} connected={connected} root={inventory.root} mode="all" paths={[]} onlyPaths={[path, ...inventory.files.filter((entry) => entry.path === path && entry.old_path).map((entry) => entry.old_path!)]} initialId={initialId} />;
+  return <section ref={surface} className="changes-diff-section" aria-label={path} data-diff-path={path} onPointerDown={() => onActive(path)}>
     {error && <p className="changes-note" role="alert">{error} <button type="button" className="btn" onClick={() => setAttempt((value) => value + 1)}>{t("Retry")}</button></p>}
     {!file && !error && <p className="changes-diff-placeholder changes-note" role="status">{t("Loading…")}</p>}
-    {file && <RenderBoundary resetKey={`${file.revision}:${file.path}`} fallback={(retry) => <p role="alert">{t("This diff could not be displayed.")} <button type="button" className="btn" onClick={retry}>{t("Retry")}</button></p>}>
-      <DiffViewer file={file} mode="all" owner={owner} connected={connected} split={split} />
+    {error && fallbackComments}
+    {file && <RenderBoundary resetKey={`${file.revision}:${file.path}`} fallback={(retry) => <><p role="alert">{t("This diff could not be displayed.")} <button type="button" className="btn" onClick={retry}>{t("Retry")}</button></p>{fallbackComments}</>}>
+      <DiffViewer file={file} mode="all" owner={owner} connected={connected} split={split} initialId={initialId} />
     </RenderBoundary>}
   </section>;
 }
@@ -97,9 +102,17 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
   const [inventory, setInventory] = useState<GitChangesResponse | null>(null);
   const [path, setPath] = useState<string | null>(initialComment?.diff?.path ?? null);
   const [preview, setPreview] = useState<string | null>(initialComment?.diff ? null : initialPath);
-  const [documentClosed, setDocumentClosed] = useState(false);
+  const [documentClosed, setDocumentClosed] = useState(!initialPath && !initialComment);
+  const [comparisonVersion, setComparisonVersion] = useState(0);
+  const [comparisonActive, setComparisonActive] = useState(!!initialComment?.diff);
+  const [baseCommit, setBaseCommit] = useState<string | undefined>(initialComment?.diff?.base_commit);
+  const [comparisonPath, setComparisonPath] = useState<string | null>(null);
+  // undefined: closed, null: all files, string: one repository-relative file.
+  const [compareTarget, setCompareTarget] = useState<string | null | undefined>(undefined);
+  const [initialRequestActive, setInitialRequestActive] = useState(true);
+  const initialRequest = useRef(true);
   // An inventory read already in flight must not reselect a file after it closes.
-  const closed = useRef(false);
+  const closed = useRef(!initialPath && !initialComment);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [jump, setJump] = useState<string | null>(initialComment?.diff?.path ?? null);
@@ -116,16 +129,19 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     if (paneId === null || !canLeave()) return;
     let live = true;
     setLoading(true);
-    fetchGitChanges(paneId, "all").then((next) => {
+    fetchGitChanges(paneId, "all", baseCommit).then((next) => {
       if (!live || !canLeave()) return;
       setInventory(next);
       setError(null);
-      if (!closed.current) setPath((selected) => next.files.some((file) => file.path === selected) ? selected : next.files[0]?.path ?? null);
+      const requested = initialRequest.current && initialComment?.diff
+        ? changedWorkspacePath(next, absolutePath(next.root, initialComment.diff.path)) : null;
+      if (requested) { setPath(requested); setJump(requested); }
+      else if (!closed.current) setPath((selected) => next.files.some((file) => file.path === selected) ? selected : null);
     }).catch(() => {
       if (live) setError(t("Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs."));
     }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, [fetchGitChanges, paneId, refreshToken, t, canLeave]);
+  }, [fetchGitChanges, paneId, refreshToken, baseCommit, comparisonVersion, t, canLeave]);
   // Chat links may be relative, home-relative or bare names. Resolve them with the
   // same machine-bound reader as ordinary files before selecting a changed path.
   const resolvedInitial = useRef(false);
@@ -159,16 +175,40 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
   function select(absolute: string) {
     if (!canLeave()) return;
     resolvedInitial.current = true;
+    initialRequest.current = false;
+    setInitialRequestActive(false);
     closed.current = false;
     setDocumentClosed(false);
     onShowFile();
     const changed = inventory ? changedWorkspacePath(inventory, absolute) : null;
-    const document = inventory ? workspacePreviewPath(inventory, absolute, initialIntent) : absolute;
+    const document = inventory ? workspacePreviewPath(inventory, absolute, comparisonActive ? "changes" : initialIntent) : absolute;
+    setComparisonPath(baseCommit ? changed : null);
     setPreview(document); setPath(changed); setJump(document === null ? changed : null);
+  }
+  function compare(commit: string | null) {
+    if (!canLeave()) return;
+    resolvedInitial.current = true;
+    initialRequest.current = false;
+    setInitialRequestActive(false);
+    closed.current = false;
+    setDocumentClosed(false);
+    setPreview(null);
+    setPath(compareTarget ?? null);
+    setJump(compareTarget ?? null);
+    setComparisonPath(compareTarget ?? null);
+    setInventory(null);
+    setError(null);
+    setBaseCommit(commit ?? undefined);
+    setComparisonActive(true);
+    setCompareTarget(undefined);
+    setComparisonVersion((value) => value + 1);
+    onShowFile();
   }
   function closeDocument() {
     if (!canLeave()) return;
     resolvedInitial.current = true;
+    initialRequest.current = false;
+    setInitialRequestActive(false);
     closed.current = true;
     setDocumentClosed(true);
     setPreview(null); setPath(null); setJump(null);
@@ -192,7 +232,13 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     onShowFile();
   }
   const owner = paneId === null ? null : paneStorageId(machineId, paneId);
-  return <div ref={surface} className={`changes-view${narrow && showFile ? " is-showing-file" : ""}`}>
+  return <div ref={surface} data-show-file={showFile || undefined} className={`changes-view${narrow && showFile ? " is-showing-file" : ""}`}>
+    {paneId !== null && <div className="workspace-file-tools">
+      <WorkspaceFileSearch paneId={paneId} refreshToken={refreshToken} onSelect={select} onReveal={onHideFile} />
+      <button type="button" className="btn" onClick={() => setCompareTarget(null)}><GitCompareArrows aria-hidden="true" />{t("Compare with…")}</button>
+      {baseCommit && <span className="changes-comparison-label" title={baseCommit}>{baseCommit.slice(0, 8)} → {t("Working tree")}</span>}
+    </div>}
+    {paneId !== null && compareTarget !== undefined && <CommitPicker paneId={paneId} label={compareTarget ?? t("All files")} onSelect={compare} onClose={() => setCompareTarget(undefined)} />}
     {markdownPath !== null && (!narrow || showFile) && <div className="changes-markdown-mode">
       <div className="segmented" role="group" aria-label={t("Markdown view")}>
         <button type="button" aria-pressed={preview !== null} onClick={() => showMarkdown("preview")}>{t("Preview")}</button>
@@ -200,33 +246,22 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
       </div>
     </div>}
     <div className="changes-layout">
-      <aside className="changes-navigation"><WorkspaceFileTree root={root} paneId={paneId} files={inventory?.files ?? []} refreshToken={refreshToken} selected={preview ?? (path ? absolutePath(root, path) : null)} onSelect={select} /></aside>
-      <div className="changes-detail" ref={documentRef} aria-label={t("File diff")} onScroll={() => {
-        if (preview || documentClosed) return;
-        const container = documentRef.current;
-        // When every section fits, layout/scrollIntoView events are not navigation:
-        // keep the explicitly selected document for Preview instead of picking the first diff.
-        if (!container || container.scrollHeight <= container.clientHeight) return;
-        const top = container.getBoundingClientRect().top;
-        const nodes = [...container.querySelectorAll<HTMLElement>("[data-diff-path]")];
-        const active = nodes.find((node) => node.getBoundingClientRect().bottom > top + 60);
-        // Loading placeholders can briefly overflow and then collapse, producing a
-        // programmatic scroll. They must not change which document Preview will open.
-        if (active?.dataset.diffPath && !active.querySelector(".changes-diff-placeholder")) setPath(active.dataset.diffPath);
-      }}>
+      <aside className="changes-navigation"><WorkspaceFileTree root={root} paneId={paneId} files={inventory?.files ?? []} refreshToken={refreshToken} selected={preview ?? (path ? absolutePath(root, path) : null)} onSelect={select} onCompare={paneId === null ? undefined : (relative) => setCompareTarget(relative)} /></aside>
+      {/* Scrolling a comment into view (or collapsing it after Save) is not file navigation. */}
+      <div className="changes-detail" ref={documentRef} aria-label={t("File diff")}>
         {documentClosed ? <p className="changes-note" role="status">{t("Select a file to view.")}</p> : preview ? <FileViewer key={`${preview}:${refreshToken}`} keyboardActive={keyboardActive} path={preview} paneId={paneId} machineId={machineId} paneFolder={start} connected={connected}
-          commentId={initialComment?.diff ? null : initialComment?.id ?? initialCommentId} onOpen={select} onClose={closeDocument} /> : <>
+          commentId={!initialRequestActive || initialComment?.diff ? null : initialComment?.id ?? initialCommentId} onOpen={select} onClose={closeDocument} /> : <>
           {loading && !inventory && <p className="changes-note" role="status">{t("Loading…")}</p>}
           {error !== null && <p className="changes-note" role="alert">{error}</p>}
-          {inventory?.files.length === 0 && <p className="changes-note" role="status">{t("No changes in this comparison.")}</p>}
+          {inventory && (inventory.files.length === 0 || comparisonPath !== null && !inventory.files.some((file) => file.path === comparisonPath || file.old_path === comparisonPath)) && <p className="changes-note" role="status">{t("No changes in this comparison.")}</p>}
           <WorkerPoolContextProvider poolOptions={poolOptions} highlighterOptions={highlighterOptions}>
-            {paneId !== null && owner !== null && inventory?.files.map((file) => <DiffSection key={`${owner}:${inventory.root}:${inventory.revision}:${file.path}`} paneId={paneId} inventory={inventory} path={file.path} owner={owner} connected={connected} split={settings.splitDiff && !narrow} scrollRoot={documentRef} queue={queue} selected={path === file.path} onActive={(next) => { if (!narrow) setPath(next); }} />)}
+            {paneId !== null && owner !== null && inventory?.files.filter((file) => comparisonPath === null || file.path === comparisonPath || file.old_path === comparisonPath).map((file) => <DiffSection key={`${owner}:${inventory.root}:${inventory.revision}:${file.path}`} paneId={paneId} inventory={inventory} path={file.path} owner={owner} connected={connected} split={settings.splitDiff && !narrow} scrollRoot={documentRef} queue={queue} initialId={initialRequestActive && (file.path === initialComment?.diff?.path || file.old_path === initialComment?.diff?.path) ? initialComment?.id : undefined} selected={path === file.path} onActive={(next) => { if (!narrow) setPath(next); }} />)}
           </WorkerPoolContextProvider>
         </>}
       </div>
     </div>
-    {owner !== null && (inventory !== null || initialComment?.diff !== undefined) && <DiffOrphanComments owner={owner} connected={connected}
-      root={inventory?.root ?? initialComment!.diff!.repository} mode="all" initialId={initialComment?.id}
-      paths={inventory?.files.flatMap((file) => file.old_path === undefined ? [file.path] : [file.path, file.old_path]) ?? []} />}
+    {owner !== null && (inventory !== null || error !== null && initialComment?.diff !== undefined) && <DiffOrphanComments owner={owner} connected={connected}
+      root={inventory?.root ?? initialComment!.diff!.repository} mode="all" initialId={initialRequestActive ? initialComment?.id : undefined}
+      paths={inventory?.files.filter((file) => !documentClosed && preview === null && (comparisonPath === null || file.path === comparisonPath || file.old_path === comparisonPath)).flatMap((file) => file.old_path === undefined ? [file.path] : [file.path, file.old_path]) ?? []} />}
   </div>;
 }

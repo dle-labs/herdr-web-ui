@@ -80,7 +80,10 @@ between releases do not reach them. Remote-PC runtime bundles are versioned sepa
   ([#860](https://github.com/devswha/herdr-web-ui/pull/860))
 
 ### Fixed
-- Changed files moves from beside the composer's model selector to the pane's right-click menu and phone tab actions.
+- Changed files mark every ancestor folder, including collapsed folders, with color and an accessible indicator.
+- File browsers keep their opening pane and unsaved comments through pane selection and refused Back navigation. Comment links are consumed once and open the requested diff comment, including renamed paths and unavailable-diff fallbacks.
+- Git inventories skip unsupported embedded repositories without hiding other changes; cached deletions retain a consistent deleted side even when the file remains on disk.
+- Browse files now opens from a quick action beside the microphone (or attachment button), not the pane or tab context menu. It starts without selecting a diff, offers keyboard-friendly filename search, and compares all files or a context-menu-selected file against a searchable previous commit.
 - Comment editors stay clear of the text being commented on. When no floating position fits,
   a desktop editor reserves space below the reading area without losing the draft, focus or caret.
 - Closing an embedded file returns to file navigation without closing the workspace browser; the outer Close files button still dismisses the browser, and unsaved comments block both actions.

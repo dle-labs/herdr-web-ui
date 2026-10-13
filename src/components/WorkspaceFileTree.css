@@ -21,8 +21,12 @@
 .workspace-tree-icon[data-file-type="archive"],
 .workspace-tree-icon[data-file-type="folder"] { color: var(--syntax-function); }
 .workspace-tree-icon[data-file-type="git"] { color: var(--syntax-keyword); }
+.workspace-file-menu { position: fixed; z-index: calc(var(--z-modal) + 1); padding: var(--space-1); background: var(--bg-elevated); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); max-width: calc(100vw - var(--space-4)); }
+.workspace-file-menu svg { width: var(--space-4); height: var(--space-4); }
 .workspace-tree-caret { width: var(--space-4); flex-shrink: 0; }
 .workspace-tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.workspace-tree-row[data-contains-changes="true"] { color: var(--notice); }
+.workspace-tree-row[data-contains-changes="true"] .workspace-tree-icon { color: inherit; }
 .workspace-tree-row[data-ignored="true"] { color: var(--text-dim); }
 .workspace-tree-row[data-ignored="true"] svg { color: inherit; }
 .workspace-tree-row small { color: var(--notice); }

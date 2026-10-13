@@ -8,6 +8,15 @@
  * in English. Placeholders in braces keep their English names.
  */
 export const JA: Record<string, string> = {
+  "Find files…": "ファイルを検索…",
+  "Search commits…": "コミットを検索…",
+  "Working changes": "作業中の変更",
+  "Could not load files": "ファイルを読み込めませんでした",
+  "Could not load commits": "コミットを読み込めませんでした",
+  "More results available. Refine your search.": "ほかにも結果があります。検索を絞り込んでください。",
+  "Compare with…": "比較対象…",
+  "Working tree": "作業ツリー",
+  "All files": "すべてのファイル",
   "PageUp / PageDown scroll chat": "PageUp / PageDownでチャットをスクロール",
   "Scroll the conversation even while typing. In the terminal, plain page keys stay with the running program.": "入力中も会話をスクロールします。ターミナルでは通常のページキーは実行中のプログラムに渡されます。",
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravityのチャットを利用できません。ターミナルを開いて動作状況とツール呼び出しを確認してください。",
@@ -1031,6 +1040,8 @@ export const JA: Record<string, string> = {
   "Couldn't read the plan. Trying again…": "計画を読み込めませんでした。再試行しています…",
   "Only part of this file is shown. Download it to read the rest.": "ファイルの一部のみ表示しています。残りはダウンロードしてお読みください。",
   "Add comment": "コメントを追加",
+  "Comment side": "コメントする側",
+  "Comment line": "コメントする行",
   "Back to files": "ファイル一覧に戻る",
   "Binary files cannot be displayed as a text diff.": "バイナリファイルはテキスト差分として表示できません。",
   "Changed files": "変更されたファイル",
