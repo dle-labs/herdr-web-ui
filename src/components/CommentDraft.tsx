@@ -141,14 +141,43 @@ export function useCommentDraft(
   told.current = onText;
   useLayoutEffect(() => told.current?.(value), [value]);
 
-  // Reflow matters too: docking or a narrower pane can wrap the same draft onto more lines.
+  // Measure outside the reading surface: resetting the live field to auto on
+  // every key forces its entire diff grid to reflow, even when height is unchanged.
+  const measuringField = useRef<HTMLTextAreaElement | null>(null);
   const resizeField = useCallback(() => {
     const node = field.current;
     if (!node) return;
-    node.style.height = "auto";
-    node.style.height = `${node.scrollHeight + node.offsetHeight - node.clientHeight}px`;
+    const clientWidth = node.clientWidth;
+    if (clientWidth === 0) return;
+    let measure = measuringField.current;
+    if (measure === null) {
+      measure = node.ownerDocument.createElement("textarea");
+      measure.className = "comment-editor-measure";
+      measure.tabIndex = -1;
+      measure.setAttribute("aria-hidden", "true");
+      measure.inert = true;
+      node.ownerDocument.body.append(measure);
+      measuringField.current = measure;
+    }
+    const style = getComputedStyle(node);
+    for (const property of ["font-family", "font-size", "font-weight", "font-style", "font-stretch", "line-height", "letter-spacing", "text-indent", "text-transform", "tab-size", "white-space", "word-break", "overflow-wrap", "padding-top", "padding-right", "padding-bottom", "padding-left", "border-top-width", "border-right-width", "border-bottom-width", "border-left-width", "border-top-style", "border-right-style", "border-bottom-style", "border-left-style", "box-sizing"]) {
+      const next = style.getPropertyValue(property);
+      if (measure.style.getPropertyValue(property) !== next) measure.style.setProperty(property, next);
+    }
+    const pixels = (property: string) => Number.parseFloat(style.getPropertyValue(property)) || 0;
+    const borderBox = style.boxSizing === "border-box";
+    const width = `${clientWidth + (borderBox ? pixels("border-left-width") + pixels("border-right-width") : -pixels("padding-left") - pixels("padding-right"))}px`;
+    if (measure.style.width !== width) measure.style.width = width;
+    if (measure.placeholder !== node.placeholder) measure.placeholder = node.placeholder;
+    if (measure.value !== node.value) measure.value = node.value;
+    const height = `${measure.scrollHeight + (borderBox ? pixels("border-top-width") + pixels("border-bottom-width") : -pixels("padding-top") - pixels("padding-bottom"))}px`;
+    if (node.style.height !== height) node.style.height = height;
   }, []);
   useLayoutEffect(resizeField, [value, resizeField]);
+  useLayoutEffect(() => () => {
+    measuringField.current?.remove();
+    measuringField.current = null;
+  }, []);
   useEffect(() => {
     const node = field.current;
     if (!node) return;

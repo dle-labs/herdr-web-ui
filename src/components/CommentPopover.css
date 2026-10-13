@@ -212,6 +212,22 @@ pre.comment-popover-plain {
   overflow-y: auto;
 }
 
+/* Isolate autosize measurement from the source/diff grid. Width and typography
+   are copied from the visible field; this node never participates in its layout. */
+.comment-editor-measure {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 0;
+  min-height: 0;
+  max-height: none;
+  visibility: hidden;
+  pointer-events: none;
+  overflow: hidden;
+  resize: none;
+  contain: layout style paint;
+}
+
 /* with a mouse the comment is typed at the popover's own size, as the message box is (Composer.css) */
 @media (hover: hover) and (pointer: fine) {
   .comment-editor-field {

@@ -229,6 +229,10 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   outdated editor, including old-side rename paths; context expanded for a link stays open for
   that document rather than collapsing underneath the reader when its editor closes.
   A failed diff keeps its saved comments editable in the fallback section.
+- Comment fields measure wrapping in a hidden, layout-isolated textarea outside the reading
+  surface, copying its width and typography. The visible height changes only when needed;
+  typing never resets it to auto and reflows the source/diff grid on every character. Fields
+  still grow, shrink and adapt to width changes, and their measurement node leaves with the editor.
 - Saving adds a pending chat comment; it neither changes source files nor sends a message.
   A new diff comment has an explicit **Discard comment** trash action, which closes its draft
   without touching saved comments. Saved comments use **Delete comment**, including when another

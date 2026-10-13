@@ -448,11 +448,29 @@ try {
           await field(scrolling).scrollIntoViewIfNeeded();
           await frames(page);
           const typingTop = await detail.evaluate((node) => node.scrollTop);
+          await field(scrolling).evaluate((node) => {
+            (window as any).commentHeightWrites = 0;
+            const observer = new MutationObserver((records) => { (window as any).commentHeightWrites += records.length; });
+            observer.observe(node, { attributes: true, attributeFilter: ["style"] });
+            (window as any).commentHeightObserver = observer;
+          });
           await page.keyboard.type("Keep reading here");
           await frames(page);
           assert.ok(Math.abs(await detail.evaluate((node) => node.scrollTop) - typingTop) <= 1, "typing in the visible editor does not scroll the diff");
+          assert.ok(await page.evaluate(() => (window as any).commentHeightWrites) <= 1, "typing one line changes height at most once, not on every character");
+          await page.evaluate(() => { (window as any).commentHeightObserver.disconnect(); });
+          const shortHeight = await field(scrolling).evaluate((node) => node.clientHeight);
+          await field(scrolling).fill(Array.from({ length: 12 }, (_, i) => `Comment line ${i}`).join("\n"));
+          await frames(page);
+          assert.ok(await field(scrolling).evaluate((node) => node.clientHeight) > shortHeight, "the isolated measurement still grows multiline drafts");
+          assert.ok(await field(scrolling).evaluate((node) => node.scrollHeight > node.clientHeight), "long drafts keep the bounded field and scroll inside it");
+          await field(scrolling).fill("Short again");
+          await frames(page);
+          assert.ok(Math.abs(await field(scrolling).evaluate((node) => node.clientHeight) - shortHeight) <= 1, "deleting text shrinks the field back");
+          assert.equal(await page.locator(".comment-editor-measure").count(), 1, "one isolated measuring field belongs to the open editor");
           await scrolling.getByRole("button", { name: "Discard comment", exact: true }).click();
           await field(scrolling).waitFor({ state: "detached" });
+          assert.equal(await page.locator(".comment-editor-measure").count(), 0, "closing the editor removes its measuring field");
         }
         await scrolling.getByRole("button", { name: "Close files", exact: true }).click();
         await page.evaluate(() => { (window as any).gitLongContext = false; });
