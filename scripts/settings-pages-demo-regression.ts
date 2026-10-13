@@ -8,14 +8,18 @@ import { openSettingsPage } from "./settings-page.ts";
 import { KO } from "../src/lib/i18n.ko.ts";
 import { JA } from "../src/lib/i18n.ja.ts";
 import { ZH } from "../src/lib/i18n.zh.ts";
-import { terminalTheme } from "../src/lib/settings.ts";
+import { sanitizeSettings, terminalTheme } from "../src/lib/settings.ts";
 
 // Settings on the unmodified app over the demo's fixture transport: every page fits a phone, and
 // the browser's Back button steps out of the dialog instead of out of the app. All files and
 // HTTP traffic stay in this disposable, loopback-only app; no herdr session is opened.
 const app = mkdtempSync(join(tmpdir(), "herdr-settings-demo-"));
-const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Voice input", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "Agent integrations", "About"];
-const SETTINGS = { language: "en", showUsage: true, voiceInput: true, showQuickReplies: true };
+const PAGES = ["Appearance", "Chat", "Terminal", "Alerts", "Dictation", "Subscription usage", "Shortcuts", "Phone & devices", "Remote PCs", "Agent integrations", "About"];
+// Persisted activation must never enable private speech traffic in the public demo.
+const PRIVATE_SPEECH = "https://dictation-private.invalid";
+const SETTINGS = { language: "en", showUsage: true, voiceInput: "on", showQuickReplies: true, voiceProvider: "speaches", voiceLanguage: "ko-KR", voicePolishChat: false, voicePolishTerminal: true, dictation: { version: 2, mode: "recording", baseUrl: `${PRIVATE_SPEECH}/v1`, model: "test/installed-english", activated: true } };
+
+assert.equal(sanitizeSettings(SETTINGS).dictation.activated, true, "privacy fixture retains activated Speaches consent after sanitization");
 
 const dialogOf = (page: Page) => page.getByRole("dialog", { name: "Settings", exact: true });
 const openSettings = async (page: Page): Promise<void> => {
@@ -48,6 +52,27 @@ const cutOff = (page: Page): Promise<string[]> => page.locator(".settings-body:n
   return body.scrollWidth > body.clientWidth ? [`the page scrolls sideways (${body.scrollWidth} > ${body.clientWidth})`, ...out] : out;
 });
 
+/** The key editor must stack even above the phone breakpoint, with a full-height input. */
+const checkOpenAiKeyLayout = async (page: Page): Promise<void> => {
+  const layout = await page.locator(".dictation-settings-key").evaluate((form) => {
+    const text = form.parentElement!.querySelector(".settings-row-text")!.getBoundingClientRect();
+    const field = form.querySelector("input")!.getBoundingClientRect();
+    const actions = form.querySelector(".dictation-settings-actions")!.getBoundingClientRect();
+    const box = form.getBoundingClientRect();
+    return {
+      textBottom: text.bottom, textWidth: text.width, formTop: box.top, formWidth: box.width,
+      fieldBottom: field.bottom, fieldHeight: field.height, fieldWidth: field.width, actionsTop: actions.top,
+      controlHeight: parseFloat(getComputedStyle(form).getPropertyValue("--control-h")),
+    };
+  });
+  assert.ok(layout.formTop >= layout.textBottom, "key editor sits below its label and status, without overlap");
+  assert.ok(Math.abs(layout.textWidth - layout.formWidth) <= 1, "key status retains the full row width");
+  assert.ok(Math.abs(layout.fieldWidth - layout.formWidth) <= 1, "key input fills the form");
+  assert.ok(layout.fieldHeight >= layout.controlHeight - 0.5, "key input does not collapse in the column form");
+  assert.ok(layout.actionsTop >= layout.fieldBottom, "key actions sit below the input");
+  assert.deepEqual(await cutOff(page), [], "OpenAI settings stay within their card");
+};
+
 try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
@@ -76,6 +101,19 @@ try {
         try {
           await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(url).origin });
           await context.addInitScript((settings) => { if (localStorage.getItem("herdr-web-ui:settings") === null) localStorage.setItem("herdr-web-ui:settings", settings); }, JSON.stringify({ ...SETTINGS, language }));
+          await context.addInitScript(() => {
+            (window as any).__recognitionStarts = 0;
+            (window as any).SpeechRecognition = class {
+              start() { (window as any).__recognitionStarts++; throw new Error("Demo must not start browser recognition"); }
+              stop() {}
+              abort() {}
+            };
+          });
+          const privateRequests: string[] = [];
+          await context.route(`${PRIVATE_SPEECH}/**`, (route) => {
+            privateRequests.push(route.request().url());
+            return route.abort();
+          });
           const page = await context.newPage();
           const errors: string[] = [];
           page.on("pageerror", (error) => errors.push(error.message));
@@ -99,15 +137,53 @@ try {
             await page.waitForFunction((loading) => ![...document.querySelectorAll(".settings-body [role='status']")].some((node) => loading.includes(node.textContent?.trim() ?? "")),
               [label("Loading…"), label("Asking this PC about Tailscale…")]);
             if (name === "Subscription usage") await page.locator(".usage-accounts-row").first().waitFor();
-            if (name === "Voice input") {
-              await page.locator(".voice-key").waitFor();
-              const dictation = page.getByLabel(label("Dictation language"), { exact: true });
-              await dictation.selectOption("hu-HU");
-              await page.waitForFunction(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).voiceLanguage === "hu-HU");
-              assert.equal(await dictation.inputValue(), "hu-HU");
-              assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).language), language,
-                "dictation selection does not change the display language");
-              await dictation.selectOption("auto");
+            if (name === "Dictation") {
+              const policy = await page.evaluate(async () => (await fetch("/api/dictation/config")).json());
+              assert.equal(policy.version, 2);
+              assert.equal(policy.enabled, false, "demo policy ignores persisted private activation");
+              assert.deepEqual(policy.modes, []);
+              assert.equal(await page.getByRole("group", { name: label("Transcription mode"), exact: true }).count(), 0, "no recording/live mode selector");
+              assert.equal(typeof policy.generation, "string");
+              assert.equal(typeof policy.default_model, "string");
+              assert.equal(policy.max_seconds, 120);
+              assert.equal(policy.max_bytes, 10 * 1024 * 1024);
+              assert.equal(await page.locator("#dictation-base-url").isDisabled(), true, "demo cannot edit the backend-managed endpoint");
+              assert.equal(await page.getByRole("button", { name: label("Apply"), exact: true }).isDisabled(), true, "disabled backend cannot be activated");
+              assert.equal(await page.getByRole("button", { name: label("Refresh models"), exact: true }).isDisabled(), true);
+              assert.equal(await page.getByRole("button", { name: label("Check"), exact: true }).count(), 0, "Refresh models is the only discovery action");
+              assert.equal(await page.getByRole("button", { name: label("Refresh models"), exact: true }).count(), 1);
+              const provider = page.locator("#voice-provider");
+              assert.equal(await provider.inputValue(), "speaches", "saved self-hosted selection is retained");
+              const stored = () => page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!));
+              const before = sanitizeSettings(await stored());
+              assert.equal(await page.getByRole("switch", { name: label("Finish and send"), exact: true }).getAttribute("aria-checked"), "false", "Finish and send is off by default");
+              await provider.selectOption("openai");
+              await page.locator('.settings-dialog input[type="password"]').waitFor();
+              assert.equal(await page.locator('.settings-dialog .settings-section[data-section="openai-key"]').count(), 1, "OpenAI key group supports settings deep links");
+              assert.equal(await page.locator('.settings-dialog .settings-section[data-section="tidy-dictation"]').count(), 1, "OpenAI polishing group supports settings deep links");
+              assert.equal(await page.locator("#dictation-model").count(), 0, "OpenAI hides self-hosted controls");
+              await checkOpenAiKeyLayout(page);
+              await provider.selectOption("browser");
+              assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "browser recognition hides the OpenAI key");
+              assert.equal(await page.locator("#dictation-model").count(), 0, "browser recognition hides Speaches controls");
+              assert.deepEqual(await cutOff(page), [], `Browser settings fit ${width}px (${language})`);
+              assert.equal(await page.locator(".composer .voice-mic").isDisabled(), true, "demo disables even supported browser recognition");
+              assert.equal(await page.evaluate(() => (window as any).__recognitionStarts), 0, "demo never starts browser-vendor recognition");
+              await provider.selectOption("auto");
+              assert.equal(await page.locator("#dictation-model").count(), 0, "Auto never selects persisted self-hosted configuration");
+              await page.getByRole("group", { name: label("Microphone button"), exact: true }).getByRole("button", { name: label("Auto"), exact: true }).click();
+              assert.equal(await page.locator(".composer .voice-mic").count(), 0, "unavailable Auto is hidden: demo forbids every speech route");
+              await page.getByRole("group", { name: label("Microphone button"), exact: true }).getByRole("button", { name: label("On"), exact: true }).click();
+              assert.equal(await page.locator(".composer .voice-mic").isDisabled(), true, "explicit On exposes the demo's unavailable reason");
+              await provider.selectOption("speaches");
+              await page.locator("#dictation-model").waitFor();
+              assert.equal(await page.locator('.settings-dialog input[type="password"]').count(), 0, "Speaches hides the OpenAI key");
+              const after = await stored();
+              assert.deepEqual(after.dictation, before.dictation, "switching providers preserves self-hosted configuration");
+              for (const key of ["voiceLanguage", "voicePolishChat", "voicePolishTerminal"]) assert.equal(after[key], before[key], `provider switching preserves ${key}`);
+              if (process.env.UI_EVIDENCE_DIR && language === "en" && width === 390) {
+                await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "dictation-provider-settings.png") });
+              }
             }
             if (name === "Agent integrations") {
               // the demo's fixture, in herdr's order with the agents found on the PC first: a failed request
@@ -178,6 +254,7 @@ try {
             await page.getByRole("button", { name: "Restore defaults", exact: true }).tap();
           }
           assert.deepEqual(errors, []);
+          assert.deepEqual(privateRequests, [], "persisted activation and Settings never contact a private speech origin in demo");
           await page.getByRole("button", { name: label("Close settings"), exact: true }).tap();
           if (language === "en") {
             const composer = page.locator(".composer textarea");
@@ -354,6 +431,38 @@ try {
         page.on("pageerror", (error) => errors.push(error.message));
         await page.goto(url);
         await page.locator(".conn-live").waitFor({ state: "attached" });
+        await openSettings(page);
+        await openSettingsPage(page, "Dictation");
+        await page.locator("#voice-provider").selectOption("openai");
+        await page.locator(".dictation-settings-key").waitFor();
+        for (const width of [1280, 834, 641, 640, 390, 320]) {
+          await page.setViewportSize({ width, height: 800 });
+          await checkOpenAiKeyLayout(page);
+          if (process.env.UI_EVIDENCE_DIR && width === 1280) {
+            await page.locator('[data-section="openai-key"]').screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "openai-key-settings-desktop.png") });
+          }
+        }
+        await page.setViewportSize({ width: 1280, height: 800 });
+        console.log("PASS OpenAI key label, input and actions stack without collapse on desktop, tablet and phone");
+        // Resize delivery precedes React's responsive redraw; wait for the desktop page list.
+        await page.locator(".settings-dialog").getByRole("tab", { name: "Terminal", exact: true }).waitFor();
+        await openSettingsPage(page, "Terminal");
+        await page.locator("#terminal-input-mode").selectOption("direct");
+        await page.getByRole("button", { name: "Close settings", exact: true }).click();
+        await page.getByTitle("Live terminal (⌘⇧J)", { exact: true }).click();
+        for (const width of [1280, 390]) {
+          await page.setViewportSize({ width, height: 800 });
+          assert.equal(await page.locator(".terminal-input").count(), 0, "microphone On must not force a draft box in direct terminal mode");
+        }
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await openSettings(page);
+        await openSettingsPage(page, "Terminal");
+        await page.locator("#terminal-input-mode").selectOption("line");
+        await page.getByRole("button", { name: "Close settings", exact: true }).click();
+        await page.getByRole("textbox", { name: "Terminal input line", exact: true }).waitFor();
+        await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+        assert.equal(await page.locator(".terminal-input").count(), 0, "terminal draft box stays out of chat");
+        console.log("PASS dictation does not force a terminal draft box; explicit line mode still works");
         await openSettings(page);
         // beside the list, turning pages is one step however many are turned
         for (const name of ["Chat", "Shortcuts", "About"]) await openSettingsPage(page, name);

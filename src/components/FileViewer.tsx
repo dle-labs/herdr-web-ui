@@ -3,6 +3,7 @@ import { Braces, Check, Code, Copy, Download, ExternalLink, TriangleAlert, X } f
 
 import "./FileViewer.css";
 import { DirectoryBrowser } from "./DirectoryBrowser.tsx";
+import { CommentAction, useCommentConnection } from "./CommentDraft.tsx";
 import { useHighlightedLines } from "./HighlightedCode.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
 import { TextFileView } from "./TextFileView.tsx";
@@ -119,6 +120,8 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   // a remote PC's bridge reads a relative folder from the pane's folder only from its next bundle
   // on; until then it would list the bridge's own folder, so only an absolute or ~/ one is listed there
   const machineId = useMachineId();
+  const commentConnected = useCommentConnection(paneId);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const remote = machineId !== LOCAL_MACHINE;
   const [directory, setDirectory] = useState<string | null>(null);
   // the path as given, until a choice among files of that name replaces it
@@ -208,7 +211,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
     // the FilesDialog beneath listens on window too (and stands down while this is open); this
     // one is the topmost overlay, so it takes the key, unless a native modal (Add PC) is over it
     /** Escape closes the viewer from anywhere in it. */
-    const onKey = (event: KeyboardEvent): void => { if (event.key === "Escape" && !nativeModalOver(surface.current)) onClose(); };
+    const onKey = (event: KeyboardEvent): void => { if (event.key === "Escape" && !event.defaultPrevented && !nativeModalOver(surface.current)) onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, keyboardActive, page]);
@@ -374,7 +377,16 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
     <div className="modal-scrim file-viewer-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className={virtual !== null && view === "code" ? "modal file-viewer file-viewer-virtual" : "modal file-viewer"} role="dialog" aria-modal="true" aria-label={info?.name ?? path} ref={surface} tabIndex={-1}>
         {header}
-        <div className={bodyClass}>{body}</div>
+        <div className={bodyClass} ref={bodyRef}>{body}</div>
+        {paneId !== null && info !== null && <div className="file-comment-footer">
+          <CommentAction key={shownPath} paneId={paneId} connected={commentConnected} active={keyboardActive}
+            reference={{ kind: "file", path: shownPath, text: "" }} captureReference={() => {
+              const selection = window.getSelection();
+              const text = selection && bodyRef.current?.contains(selection.anchorNode) && bodyRef.current.contains(selection.focusNode)
+                ? selection.toString() : "";
+              return { kind: "file", path: shownPath, text };
+            }} />
+        </div>}
       </section>
     </div>
   );

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { ConversationMonitor } from "./conversation-monitor.ts";
 import { createServer } from "./index.ts";
-import type { AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, LanExposure, PortalStatus, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
+import type { DictationConfigResponse, AgentKind, AgentStatus, ApiError, HealthAuth, IntegrationsResponse, LanExposure, PortalStatus, PushKey, RemoteAccess, SessionSnapshot, TabMoved, PaneFindResponse, PaneReadResult, UsageReport, WorkspaceCreated, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../shared/protocol.ts";
 import { HerdrUpdater } from "./herdr-update.ts";
 import { PortalService } from "./portal.ts";
 import { noInstalledNotes, unmanagedUpdateStatus, type HerdrUpdateStatus, type InstalledNotes, type UpdateNotes } from "../shared/update.ts";
@@ -210,6 +210,54 @@ describe("single-pane context lookup", () => {
       expect(typeof body.error.message).toBe("string");
     });
   }
+});
+
+describe("dictation policy API", () => {
+  it("authenticates and snapshots injected policy for the endpoint and shell CSP", async () => {
+    const state = mkdtempSync(join(tmpdir(), "herdr-dictation-contract-"));
+    const app = createServer({ port: 0, stateDir: state, token: "dictation-policy-token", dictationBaseUrl: "https://SPEECH.example:443/v1" });
+    try {
+      const url = `http://localhost:${app.port}`;
+      const denied = await fetch(`${url}/api/dictation/config`);
+      expect(denied.status).toBe(401);
+      expect(await denied.json()).toMatchObject({ error: { code: "unauthorized" } });
+      const response = await fetch(`${url}/api/dictation/config`, { headers: { authorization: "Bearer dictation-policy-token" } });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const body = await response.json() as DictationConfigResponse;
+      expect(body).toMatchObject({ version: 2, enabled: true, modes: ["recording"], max_seconds: 120, max_bytes: 10485760 });
+      expect(body.generation.length).toBeGreaterThan(0);
+      const shell = await fetch(url);
+      const csp = shell.headers.get("content-security-policy") ?? shell.headers.get("content-security-policy-report-only");
+      expect(csp).toContain("connect-src 'self';");
+      expect(csp).not.toContain("speech.example");
+      expect(csp).not.toContain("later.example");
+    } finally { app.stop(); rmSync(state, { recursive: true, force: true }); }
+  });
+
+  it("uses environment fallback and permits an explicitly disabled override", async () => {
+    const previous = process.env.HERDR_WEB_DICTATION_BASE_URL;
+    const state = mkdtempSync(join(tmpdir(), "herdr-dictation-env-contract-"));
+    const apps: ReturnType<typeof createServer>[] = [];
+    try {
+      process.env.HERDR_WEB_DICTATION_BASE_URL = "https://env.example/v1";
+      const envApp = createServer({ port: 0, stateDir: join(state, "env"), token: "" });
+      apps.push(envApp);
+      const offApp = createServer({ port: 0, stateDir: join(state, "off"), token: "", dictationBaseUrl: "" });
+      apps.push(offApp);
+      process.env.HERDR_WEB_DICTATION_BASE_URL = "https://later.example";
+      expect(await (await fetch(`http://localhost:${envApp.port}/api/dictation/config`)).json()).toMatchObject({ version: 2, enabled: true });
+      expect(await (await fetch(`http://localhost:${offApp.port}/api/dictation/config`)).json()).toMatchObject({ version: 2, enabled: false, modes: [] });
+      process.env.HERDR_WEB_DICTATION_BASE_URL = "invalid";
+      expect(() => createServer({ port: 0, stateDir: join(state, "invalid") })).toThrow("Invalid dictation base URL");
+      expect(existsSync(join(state, "invalid"))).toBe(false);
+    } finally {
+      for (const app of apps) app.stop();
+      if (previous === undefined) delete process.env.HERDR_WEB_DICTATION_BASE_URL;
+      else process.env.HERDR_WEB_DICTATION_BASE_URL = previous;
+      rmSync(state, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("GET /api/pane/plan", () => {

@@ -616,8 +616,8 @@ export function Composer({
     mode: "chat",
     active,
     connected,
+    owner: draftKey,
     phone: mobile,
-    polish: settings.voicePolishChat,
     keywords: () => [...(agent ? [agentLabel] : []), ...commands.map((command) => command.name)],
     box: textareaRef,
     read: () => textRef.current,
@@ -628,10 +628,6 @@ export function Composer({
       caretRef.current = at;
       setText(value);
       setCaret(at);
-      requestAnimationFrame(() => {
-        const element = textareaRef.current;
-        if (element) element.selectionStart = element.selectionEnd = at;
-      });
     },
     onNote: setNote,
   });
@@ -820,10 +816,16 @@ export function Composer({
     setTextAndCaret(next, next.length);
   }, [setTextAndCaret]);
 
+  const sendRef = useRef<(clearDraft?: string) => void>(() => {});
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over */
   const send = useCallback((clearDraft?: string) => {
-    if (composingRef.current) return;
-    if (!connected || uploading || sending || text.trim().length === 0) return;
+    if (composingRef.current || !connected || uploading || sending) return;
+    if (dictation.voice.state === "recording") {
+      if (!settings.voiceFinishAndSend) return;
+      dictation.finishAndSubmit(() => sendRef.current(clearDraft));
+      return;
+    }
+    if (text.trim().length === 0 || dictation.voice.state !== "idle") return;
     const sent = text;
     const sentAttachments = attachments;
     const settle = (result: boolean | string | DraftRefusal): void => {
@@ -842,8 +844,8 @@ export function Composer({
       setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
     };
     if (!composerDrafts.begin(draftKey, sent)) return;
-    // a polish landing before the acknowledgement would count as an edit and keep the sent message here
-    dictation.forget();
+    // Send contains only visible text and invalidates every pending dictation result first.
+    dictation.cancel();
     try {
       const result = onSend(text, clearDraft);
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return; }
@@ -852,7 +854,8 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [attachments, connected, dictation.forget, draftKey, onSend, sending, text, uploading]);
+  }, [attachments, connected, dictation.cancel, dictation.finishAndSubmit, dictation.voice.state, draftKey, onSend, sending, settings.voiceFinishAndSend, text, uploading]);
+  sendRef.current = send;
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
@@ -863,6 +866,7 @@ export function Composer({
       if (mounted.current && typeof result !== "boolean") setNote(typeof result === "string" ? result : submitNote("input_draft", result.note));
     };
     if (!composerDrafts.begin(draftKey)) return;
+    dictation.cancel();
     try {
       const result = onSend(reply);
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return; }
@@ -871,12 +875,18 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [connected, draftKey, onSend, sending]);
+  }, [connected, dictation.cancel, draftKey, onSend, sending]);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
       // an IME keeps its keys; WebKit can send the committing Enter after compositionend, as key code 229
       if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+      // Enter finishes a take for review; only an explicit Send can opt into submission.
+      if (event.key === "Enter" && !event.shiftKey && dictation.voice.state === "recording") {
+        event.preventDefault();
+        dictation.press();
+        return;
+      }
       if (menuOpen && trigger) {
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
@@ -923,7 +933,7 @@ export function Composer({
       event.preventDefault();
       send();
     },
-    [agentStatus, choices, connected, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, setTextAndCaret, settings.enterSends, trigger],
+    [agentStatus, choices, connected, dictation.press, dictation.voice.state, menuDismissed, menuOpen, offered, onAbort, selectCompletion, selectedIndex, send, setTextAndCaret, settings.enterSends, trigger],
   );
 
   const onPaste = useCallback(
@@ -964,7 +974,8 @@ export function Composer({
   // what the status line says; what may be sent, queued or stopped goes by the agent's own status
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
-  const sendShown = composerSendShown({ working: isWorking, text });
+  const sendShown = (settings.voiceFinishAndSend && dictation.voice.state === "recording") || composerSendShown({ working: isWorking, text });
+  const voiceSendBlocked = dictation.voice.state !== "idle" && !(settings.voiceFinishAndSend && dictation.voice.state === "recording");
   const hint = composerStatusHint({ uploading, connected, text });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
@@ -1021,7 +1032,7 @@ export function Composer({
           <TriangleAlert className="composer-note-icon" aria-hidden="true" />
           <span className="composer-note-text">{typeof note === "string" ? note : note.note}</span>
           {/* the draft named above, never what has replaced it since: the server checks */}
-          {typeof note === "object" && <button type="button" className="composer-note-action" disabled={!connected || uploading || sending || text.trim().length === 0}
+          {typeof note === "object" && <button type="button" className="composer-note-action" disabled={!connected || uploading || sending || voiceSendBlocked || (dictation.voice.state === "idle" && text.trim().length === 0)}
             onClick={() => send(note.draft)}>{t("Clear it and send")}</button>}
         </div>
       )}
@@ -1262,7 +1273,7 @@ export function Composer({
               className="composer-action composer-send"
               aria-label={t("Send message")}
               title={t("Send message")}
-              disabled={!connected || uploading || sending || text.trim().length === 0}
+              disabled={!connected || uploading || sending || voiceSendBlocked || (dictation.voice.state === "idle" && text.trim().length === 0)}
               onClick={() => send()}
             >
               <ArrowUp aria-hidden="true" />

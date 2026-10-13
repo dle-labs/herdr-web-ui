@@ -56,6 +56,19 @@ export type { Machine, MachineEvent, PaneTarget, SetupJob, SetupRequest, SetupAc
  * Legacy paths and missing machine IDs continue to mean local.
  */
 
+/** Dictation uses the browser-facing WebUI, never the selected remote machine or herdr.
+ * GET /api/dictation/config -> DictationConfigResponse; authenticated, no-store, no upstream call.
+ * PUT /api/dictation/config { base_url?: string, api_key?: string | null } -> DictationConfigResponse;
+ * same-origin and x-herdr-dictation: 1 required; overrides lock edits, secrets are never returned.
+ * Configuration changes cancel ongoing requests.
+ * GET /api/dictation/models -> DictationModelsResponse; explicit installed-ASR discovery.
+ * POST /api/dictation/transcribe -> DictationTranscriptionResponse; multipart file/model/generation
+ * and optional language (lowercase ISO 639 code or auto; absent means English), bounded recorded
+ * audio to the configured Speaches service, no retry. All routes require authentication,
+ * same-origin and write permission; device revocation and server stop cancel ongoing requests.
+ */
+export type { DictationConfigResponse, DictationModelsResponse, DictationTranscriptionResponse } from "./dictation.ts";
+
 /** HTTP API
  *  GET    /api/health                    -> { ok: true, herdr: HerdrIdentity (shared/machines.ts; terminal_attach false on a
  *                                          Windows herdr and on a bridge that cannot run the PTY sidecar; terminal_mirror: its

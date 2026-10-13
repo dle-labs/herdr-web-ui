@@ -20,6 +20,8 @@ import { parseMoveRequest } from "./pane-move.ts";
 import { serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
 import { isMouseReport, sameAttachment } from "./input-guard.ts";
+import { DictationSettings, dictationErrorResponse, DictationError, boundedBody, parseDictationSettingsUpdate } from "./dictation.ts";
+import { createDictationTransport, readRecording } from "./dictation/speaches-http.ts";
 import { startStatusCollector } from "./collector.ts";
 import { claudePanePid, claudePaneSession, conversationImage, ConversationUnavailable, forgetPaneTranscriptState, HistoryChanged, paneConversation, paneRunsOmo, toolOutput } from "./conversation.ts";
 import { OPENCODE_TOOL_REF } from "./opencode.ts";
@@ -439,6 +441,10 @@ export function createServer(
     usage?: UsageService;
     /** voice input's key, provider and models; tests pass one with their own env and fetch */
     voice?: VoiceService;
+    /** Locked HTTP(S) speech base URL; unset falls back to HERDR_WEB_DICTATION_BASE_URL, then persisted settings. An explicit empty value disables and locks edits. */
+    dictationBaseUrl?: string;
+    /** Test transport; production retains fetch's TLS verification and refuses redirects. */
+    dictationFetch?: typeof fetch;
     machines?: boolean;
     /** Read-only saved profiles from the local herdr client; tests supply their own catalog. */
     herdrProfiles?: () => Promise<HerdrMachineProfile[]>;
@@ -473,6 +479,10 @@ export function createServer(
     sidecar?: boolean;
   } = {},
 ): ServerInstance {
+  const dictationSettings = new DictationSettings(options.stateDir ?? defaultStateDir(), options.dictationBaseUrl);
+  let dictation = dictationSettings.policy;
+  let dictationTransport = createDictationTransport(dictation, options.dictationFetch);
+  const dictationRequests = new Set<AbortController>();
   const attachments = new Map<string, PaneAttachment>();
   /** whether this bridge can `terminal attach`: herdr is asked once, and the PTY sidecar has to be runnable here (server/pty/sidecar.ts) */
   /** whether the sidecar can run, settled as the server starts so that attach, /api/health and /api/bridge tell one answer; a forced answer (tests) stands in for it */
@@ -1800,6 +1810,57 @@ export function createServer(
       // what every browser of this server shares; a watching device reads it and cannot change it (above)
       if (pathname === "/api/preferences") return handlePreferencesRequest(request, preferences);
 
+      if (pathname.startsWith("/api/dictation/")) {
+        if (!sameOrigin(request)) return jsonResponse({ error: { code: "invalid_origin", message: "Use dictation from this app" } }, 403);
+        if (readOnly) return jsonResponse({ error: { code: "read_only", message: "this device can only watch" } }, 403);
+        if (pathname === "/api/dictation/config" && request.method === "GET") return jsonResponse(dictationSettings.config(), 200, { "cache-control": "no-store" });
+        if (pathname === "/api/dictation/config" && request.method === "PUT") {
+          if (request.headers.get("x-herdr-dictation") !== "1") return jsonResponse({ error: { code: "invalid_origin", message: "Use dictation settings from this app" } }, 403);
+          try {
+            let value: unknown;
+            try { value = JSON.parse(new TextDecoder().decode(await boundedBody(request.body, 4096, request.signal))); }
+            catch (error) { if (error instanceof DictationError) throw error; throw new DictationError("format", "Expected base_url and/or api_key settings"); }
+            const update = parseDictationSettingsUpdate(value);
+            // Driving a paired device or an open LAN session is not administrator authority.
+            if ("base_url" in update && !(access.level === "full" && ["token", "local", "tailscale"].includes(access.via))) {
+              return jsonResponse({ error: { code: "config_locked", message: "Only the owner can change the speech server destination" } }, 403);
+            }
+            const policy = dictationSettings.save(update);
+            for (const controller of dictationRequests) controller.abort(new DictationError("config_changed", "Dictation configuration changed; check and Apply settings", 409));
+            dictationRequests.clear();
+            dictation = policy;
+            dictationTransport = createDictationTransport(policy, options.dictationFetch);
+            return jsonResponse(dictationSettings.config(), 200, { "cache-control": "no-store" });
+          } catch (error) { return dictationErrorResponse(error); }
+        }
+        if ((pathname === "/api/dictation/models" && request.method === "GET") || (pathname === "/api/dictation/transcribe" && request.method === "POST")) {
+          if (!dictation.enabled) return dictationErrorResponse(new DictationError("not_configured", "Dictation is not configured", 503));
+          const policy = dictation;
+          const transport = dictationTransport;
+          bunServer.timeout(request, 70);
+          const controller = new AbortController();
+          dictationRequests.add(controller);
+          const timeout = setTimeout(() => controller.abort(new DictationError("timeout", "Dictation request timed out", 408)), pathname.endsWith("/models") ? 10_000 : 65_000);
+          const signal = AbortSignal.any([controller.signal, request.signal]);
+          const deviceId = access.level === "full" ? access.device?.id : undefined;
+          const unwatch = deviceId ? devices.onRevoke(deviceId, () => controller.abort()) : undefined;
+          try {
+            if (pathname.endsWith("/models")) {
+              const models = await transport.models(signal);
+              signal.throwIfAborted();
+              return jsonResponse({ models }, 200, { "cache-control": "no-store" });
+            }
+            const { file, model, language } = await readRecording(request, policy, signal);
+            signal.throwIfAborted();
+            const text = await transport.transcribe(file, model, signal, language);
+            signal.throwIfAborted();
+            if (!text) throw new DictationError("no_speech", "No speech was recognized");
+            return jsonResponse({ text }, 200, { "cache-control": "no-store" });
+          } catch (error) {
+            return dictationErrorResponse(signal.aborted && signal.reason instanceof DictationError ? signal.reason : error);
+          } finally { clearTimeout(timeout); unwatch?.(); dictationRequests.delete(controller); }
+        }
+      }
       if (pathname === "/api/usage") return handleUsageRequest(request, url, usage);
       // a long clip can keep the provider silent past Bun's 10 s idle limit before the first line
       if (pathname === "/api/voice" || pathname.startsWith("/api/voice/")) { bunServer.timeout(request, 120); return handleVoiceRequest(request, pathname, voice); }
@@ -3334,6 +3395,8 @@ export function createServer(
       stopped = true;
       settlePortalStartup({ ok: false, error: new Error("Server stopped before Portal startup cleanup completed") });
       conversations.stop();
+      for (const controller of dictationRequests) controller.abort();
+      dictationRequests.clear();
       clearInterval(outputTimer);
       collector.stop();
       omo.stop();

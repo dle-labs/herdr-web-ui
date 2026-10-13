@@ -92,6 +92,8 @@ try {
     // only the first load: a reload must keep what Settings stored, such as the language
     if (!localStorage.getItem("herdr-web-ui:settings")) localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
     for (const id of ids) localStorage.setItem(`herdr-web-ui:view:${id}`, "chat");
+    // No live browser vendor: unsupported Auto stays hidden until the owned fake below is installed.
+    Object.assign(window, { SpeechRecognition: undefined, webkitSpeechRecognition: undefined });
   }, panes);
   // A hook for a check that changes the roster on a page already loaded: a route cannot reach the
   // /api/machines/events stream the page has open, so `window.__rewriteMachinesFrame`, while set,
@@ -173,8 +175,12 @@ try {
   await until(() => painted.has(paneA), "owned pane paint");
   const composer = page.getByRole("textbox", { name: "Message", exact: true });
   await composer.waitFor();
-  await page.locator(".composer .voice-mic").waitFor();
-  console.log("PASS a desktop's chat offers the mic before Settings is asked");
+  // Keep upstream typing defaults: dictated code, commands and paths are not silently rewritten.
+  assert.equal(await composer.getAttribute("autocorrect"), "off", "upstream composer disables autocorrect");
+  assert.equal(await composer.getAttribute("spellcheck"), "false", "upstream composer disables spell checking");
+  assert.equal(await composer.getAttribute("autocapitalize"), "off", "upstream composer disables automatic capitals");
+  assert.equal(await page.locator(".composer .voice-mic").count(), 0, "unsupported Auto hides dictation on desktop");
+  console.log("PASS unavailable Auto dictation is hidden on desktop");
   assert.equal(await workspaceHeader(workspaces[0]!).locator(".workspace-name").textContent(), "herdr-web-ui-test-browser-a",
     "Spaces names the workspace rather than its current pane");
   assert.equal(await workspaceGroup(workspaces[0]!).locator(".pane-select").count(), 1, "a workspace has one representative selector");
@@ -1011,7 +1017,7 @@ try {
     const card = await page.locator(".composer-surface").boundingBox();
     assert.ok(pane && card);
     const [text, left, status, right] = await Promise.all([".composer-text", ".composer-controls-left", ".composer-status", ".composer-controls-right"]
-      .map((selector) => page.locator(`.composer-surface > ${selector}`).boundingBox()));
+      .map((selector) => page.locator(`.composer-surface ${selector}`).boundingBox()));
     assert.ok(text && left && status && right, "the message box and the three cells of the controls row");
     // each row spans the card's inner width: inside its hairline border, a fraction of a px either way
     assert.ok(Math.abs(text.x - card.x) <= 2.5 && Math.abs(text.width - card.width) <= 4, `.composer-text spans the box: ${JSON.stringify({ text, card })}`);
@@ -1325,6 +1331,11 @@ try {
     speech.realSpeech = { SpeechRecognition: speech.SpeechRecognition, webkitSpeechRecognition: speech.webkitSpeechRecognition };
     Object.assign(window, { SpeechRecognition: FakeSpeech, webkitSpeechRecognition: FakeSpeech });
   });
+  await page.keyboard.press("ControlOrMeta+Shift+Comma");
+  await openSettingsPage(page, "Dictation");
+  await page.getByRole("group", { name: "Microphone button", exact: true }).getByRole("button", { name: "On", exact: true }).click();
+  await page.locator("#voice-provider").selectOption("browser");
+  await page.getByRole("button", { name: "Close settings", exact: true }).click();
   await selectPane(paneA);
   await selectPane(paneB);
   await composer.pressSequentially("/");
@@ -1349,6 +1360,11 @@ try {
     delete speech.fakeSpeech;
   });
   await composer.fill("");
+  await page.keyboard.press("ControlOrMeta+Shift+Comma");
+  await openSettingsPage(page, "Dictation");
+  await page.getByRole("group", { name: "Microphone button", exact: true }).getByRole("button", { name: "Auto", exact: true }).click();
+  await page.locator("#voice-provider").selectOption("auto");
+  await page.getByRole("button", { name: "Close settings", exact: true }).click();
   await selectPane(paneA);
   await selectPane(paneB);
   held.clear();
@@ -2126,7 +2142,7 @@ try {
   await mobilePage.route(promptRoute, (route) => route.fulfill(suggest));
   await mobileComposer.fill("");
   await until(async () => await mobileComposer.getAttribute("placeholder") === "run the tests", "a phone shows the suggestion as the placeholder");
-  assert.equal(await mobilePage.locator(".voice-mic").count(), 0, "a phone's chat has no mic until Settings asks for it");
+  assert.equal(await mobilePage.locator(".voice-mic").count(), 0, "default Auto hides dictation on phones");
   await mobilePage.getByTitle("Use the suggestion", { exact: true }).click();
   assert.equal(await mobileComposer.inputValue(), "run the tests", "the chip puts the suggestion in the box");
   await mobilePage.unroute(promptRoute);
@@ -2200,7 +2216,7 @@ try {
   await line.fill("unsent 한글 😀");
   // typing straight into the grid is one tap away, and gives the keyboard back to it
   await touchPage.getByRole("button", { name: "Type straight into the terminal", exact: true }).click();
-  assert.equal(await touchPage.locator(".terminal-input").count(), 0);
+  assert.equal(await touchPage.locator(".terminal-input").count(), 0, "direct typing does not add a dictation draft");
   assert.equal(await touchPage.locator(".xterm-helper-textarea").getAttribute("inputmode"), null);
   await touchPage.getByRole("button", { name: "Type straight into the terminal", exact: true }).click();
   await line.waitFor();
@@ -2218,7 +2234,7 @@ try {
   }
   if (touchEvidence) await touchEvidence.finish();
   await touch.close();
-  console.log("PASS touch terminal input line sends whole lines, Enter alone, and yields to direct typing");
+  console.log("PASS touch terminal draft sends whole lines and Enter alone, and yields to direct typing");
 
   // A closed pane and an obsolete saved pane both yield to a live pane. Local access
   // is automatic, so it must not offer a sign-out action that cannot lock the app.

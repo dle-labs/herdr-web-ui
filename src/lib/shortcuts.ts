@@ -18,7 +18,7 @@ export const SHORTCUTS = [
   { id: "previous-pane", label: "Previous pane", keys: ["Mod", "Shift", "ArrowUp"] },
   { id: "next-pane", label: "Next pane", keys: ["Mod", "Shift", "ArrowDown"] },
   { id: "settings", label: "Settings", keys: ["Mod", "Shift", ","] },
-  // listed only: held, not dispatched; VoiceInput.tsx listens for it itself (isVoiceShortcut)
+  // listed only: VoiceInput.tsx routes the held/tapped shortcut to the active draft (isVoiceShortcut)
   { id: "voice", label: "Dictate (hold)", keys: ["Mod", "Shift", "Space"] },
 ] as const;
 
@@ -95,7 +95,7 @@ export function matchShortcut(event: ShortcutEventLike, platformIsMac: boolean, 
   return id && !Object.hasOwn(overrides, id) ? id : null;
 }
 
-/** Mod+Shift+Space, held to dictate. matchShortcut never returns "voice": it has no action. */
+/** Mod+Shift+Space supports hold or short taps. matchShortcut never returns "voice": it has no action. */
 export function isVoiceShortcut(event: ShortcutEventLike, platformIsMac: boolean): boolean {
   const hasMod = platformIsMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   return hasMod && event.shiftKey && !event.altKey && (event.code === "Space" || event.key === " ");

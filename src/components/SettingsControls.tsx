@@ -21,10 +21,11 @@ export function SettingsGroup({ title, note, className, section, children }: { t
 /**
  * One setting. `wide` marks a control that needs the whole line on a phone (three or more
  * segments, a text field): the row stacks there, and stays one line everywhere else.
+ * `stacked` keeps multi-control forms below their label at every width.
  */
-export function SettingsRow({ label, description, htmlFor, wide = false, children }: { label: string; description?: ReactNode; htmlFor?: string; wide?: boolean; children: ReactNode }) {
+export function SettingsRow({ label, description, htmlFor, wide = false, stacked = false, children }: { label: string; description?: ReactNode; htmlFor?: string; wide?: boolean; stacked?: boolean; children: ReactNode }) {
   return (
-    <div className={wide ? "settings-row is-wide" : "settings-row"}>
+    <div className={`settings-row${wide ? " is-wide" : ""}${stacked ? " settings-row-stacked" : ""}`}>
       <div className="settings-row-text">
         {htmlFor !== undefined ? <label className="settings-label" htmlFor={htmlFor}>{label}</label> : <span className="settings-label">{label}</span>}
         {description !== undefined && <span className="settings-description">{description}</span>}

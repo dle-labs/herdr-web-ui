@@ -11,6 +11,8 @@ import "./ChatView.css";
 import "./ChatTimeline.css";
 
 import { AgentMark } from "./AgentMark.tsx";
+import { CommentAction, CommentDraft } from "./CommentDraft.tsx";
+import type { CommentReference } from "../lib/commentDraft.ts";
 import { AnimatedHeight } from "./AnimatedHeight.tsx";
 import { ChatDiffContext, TurnChangedFiles } from "./TurnChangedFiles.tsx";
 import type { RepoDiffTarget } from "../lib/repoDiff.ts";
@@ -72,6 +74,9 @@ const ChatHistoryContext = createContext("");
  * output while the viewer is open), and it must not take the open viewer with it.
  */
 const ImageViewerContext = createContext<(images: GalleryImage[], index: number) => void>(() => {});
+const ChatCommentContext = createContext(false);
+const ChatCommentActiveContext = createContext(false);
+const ChatCommentOpenContext = createContext<((reference: CommentReference, trigger: HTMLButtonElement) => void) | undefined>(undefined);
 import type { TypedAnswer } from "../lib/promptAnswer.ts";
 import type { AgentStatus, ConversationMetadata, ConversationPart, ConversationResponse, ConversationTurn, InteractivePrompt, OmoTaskResult } from "../../shared/protocol.ts";
 import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
@@ -103,6 +108,8 @@ export interface ChatViewProps {
   /** bumped when a composer message goes out, before the transcript holds it */
   sentKey?: number;
   connected: boolean;
+  /** A hidden, held or observing pane must not retain comment capture. */
+  commentActive?: boolean;
   ended: boolean;
   agent: string | null;
   agentStatus?: AgentStatus;
@@ -612,6 +619,9 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
 // a turn that did not change keeps its object across polls: skip re-rendering it
 const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, skills = null, matched = false }: TurnProps) {
   const t = useT();
+  const commentConnected = useContext(ChatCommentContext);
+  const commentActive = useContext(ChatCommentActiveContext);
+  const openComment = useContext(ChatCommentOpenContext);
   // under the turn, not in its meta row: that row fades out once the pointer and focus leave
   const [copyFailed, setCopyFailed] = useChatRowToggle("copy-failed", false);
   const copyError = copyFailed && <p className="chat-copy-error" role="alert">{t("Couldn't copy. Select the text and copy it manually.")}</p>;
@@ -669,6 +679,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
       <CopyButton className="chat-meta-btn chat-meta-plain" text={plainText(answerText)} label={t("Copy as plain text")} onResult={copied}><span className="chat-meta-fmt">TXT</span><span className="chat-meta-word">{t("Plain text")}</span></CopyButton>
       {time}
     </div>}
+    {answerText.length > 0 && !live && !waiting && <CommentAction paneId={paneId} reference={{ kind: "reply", text: answerText }} connected={commentConnected} active={commentActive} onOpen={openComment} />}
     {copyError}
   </article>;
 });
@@ -715,7 +726,7 @@ function TerminalFallback({ paneId }: { paneId: string }) {
 }
 
 // the app re-renders on every pane-status and poll; an unchanged transcript sits those out
-export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff, active = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
+export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff, active = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, commentActive = true, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
   const { settings } = useSettings();
@@ -1289,6 +1300,33 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
 
   const rowSlots = slots.current.rows;
   const timelineScope = JSON.stringify(slots.current.scope);
+  // The editor belongs to ChatView, not its trigger's virtual row. Paging or new output may
+  // unmount that row without discarding a comment or interrupting its recording.
+  const commentScope = JSON.stringify([machineId, paneId, historyId, timelineScope]);
+  const commentsActive = active && commentActive && !ended;
+  const commentOpening = useRef(0);
+  const [openedComment, setOpenedComment] = useState<{
+    reference: CommentReference; trigger: HTMLButtonElement; scope: string; opening: number;
+  } | null>(null);
+  const [commentAdded, setCommentAdded] = useState<string | null>(null);
+  const openComment = useCallback((reference: CommentReference, trigger: HTMLButtonElement) => {
+    if (!commentsActive) return;
+    setCommentAdded(null);
+    setOpenedComment({ reference: { ...reference }, trigger, scope: commentScope, opening: ++commentOpening.current });
+  }, [commentScope, commentsActive]);
+  const closeComment = useCallback((added = false) => {
+    setOpenedComment(null);
+    if (!commentsActive || openedComment?.scope !== commentScope) return;
+    if (added) setCommentAdded(commentScope);
+    // Its virtual row may have left the window. Never focus a detached trigger or a hidden pane.
+    if (openedComment.trigger.isConnected) openedComment.trigger.focus({ preventScroll: true });
+  }, [commentScope, commentsActive, openedComment]);
+  // The render guard unmounts the old editor immediately; clearing also prevents it returning
+  // when the same pane/history is selected again. Unmount cancels its dictation hook.
+  useLayoutEffect(() => {
+    setOpenedComment(null);
+    setCommentAdded(null);
+  }, [commentScope, commentsActive]);
   // another pane or PC: its pictures are not this one's
   useEffect(() => setViewer(null), [timelineScope]);
   const rowMemories = useMemo(() => new Map<string, ChatRowMemory>(), [timelineScope]);
@@ -1395,7 +1433,7 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
   </>;
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
-  return <ChatDiffContext.Provider value={diffContext}><ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
+  return <ChatDiffContext.Provider value={diffContext}><ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}><ChatCommentContext.Provider value={connected && !ended}><ChatCommentActiveContext.Provider value={commentsActive}><ChatCommentOpenContext.Provider value={openComment}>
     <div className="chat-frame">
     {state.source === "conversation" && findOpen && <ChatFind key={timelineScope} rows={searchRows} older={typeof olderCursor === "string"} olderState={olderState} onOlder={loadOlder} onMatch={showMatch} onClose={closeFind} />}
     <div className="chat-frame-body">
@@ -1435,6 +1473,12 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
     {jump}
     {state.source === "conversation" && !findOpen && <button ref={findButton} type="button" className="icon-button chat-find-open" aria-label={t("Find in messages")} title={t("Find in messages")} onClick={() => setFindOpen(true)}><Search aria-hidden="true" /></button>}
     </div>
+    {commentsActive && (openedComment?.scope === commentScope || commentAdded === commentScope) && <div className="chat-comment-dock">
+      {openedComment?.scope === commentScope && <CommentDraft key={`${commentScope}:${openedComment.opening}`}
+        paneId={paneId} reference={openedComment.reference} connected={connected && !ended} active={commentsActive}
+        onClose={() => closeComment()} onAdded={() => closeComment(true)} />}
+      {commentAdded === commentScope && <p className="comment-draft-note" role="status">{t("Comment added to the message draft. Review it before sending.")}</p>}
+    </div>}
     </div>
   {/* The prompt card is not part of the transcript: it is drawn on the composer's column, over the
       input card, where PaneTerminal keeps its place. The prompt itself (its poll, the answer, the
@@ -1449,5 +1493,5 @@ export const ChatView = memo(function ChatView({ paneId, cwd = null, onOpenDiff,
       onPendingAnswerDone?.(paneId, prompt.id);
     }} />, promptDock)}
   {viewer !== null && <ImageLightbox images={viewer.images} index={viewer.index} onClose={closeViewer} />}
-  </ImageViewerContext.Provider></ChatHistoryContext.Provider></ChatPaneContext.Provider></ChatDiffContext.Provider>;
+  </ChatCommentOpenContext.Provider></ChatCommentActiveContext.Provider></ChatCommentContext.Provider></ImageViewerContext.Provider></ChatHistoryContext.Provider></ChatPaneContext.Provider></ChatDiffContext.Provider>;
 });

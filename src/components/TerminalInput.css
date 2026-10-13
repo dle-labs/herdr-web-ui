@@ -22,7 +22,7 @@
   display: contents;
 }
 
-/* the terminal's input line on touch screens (TerminalInput.tsx): one row that grows to four,
+/* the terminal's draft input line (TerminalInput.tsx): one row that grows to four,
    with a send button that reads Enter while the line is empty. It hangs from the slot's bottom
    edge, so it grows upward; the dictation pill floats above it. It reaches the grid's top at
    most (--terminal-input-room, measured by PaneTerminal.tsx): past that the text scrolls */

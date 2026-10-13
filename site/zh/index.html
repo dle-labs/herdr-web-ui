@@ -459,11 +459,11 @@
           <div class="n">06</div>
           <div>
             <h3>开口代替打字。<span class="arw" aria-hidden="true">→</span></h3>
-            <p>在聊天或终端输入行中语音输入，韩语和英语混说也能识别。发送给智能体之前可以先检查文字；转写使用你自己的 OpenAI 密钥，或浏览器自带的语音识别。</p>
+            <p>在聊天或终端输入行中，按住或点按麦克风即可听写。默认 Auto 优先选择已配置且受支持的 OpenAI，否则使用受支持的浏览器语音识别；自托管 Speaches 需明确选择，录音结束后一次转写。每次录音固定使用一个服务商，不因错误切换。默认先结束、检查文字，再发送；结束并发送需主动开启。</p>
           </div>
           <div class="ev" aria-hidden="true">
-            <div class="ev-row"><span>按住麦克风</span><b><i class="dot working"></i>录音中 0:04</b></div>
-            <div class="q">테스트 다시 돌리고, fix the flaky one</div>
+            <div class="ev-row"><span>点击麦克风</span><b><i class="dot working"></i>录音中 0:04</b></div>
+            <div class="q">Run the tests again and fix the flaky one</div>
             <div class="ev-note">插入到光标处 · 不会自动发送</div>
           </div>
         </a>
@@ -563,7 +563,7 @@
               </tr>
               <tr>
                 <th scope="row">回答方式</th>
-                <td class="us" data-client="herdr web ui">提示卡片（发送前与实时菜单核对），或直接用终端。两者都能语音输入。</td>
+                <td class="us" data-client="herdr web ui">提示卡片（发送前与实时菜单核对），或直接用终端。聊天和终端输入行支持听写。</td>
                 <td data-client="collie">可点按的提示按钮、快捷回复、语音输入。</td>
                 <td data-client="roamgate">在终端中输入，可用编辑框或直接按键。</td>
                 <td data-client="herdr-remote">在手机、菜单栏或 Telegram 上一键批准。</td>
@@ -620,7 +620,7 @@
           </div>
           <div class="qa">
             <dt>我的代码或对话会离开我的电脑吗？</dt>
-            <dd>会话文件保留在运行各个智能体的电脑上，内容会发送到你连接的浏览器。本应用没有自有的云端中继或账号服务。可选的语音输入会把录音发送给配置的服务商；启用文字整理时也会发送文本。启用用量显示后，会连接服务商的 API。更新、远程电脑设置和推送提醒也可能连接外部服务。应用在安装时和每次更新时会发送一次匿名计数（版本、操作系统、安装方式和一个随机 ID，不保存 IP 地址），可在 Settings → About → Anonymous usage counts 中查看发送内容并关闭。智能体自身如何连接模型，取决于它的配置。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">数据传输与访问 →</a></dd>
+            <dd>会话文件保留在运行各个智能体的电脑上，内容会发送到你连接的浏览器。本应用没有自有的云端中继或账号服务。可选的听写仅使用你选择的服务商：OpenAI 录音和可选的文字润色通过 WebUI 语音后端处理；自托管的完整录音通过 WebUI 发送到 Speaches，不实时传输音频；浏览器语音识别可能使用浏览器厂商的服务。Auto 在录音前选择 OpenAI 或浏览器识别；明确选择的服务商和进行中的录音不会回退。启用用量显示后，会连接服务商的 API。更新、远程电脑设置和推送提醒也可能连接外部服务。应用在安装时和每次更新时会发送一次匿名计数（版本、操作系统、安装方式和一个随机 ID，不保存 IP 地址），可在 Settings → About → Anonymous usage counts 中查看发送内容并关闭。智能体自身如何连接模型，取决于它的配置。 <a href="https://github.com/devswha/herdr-web-ui/blob/main/docs/guide.md#faq">数据传输与访问 →</a></dd>
           </div>
           <div class="qa">
             <dt>支持 Windows 吗？</dt>

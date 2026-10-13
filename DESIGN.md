@@ -1356,14 +1356,55 @@ One set for both themes: the card is island black wherever it shows.
   schedules a pending message; its Send now action submits that same message now.
 
 ### Voice input
-- A mic button sits beside the add button in the composer and beside Send in the terminal input line; it
-  fills with `--accent` while recording. Dictated text is inserted at the caret, never sent.
-- `voiceInput`: `auto`, `on` or `off`; default `auto`. Auto puts the mic in the composer only, not on
-  a phone (the composer's `(max-width: 640px), (pointer: coarse)`), and leaves it out where dictation
-  cannot work (no HTTPS, or no key and no browser recognition). On shows it in both inputs and on a
-  phone, disabled with its reason where it cannot work.
-- The recording pill shows Cancel, a **Recording** label, the level bars, a mono timer and Done.
-  Amber only; `--danger` stays for errors.
+- The upstream microphone controls serve chat and terminal input lines: hold to record/release to
+  finish, tap Start/Finish, or use Mod+Shift+Space. Reply/file comment editors reuse the chat
+  `MicButton`, `VoiceRecordingPill` and `useDictation`, with the same Finish/review default and
+  cancellation on close or disconnect. The narrow editor keeps the reply/file quote immutable.
+  Add to message explicitly appends the comment and quote to the existing message draft for review;
+  it never submits to the terminal, even with finish-and-send enabled. Comments have no separate
+  persistent annotation store or pins.
+  `settings.voiceFinishAndSend` defaults to `false`: Finish, review, then Send. When enabled, ONLY
+  an explicit Send during recording finishes capture, waits for safe final insertion and the committed
+  draft, then submits once through normal validation. Errors, cancellation, changed drafts/IME,
+  settings, owner or connection changes abandon that intent. Normal Finish remains draft-only.
+  During recording Escape cancels/discards; Enter finishes without sending regardless of this setting.
+  IME composition keeps its keys. Composer capitalization and autocorrect retain upstream settings.
+  Secret fields have no microphone.
+- Transcription provider defaults to Auto: choose configured/supported OpenAI, otherwise supported
+  browser recognition, before capture. Keep that provider for the take; errors never cause mid-take
+  fallback. Explicit OpenAI, Browser and Speaches choices never fall back.
+- Pointer-down starts microphone acquisition; the status says Starting microphone until the
+  recorder emits its start event. Startup shows no level bars, elapsed timer or recording indicator.
+  Audio before browser permission/device readiness cannot be captured; no background mic is held.
+- Undo beside the microphone removes the last inserted take, including its added spacing, while
+  retaining earlier takes and unrelated edits. Takes edited internally are no longer undoable as a unit.
+  Undo is disabled during capture/inference/recovery, and its history clears with the draft owner.
+- `voiceInput`: `auto`, `on` or `off`; default `auto`. Auto normally shows available desktop-chat
+  microphones. Explicit Speaches selection keeps the chat mic visible on phones too, with a setup
+  reason when unavailable. On shows it in desktop/mobile chat and terminal input lines,
+  disabled with an unavailable reason when it cannot record. Off hides it; Settings stays accessible.
+  Terminal dictation lives in line-input mode; it never adds an input beside direct grid typing.
+- Dictation settings explicitly applies a model; the HTTP(S) speech URL is saved separately
+  through the WebUI backend for all connected browsers. Administrators supply the full API base path
+  (no automatic /v1); hosts and paths are unrestricted. Help asks for a trusted server and warns
+  that HTTP sends audio and API keys in plaintext. The URL row and Save speech server control
+  are read-only when the environment sets the destination. Saving cancels dictation and requires
+  Apply again; it does not contact the speech service. An optional API key stays in the DOM input
+  until explicit Save, clears on submit/hide/unmount, and is persisted only on the backend. Changing
+  a keyed destination requires re-entering or removing the key. Recognition language is a per-device
+  applied preference; Auto delegates detection to the backend. One Refresh models action lists models;
+  there is no duplicate Check action. Completed recordings upload through WebUI on Finish; audio is
+  not streamed while recording. No vendor fallback or polishing for Speaches; the browser only
+  connects to the app's own origin.
+- Reuse the upstream compact floating recording pill over the composer, with its original seven-bar
+  waveform, Recording label, mono timer and Cancel. It does not replace the message field or expand
+  into a full-width/history waveform; the draft stays intact. Transcribing uses lucide LoaderCircle
+  with the project's existing stepped loader, not a new animation. Theme tokens supply surfaces,
+  text and accent; danger tokens stay for errors, and touch controls use `--touch-target`.
+  Respect reduced motion (see Motion). Send is unavailable during startup/transcription; during
+  recording finish-and-send requires the opt-in setting and explicit Send. Changed drafts/selections
+  get an owner-scoped transcript with Insert at cursor / Discard. Error text uses `role="alert"`;
+  status uses `role="status"`.
 
 ### Command palette
 - `Mod+Shift+K` opens a top-offset `--palette-w` dialog searching panes across all connected PCs
@@ -1431,7 +1472,7 @@ One set for both themes: the card is island black wherever it shows.
   (panes open in, show thinking, chat width, chat font size and family, highlight code; then
   **Composer**: optional plain PageUp/PageDown chat scrolling (off by default), Enter sends, files at once, suggestion chip; then **Quick replies**; then **File viewer**: wrap long
   lines, Markdown width, Diff layout), **Terminal** (font size, 80 columns in a split, font family, wheel
-  speed, input mode, Key bar), **Alerts**, **Voice input**, **Subscription usage**,
+  speed, input mode, Key bar), **Alerts**, **Dictation**, **Subscription usage**,
   **Shortcuts** (the platform-resolved global bindings, then **Paging** with a 0–100 line overlap stepper; one line by default, zero for a full viewport), **Phone & devices** (the phone address,
   Keep screen on, Install; then Portal, where the server offers it; then paired devices),
   **Remote PCs**, **About** (Updates, herdr, the repository links). A button that points at
@@ -1578,7 +1619,8 @@ The values are the ones in `src/styles.css`: `--motion-scale` is the panel motio
   animation. At `<=640px` they are bottom sheets and move as an iPhone's do (Modal, above): what a
   finger drags follows the finger, and the rest rises and drops.
 - The voice recording waveform is the one surface allowed to draw every frame: only while
-  recording, driven by the live microphone level, transform-only (`scaleY` on 7 bars). The pill is
+  recording, driven by microphone levels, transform-only (`scaleY` on the original seven bars).
+  There is no adaptive bar count or level history. The pill is
   a state change, not a dialog, so the snap rule above does not apply to it.
 - `prefers-reduced-motion: reduce` removes pulses, drawer/control transitions, sheet rise and drop,
   smooth chat scrolling and settings toggle motion; a drag still follows the finger. State remains legible without animation.

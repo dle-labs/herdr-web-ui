@@ -2572,8 +2572,10 @@ export function PaneTerminal({
           </div>
         )}
       </div>
+      {/* Find and TerminalInput can be siblings for the same pane: distinct keys keep a
+          draft update or search receipt from replacing Find's state during reconciliation. */}
       {presented && findOpen && !chatView && paneId !== null && (
-        <FindBar key={paneId} paneId={paneId} viewportIntent={viewportIntent} onResult={setSearchState} activePane={active} focusRequest={findRequest} disabled={!connected || held || ended || released || !outputReady}
+        <FindBar key={`find-${paneId}`} paneId={paneId} viewportIntent={viewportIntent} onResult={setSearchState} activePane={active} focusRequest={findRequest} disabled={!connected || held || ended || released || !outputReady}
           onClose={() => { setFindOpen(false); if (activeRef.current && !coarse) termRef.current?.focus(); }} />
       )}
       <div className="terminal-surface">
@@ -2612,6 +2614,7 @@ export function PaneTerminal({
             onTerminalOutput={onTerminalOutput}
             sentKey={chatSent}
             connected={connected}
+            commentActive={active && !observing && !held}
             ended={ended}
             agent={agent}
             agentStatus={agentStatus}
