@@ -1,7 +1,8 @@
-import { closeSync, lstatSync, openSync, readSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readlinkSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
 
-import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope, RepoDiffStatus } from "../shared/protocol.ts";
+import type { FileSearchResult, RepoCommitSearch, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope, RepoDiffStatus } from "../shared/protocol.ts";
 import { errorResponse, jsonResponse } from "./http.ts";
 
 /**
@@ -26,10 +27,11 @@ export const REPO_DIFF_MAX_LIST_BYTES = 2 * 1024 * 1024;
 export const REPO_DIFF_MAX_PATCH_BYTES = 1024 * 1024;
 /** Unchanged lines around each change, as `git diff` prints by default. */
 export const REPO_DIFF_CONTEXT_LINES = 3;
-/** How long one git process may run. */
+/** Aggregate request deadline, shared by every inspection process and recheck. */
 export const REPO_DIFF_DEADLINE_MS = 10_000;
 const MAX_PATH_BYTES = 4_096;
-const SNIFF_BYTES = 8_192;
+const MAX_CONTENT_BYTES = 2 * 1024 * 1024;
+const MAX_INSPECTION_BYTES = 8 * 1024 * 1024;
 
 export interface RepoDiffOptions {
   /** the git to run (a stand-in, in tests) */
@@ -38,6 +40,8 @@ export interface RepoDiffOptions {
   maxFiles?: number;
   maxListBytes?: number;
   maxPatchBytes?: number;
+  maxInspectionBytes?: number;
+  signal?: AbortSignal;
 }
 
 /** A refusal in the API's own words: it never carries git's stderr. */
@@ -45,11 +49,13 @@ export class RepoDiffError extends Error {
   constructor(readonly code: string, message: string, readonly status: number) { super(message); }
 }
 
-interface GitRun { code: number | null; stdout: string; overflow: boolean }
+interface GitRun { code: number | null; stdout: string; overflow: boolean; bytes?: Buffer }
 
 interface Context {
   git: string;
-  deadlineMs: number;
+  deadlineAt: number;
+  remainingBytes: number;
+  signal?: AbortSignal;
   maxFiles: number;
   maxListBytes: number;
   maxPatchBytes: number;
@@ -58,10 +64,12 @@ interface Context {
 function contextOf(options: RepoDiffOptions): Context {
   return {
     git: options.git ?? "git",
-    deadlineMs: options.deadlineMs ?? REPO_DIFF_DEADLINE_MS,
-    maxFiles: options.maxFiles ?? REPO_DIFF_MAX_FILES,
-    maxListBytes: options.maxListBytes ?? REPO_DIFF_MAX_LIST_BYTES,
-    maxPatchBytes: options.maxPatchBytes ?? REPO_DIFF_MAX_PATCH_BYTES,
+    deadlineAt: Date.now() + Math.min(options.deadlineMs ?? REPO_DIFF_DEADLINE_MS, REPO_DIFF_DEADLINE_MS),
+    remainingBytes: Math.min(options.maxInspectionBytes ?? MAX_INSPECTION_BYTES, MAX_INSPECTION_BYTES),
+    signal: options.signal,
+    maxFiles: Math.min(options.maxFiles ?? REPO_DIFF_MAX_FILES, REPO_DIFF_MAX_FILES),
+    maxListBytes: Math.min(options.maxListBytes ?? REPO_DIFF_MAX_LIST_BYTES, REPO_DIFF_MAX_LIST_BYTES),
+    maxPatchBytes: Math.min(options.maxPatchBytes ?? REPO_DIFF_MAX_PATCH_BYTES, REPO_DIFF_MAX_PATCH_BYTES),
   };
 }
 
@@ -69,7 +77,7 @@ function gitEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
     // a repository the server itself was started inside (a hook, a test runner) is not the one asked about
-    if (value === undefined || name === "GIT_DIR" || name === "GIT_WORK_TREE" || name === "GIT_INDEX_FILE" || name === "GIT_EXTERNAL_DIFF" || name === "GIT_PAGER") continue;
+    if (value === undefined || name.startsWith("GIT_")) continue;
     env[name] = value;
   }
   return { ...env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" };
@@ -77,7 +85,11 @@ function gitEnvironment(): Record<string, string> {
 
 /** One git process in `cwd`: stdout up to `maxBytes`, killed at the deadline or once it prints more. */
 async function runGit(context: Context, cwd: string, args: string[], maxBytes: number): Promise<GitRun> {
-  const argv = [context.git, "--no-pager", "--no-optional-locks", "--literal-pathspecs", "-c", "core.quotePath=false", "-c", "core.fsmonitor=false", "-c", "color.ui=never", "-C", cwd, ...args];
+  if (context.signal?.aborted) throw new RepoDiffError("git_cancelled", "git inspection was cancelled", 499);
+  const remainingMs = context.deadlineAt - Date.now();
+  if (remainingMs <= 0) throw new RepoDiffError("git_timeout", "git did not answer in time", 504);
+  if (context.remainingBytes <= 0) throw new RepoDiffError("git_output_limit", "git inspection exceeded its output budget", 413);
+  const argv = [context.git, "--no-pager", "--no-optional-locks", "--literal-pathspecs", "-c", "core.quotePath=false", "-c", "core.fsmonitor=false", "-c", "core.autocrlf=false", "-c", "color.ui=never", "-C", cwd, ...args];
   let proc: Bun.Subprocess<"ignore", "pipe", "ignore">;
   try {
     proc = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "ignore", env: gitEnvironment() });
@@ -90,7 +102,9 @@ async function runGit(context: Context, cwd: string, args: string[], maxBytes: n
     timedOut = true;
     proc.kill("SIGKILL");
     void reader.cancel().catch(() => undefined);
-  }, context.deadlineMs);
+  }, remainingMs);
+  const cancel = () => { proc.kill("SIGKILL"); void reader.cancel().catch(() => undefined); };
+  context.signal?.addEventListener("abort", cancel, { once: true });
   const chunks: Uint8Array[] = [];
   let size = 0;
   let overflow = false;
@@ -99,6 +113,8 @@ async function runGit(context: Context, cwd: string, args: string[], maxBytes: n
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
+      context.remainingBytes -= value.byteLength;
+      if (context.remainingBytes < 0) { cancel(); throw new RepoDiffError("git_output_limit", "git inspection exceeded its output budget", 413); }
       if (size > maxBytes) {
         overflow = true;
         const keep = value.byteLength - (size - maxBytes);
@@ -110,17 +126,21 @@ async function runGit(context: Context, cwd: string, args: string[], maxBytes: n
       chunks.push(value);
     }
     const code = await proc.exited;
+    if (context.signal?.aborted) throw new RepoDiffError("git_cancelled", "git inspection was cancelled", 499);
     if (timedOut) throw new RepoDiffError("git_timeout", "git did not answer in time", 504);
-    return { code: overflow ? null : code, stdout: Buffer.concat(chunks).toString("utf8"), overflow };
+    const bytes = Buffer.concat(chunks);
+    return { code: overflow ? null : code, stdout: bytes.toString("utf8"), bytes, overflow };
   } finally {
     clearTimeout(timer);
+    context.signal?.removeEventListener("abort", cancel);
   }
 }
 
 async function repositoryOf(context: Context, cwd: string): Promise<RepoDiffRepository> {
   const top = await runGit(context, cwd, ["rev-parse", "--show-toplevel"], 16 * 1024);
-  const root = top.stdout.replace(/\r?\n$/, "");
+  let root = top.stdout.replace(/\r?\n$/, "");
   if (top.code !== 0 || root === "") throw new RepoDiffError("not_a_repository", "that folder is not inside a git working tree", 409);
+  try { root = realpathSync(root); } catch { throw new RepoDiffError("not_a_repository", "that folder is not inside a git working tree", 409); }
   const [branch, head] = await Promise.all([
     runGit(context, root, ["symbolic-ref", "--quiet", "--short", "HEAD"], 16 * 1024),
     runGit(context, root, ["rev-parse", "--quiet", "--verify", "HEAD^{commit}"], 1024),
@@ -142,14 +162,14 @@ async function resolveRevision(context: Context, root: string, name: string, val
 
 function scopeOf(value: string | null): RepoDiffScope {
   if (value === null || value === "" || value === "workspace") return "workspace";
-  if (value === "staged" || value === "commit") return value;
-  throw new RepoDiffError("invalid_scope", "scope must be workspace, staged or commit", 400);
+  if (value === "all" || value === "staged" || value === "commit") return value;
+  throw new RepoDiffError("invalid_scope", "scope must be all, workspace, staged or commit", 400);
 }
 
 /** A path inside the repository, as git names it: relative, forward slashes, no `..`. */
 function repositoryPath(name: string, value: string): string {
   const segments = value.split("/");
-  if (value === "" || value.includes("\0") || value.startsWith("/") || Buffer.byteLength(value) > MAX_PATH_BYTES || segments.some((segment) => segment === ".." || segment === "." || segment === "")) {
+  if (value === "" || value.includes("\0") || value.startsWith("/") || value.includes("\\") || /^[A-Za-z]:/.test(value) || Buffer.byteLength(value) > MAX_PATH_BYTES || segments.some((segment) => segment === ".." || segment === "." || segment === "")) {
     throw new RepoDiffError("invalid_path", `${name} must be a file path relative to the repository root`, 400);
   }
   return value;
@@ -157,13 +177,26 @@ function repositoryPath(name: string, value: string): string {
 
 interface Comparison { scope: RepoDiffScope; base: string | null; head: string | null; args: string[] }
 
-async function comparisonOf(context: Context, root: string, params: URLSearchParams): Promise<Comparison> {
+async function comparisonOf(context: Context, repository: RepoDiffRepository, params: URLSearchParams): Promise<Comparison> {
+  const root = repository.root;
   const scope = scopeOf(params.get("scope"));
   const base = params.get("base");
   const head = params.get("head");
   if (scope !== "commit") {
-    if (base !== null || head !== null) throw new RepoDiffError("invalid_revision", "base and head apply to scope=commit only", 400);
-    return { scope, base: null, head: null, args: scope === "staged" ? ["--cached"] : [] };
+    if (head !== null || (base !== null && scope !== "all")) throw new RepoDiffError("invalid_revision", "base applies to all or commit; head applies to commit only", 400);
+    if (scope === "workspace") return { scope, base: null, head: null, args: [] };
+    let from = repository.head;
+    if (base !== null) {
+      if (!/^[0-9a-f]{40,64}$/.test(base) || !repository.head) throw new RepoDiffError("invalid_revision", "base must be a full reachable commit ID", 400);
+      from = await reachableRevision(context, repository, base);
+      if (!from || from !== base) throw new RepoDiffError("revision_not_found", "base names no reachable commit in this repository", 404);
+    }
+    if (!from) {
+      const empty = await runGit(context, root, ["hash-object", "-t", "tree", "--stdin"], 1024);
+      if (empty.code !== 0) throw new RepoDiffError("git_failed", "git could not inspect this repository", 500);
+      from = empty.stdout.trim();
+    }
+    return { scope, base: from, head: repository.head, args: scope === "staged" ? ["--cached", from] : [from] };
   }
   if (base === null) throw new RepoDiffError("invalid_revision", "scope=commit needs a base revision", 400);
   const [from, to] = await Promise.all([resolveRevision(context, root, "base", base), resolveRevision(context, root, "head", head ?? "HEAD")]);
@@ -184,14 +217,16 @@ interface Listing { files: RepoDiffFile[]; complete: boolean }
 
 async function changedFiles(context: Context, root: string, comparison: Comparison, pathspec: string[]): Promise<Listing> {
   const tail = [...comparison.args, "--", ...pathspec];
-  const [names, counts, others] = await Promise.all([
+  const [names, counts, others, conflicts] = await Promise.all([
     runGit(context, root, ["diff", ...DIFF_FLAGS, "--name-status", "-z", ...tail], context.maxListBytes),
     runGit(context, root, ["diff", ...DIFF_FLAGS, "--numstat", "-z", ...tail], context.maxListBytes),
-    comparison.scope === "workspace"
+    (comparison.scope === "workspace" || comparison.scope === "all")
       ? runGit(context, root, ["ls-files", "-z", "--others", "--exclude-standard", "--", ...pathspec], context.maxListBytes)
       : Promise.resolve<GitRun>({ code: 0, stdout: "", overflow: false }),
+    comparison.scope !== "commit" ? runGit(context, root, ["ls-files", "--unmerged", "-z", "--", ...pathspec], context.maxListBytes)
+      : Promise.resolve<GitRun>({ code: 0, stdout: "", overflow: false }),
   ]);
-  for (const run of [names, counts, others]) {
+  for (const run of [names, counts, others, conflicts]) {
     if (!run.overflow && run.code !== 0) throw new RepoDiffError("git_failed", "git could not compare this repository", 500);
   }
   const stats = new Map<string, { additions: number | null; deletions: number | null; binary: boolean }>();
@@ -222,45 +257,245 @@ async function changedFiles(context: Context, root: string, comparison: Comparis
     index += paired ? 3 : 2;
   }
   for (const path of fields(others.stdout)) {
+    if (path.endsWith("/")) continue; // embedded repositories are directory entries, not files
     if (!found.has(path)) found.set(path, { path, old_path: null, status: "untracked", additions: null, deletions: null, binary: null });
   }
+  for (const entry of fields(conflicts.stdout)) {
+    const path = entry.slice(entry.indexOf("\t") + 1);
+    found.set(path, { path, old_path: null, status: "unmerged", additions: null, deletions: null, binary: null });
+  }
+  for (const file of found.values()) {
+    repositoryPath("path", file.path);
+    if (file.old_path) repositoryPath("old_path", file.old_path);
+  }
   const files = [...found.values()].sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
-  return { files, complete: !names.overflow && !others.overflow };
+  return { files, complete: !names.overflow && !counts.overflow && !others.overflow && !conflicts.overflow };
+}
+
+async function reachableRevision(context: Context, repository: RepoDiffRepository, value: string): Promise<string | null> {
+  if (!repository.head || !/^[0-9a-fA-F]{4,64}$/.test(value)) return null;
+  const parsed = await runGit(context, repository.root, ["rev-parse", "--quiet", "--verify", "--end-of-options", `${value}^{commit}`], 1024);
+  const oid = parsed.stdout.trim();
+  if (parsed.code !== 0 || !/^[0-9a-f]{40,64}$/.test(oid)) return null;
+  const reachable = await runGit(context, repository.root, ["merge-base", "--is-ancestor", oid, repository.head], 1024);
+  return reachable.code === 0 ? oid : null;
+}
+
+/** Shared bounded Git inventory for filename search; directory/gitlink entries are omitted. */
+export async function repoDiffFileInventory(cwd: string, options: RepoDiffOptions = {}): Promise<Pick<FileSearchResult, "root" | "files" | "incomplete">> {
+  const context = contextOf(options);
+  const repository = await repositoryOf(context, cwd);
+  const [tracked, others] = await Promise.all([
+    runGit(context, repository.root, ["ls-files", "--stage", "-z"], context.maxListBytes),
+    runGit(context, repository.root, ["ls-files", "--others", "--exclude-standard", "-z"], context.maxListBytes),
+  ]);
+  for (const run of [tracked, others]) if (!run.overflow && run.code !== 0) throw new RepoDiffError("git_failed", "git could not list this repository", 500);
+  const incomplete: FileSearchResult["incomplete"] = tracked.overflow || others.overflow ? ["output"] : [];
+  const paths = fields(tracked.stdout).filter((entry) => !entry.startsWith("160000 ")).map((entry) => entry.slice(entry.indexOf("\t") + 1));
+  const files = new Set<string>();
+  for (const path of [...paths, ...fields(others.stdout)]) {
+    if (Date.now() >= context.deadlineAt) { incomplete.push("deadline"); break; }
+    if (files.has(path) || path.endsWith("/")) continue;
+    if (files.size >= 5_000) { incomplete.push("entries"); break; }
+    repositoryPath("path", path);
+    try { if (lstatSync(workingPath(repository.root, path)).isDirectory()) continue; }
+    catch (error) {
+      if (error instanceof RepoDiffError) continue;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !incomplete.includes("traversal")) incomplete.push("traversal");
+    }
+    files.add(path);
+  }
+  return { root: repository.root, files: [...files], incomplete };
+}
+
+/** GET /api/workspace/diff/commits: bounded message search from the captured immutable HEAD. */
+export async function repoDiffCommits(cwd: string, params: URLSearchParams, options: RepoDiffOptions = {}): Promise<RepoCommitSearch> {
+  const context = contextOf(options);
+  const repository = await repositoryOf(context, cwd);
+  if (!repository.head) return { repository, head: null, commits: [], truncated: false };
+  const query = (params.get("q") ?? "").trim();
+  if (query.length > 512 || query.includes("\0")) throw new RepoDiffError("invalid_query", "commit search is limited to 512 characters", 400);
+  const commit = await reachableRevision(context, repository, query);
+  // Parse whole bounded records in JS: literal Unicode case folding, never regex or revision injection.
+  const run = await runGit(context, repository.root, ["log", "-z", "--format=%H%x00%s%x00%an%x00%aI%x00%B", ...(commit ? ["-1", commit] : [repository.head]), "--"], context.maxListBytes);
+  if (!run.overflow && run.code !== 0) throw new RepoDiffError("git_failed", "git could not search this history", 500);
+  const parts = fields(run.stdout);
+  const commits: RepoCommitSearch["commits"] = [];
+  let matches = 0;
+  for (let index = 0; index + 4 < parts.length; index += 5) {
+    const id = parts[index]!;
+    if (!/^[0-9a-f]{40,64}$/.test(id)) break;
+    if (!commit && query && !parts[index + 4]!.toLowerCase().includes(query.toLowerCase())) continue;
+    matches += 1;
+    if (commits.length < 100) commits.push({ id, subject: parts[index + 1]!, author: parts[index + 2]!, date: parts[index + 3]! });
+  }
+  return { repository, head: repository.head, commits, truncated: run.overflow || matches > 100 };
+}
+
+function metadata(path: string): string {
+  try {
+    const stat = lstatSync(path, { bigint: true });
+    return `${stat.dev}:${stat.ino}:${stat.mode}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+  } catch { return "absent"; }
+}
+
+/** Do not follow directory symlinks, even when the leaf's name originally came from Git. */
+function workingPath(root: string, path: string): string {
+  let directory = root;
+  for (const segment of path.split("/").slice(0, -1)) {
+    directory = join(directory, segment);
+    try {
+      const stat = lstatSync(directory);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new RepoDiffError("unsupported", "directory symlinks and directory diffs are not supported", 409);
+    } catch (error) {
+      if (error instanceof RepoDiffError) throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new RepoDiffError("unsupported", "that path cannot be inspected safely", 409);
+    }
+  }
+  return join(root, path);
+}
+
+function checkDeadline(context: Context): void {
+  if (context.signal?.aborted) throw new RepoDiffError("git_cancelled", "git inspection was cancelled", 499);
+  if (Date.now() >= context.deadlineAt) throw new RepoDiffError("git_timeout", "git did not answer in time", 504);
+}
+
+/** Capture parent identities too, stopping at a symlink rather than inspecting its target. */
+function workingState(context: Context, root: string, path: string): string[] {
+  const state: string[] = [];
+  let absolute = root;
+  const segments = path.split("/");
+  for (let index = 0; index < segments.length; index += 1) {
+    checkDeadline(context);
+    absolute = join(absolute, segments[index]!);
+    state.push(metadata(absolute));
+    if (index < segments.length - 1) {
+      try { if (!lstatSync(absolute).isDirectory()) break; } catch { break; }
+    }
+  }
+  return state;
+}
+
+interface Snapshot { listing: Listing; fingerprint: string }
+async function snapshot(context: Context, repository: RepoDiffRepository, comparison: Comparison): Promise<Snapshot> {
+  const index = await runGit(context, repository.root, ["rev-parse", "--git-path", "index"], 16 * 1024);
+  if (index.code !== 0 || index.overflow) throw new RepoDiffError("git_failed", "git could not inspect this repository", 500);
+  const indexName = index.stdout.replace(/\r?\n$/, "");
+  const indexPath = isAbsolute(indexName) ? indexName : join(repository.root, indexName);
+  const before = metadata(indexPath);
+  const head = await runGit(context, repository.root, ["rev-parse", "--quiet", "--verify", "HEAD^{commit}"], 1024);
+  if ((head.code === 0 ? head.stdout.trim() : null) !== repository.head) throw new RepoDiffError("stale_comparison", "the comparison changed; refresh it", 409);
+  const listing = await changedFiles(context, repository.root, comparison, []);
+  if (before !== metadata(indexPath)) throw new RepoDiffError("stale_comparison", "the index changed; refresh the comparison", 409);
+  const work = comparison.scope === "commit" || comparison.scope === "staged" ? [] : listing.files.map((file) => [file.path, workingState(context, repository.root, file.path), file.old_path ? workingState(context, repository.root, file.old_path) : null]);
+  checkDeadline(context);
+  const fingerprint = createHash("sha256").update(JSON.stringify([comparison.scope, comparison.base, comparison.head, repository.head, comparison.scope === "commit" ? null : before, listing.complete, listing.files, work])).digest("hex");
+  return { listing, fingerprint };
 }
 
 /** GET /api/workspace/diff/files */
 export async function repoDiffFiles(cwd: string, params: URLSearchParams, options: RepoDiffOptions = {}): Promise<RepoDiffFileList> {
   const context = contextOf(options);
   const repository = await repositoryOf(context, cwd);
-  const comparison = await comparisonOf(context, repository.root, params);
-  const listing = await changedFiles(context, repository.root, comparison, []);
-  return {
-    repository,
-    scope: comparison.scope,
-    base: comparison.base,
-    head: comparison.head,
-    files: listing.files.slice(0, context.maxFiles),
-    total: listing.complete ? listing.files.length : null,
-    truncated: !listing.complete || listing.files.length > context.maxFiles,
-    limits: { max_files: context.maxFiles, max_list_bytes: context.maxListBytes },
-  };
+  const comparison = await comparisonOf(context, repository, params);
+  const { listing, fingerprint } = await snapshot(context, repository, comparison);
+  const path = params.get("path");
+  if (path !== null) repositoryPath("path", path);
+  const files = path === null ? listing.files : listing.files.filter((file) => file.path === path || file.old_path === path);
+  return { repository, scope: comparison.scope, base: comparison.base, head: comparison.head, fingerprint: listing.complete ? fingerprint : undefined,
+    files: files.slice(0, context.maxFiles), total: listing.complete ? files.length : null,
+    truncated: !listing.complete || files.length > context.maxFiles,
+    limits: { max_files: context.maxFiles, max_list_bytes: context.maxListBytes } };
 }
 
-/** What an untracked path is on disk, without following a link out of the repository. */
-function untrackedKind(path: string, maxBytes: number): "text" | "binary" | "too_large" | "unsupported" {
+interface Side { content: string | null; unavailable: RepoDiffFilePatch["unavailable"] }
+function textSide(bytes: Buffer): Side {
+  if (bytes.includes(0)) return { content: null, unavailable: "binary" };
+  try { return { content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes), unavailable: null }; }
+  catch { return { content: null, unavailable: "binary" }; }
+}
+
+async function gitSide(context: Context, root: string, revision: string | null, path: string): Promise<Side> {
+  const run = await runGit(context, root, revision === null ? ["ls-files", "--stage", "-z", "--", path] : ["ls-tree", "-z", revision, "--", path], 16 * 1024);
+  if (run.overflow || run.code !== 0) return { content: null, unavailable: "unsupported" };
+  const entry = fields(run.stdout).find((field) => field.slice(field.indexOf("\t") + 1) === path);
+  if (!entry) return { content: null, unavailable: null };
+  const [mode, typeOrId, idOrStage] = entry.slice(0, entry.indexOf("\t")).split(" ");
+  if (mode === "160000" || mode === "040000" || (revision === null && idOrStage !== "0")) return { content: null, unavailable: mode === "160000" || mode === "040000" ? "unsupported" : "unmerged" };
+  const id = revision === null ? typeOrId : idOrStage;
+  if (!id || !/^[0-9a-f]{40,64}$/.test(id)) return { content: null, unavailable: "unsupported" };
+  const blob = await runGit(context, root, ["cat-file", "blob", id], MAX_CONTENT_BYTES);
+  if (blob.overflow) return { content: null, unavailable: "too_large" };
+  if (blob.code !== 0) return { content: null, unavailable: "unsupported" };
+  return textSide(blob.bytes!);
+}
+
+function diskSide(root: string, path: string): Side {
   let fd: number | null = null;
   try {
-    const stat = lstatSync(path);
-    if (!stat.isFile()) return "unsupported";
-    if (stat.size > maxBytes) return "too_large";
-    fd = openSync(path, "r");
-    const buffer = Buffer.alloc(SNIFF_BYTES);
-    return buffer.subarray(0, readSync(fd, buffer, 0, SNIFF_BYTES, 0)).includes(0) ? "binary" : "text";
-  } catch {
-    return "unsupported";
-  } finally {
-    if (fd !== null) closeSync(fd);
+    const absolute = workingPath(root, path);
+    const before = metadata(absolute);
+    const stat = lstatSync(absolute);
+    if (stat.isSymbolicLink()) {
+      const content = readlinkSync(absolute);
+      return { content: before === metadata(absolute) ? content : null, unavailable: before === metadata(absolute) ? null : "stale" };
+    }
+    if (!stat.isFile()) return { content: null, unavailable: "unsupported" };
+    if (stat.size > MAX_CONTENT_BYTES) return { content: null, unavailable: "too_large" };
+    fd = openSync(absolute, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const opened = fstatSync(fd);
+    if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino) return { content: null, unavailable: "stale" };
+    // Linux checks the actual descriptor's location; other platforms additionally verify path identity.
+    const canonical = realpathSync(process.platform === "linux" ? `/proc/self/fd/${fd}` : absolute);
+    const rel = relative(root, canonical);
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return { content: null, unavailable: "unsupported" };
+    const buffer = Buffer.alloc(MAX_CONTENT_BYTES + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const read = readSync(fd, buffer, size, buffer.length - size, size);
+      if (read === 0) break;
+      size += read;
+    }
+    if (size > MAX_CONTENT_BYTES) return { content: null, unavailable: "too_large" };
+    const bytes = buffer.subarray(0, size);
+    workingPath(root, path);
+    if (before !== metadata(absolute)) return { content: null, unavailable: "stale" };
+    return textSide(bytes);
+  } catch (error) {
+    return { content: null, unavailable: (error as NodeJS.ErrnoException).code === "ENOENT" ? null : "unsupported" };
+  } finally { if (fd !== null) closeSync(fd); }
+}
+
+/** Validate Git's hunks against the exact selected sides, including untouched spans and final newlines.
+ * This is not a diff generator. It refuses mixed patch/source reads even if a path was replaced and
+ * restored between metadata rechecks. The filesystem still is not an atomic snapshot. */
+function patchMatchesSides(patch: string, oldContent: string | null, newContent: string | null): boolean {
+  const linesOf = (content: string | null): string[] => content?.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+  const oldLines = linesOf(oldContent);
+  const newLines = linesOf(newContent);
+  const rows = patch.split("\n");
+  let oldEnd = 0;
+  let newEnd = 0;
+  for (let index = 0; index < rows.length; index += 1) {
+    const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(rows[index]!);
+    if (!header) continue;
+    let oldCount = Number(header[2] ?? 1);
+    let newCount = Number(header[4] ?? 1);
+    const oldStart = Number(header[1]) - (oldCount === 0 ? 0 : 1);
+    const newStart = Number(header[3]) - (newCount === 0 ? 0 : 1);
+    if (oldStart < oldEnd || newStart < newEnd || oldLines.slice(oldEnd, oldStart).join("") !== newLines.slice(newEnd, newStart).join("")) return false;
+    oldEnd = oldStart; newEnd = newStart;
+    while (oldCount > 0 || newCount > 0) {
+      const row = rows[++index];
+      if (row === undefined || ![" ", "+", "-"].includes(row[0] ?? "")) return false;
+      const noNewline = rows[index + 1]?.startsWith("\\ No newline at end of file");
+      const content = `${row.slice(1)}${noNewline ? "" : "\n"}`;
+      if (row[0] !== "+") { if (oldCount <= 0 || oldLines[oldEnd++] !== content) return false; oldCount -= 1; }
+      if (row[0] !== "-") { if (newCount <= 0 || newLines[newEnd++] !== content) return false; newCount -= 1; }
+      if (noNewline) index += 1;
+    }
   }
+  return oldLines.slice(oldEnd).join("") === newLines.slice(newEnd).join("");
 }
 
 /** GET /api/workspace/diff/file */
@@ -270,18 +505,28 @@ export async function repoDiffFile(cwd: string, params: URLSearchParams, options
   const oldParam = params.get("old_path");
   const oldPath = oldParam === null || oldParam === "" ? null : repositoryPath("old_path", oldParam);
   const repository = await repositoryOf(context, cwd);
-  const comparison = await comparisonOf(context, repository.root, params);
+  const comparison = await comparisonOf(context, repository, params);
+  const initial = await snapshot(context, repository, comparison);
+  if (!initial.listing.complete) throw new RepoDiffError("incomplete_comparison", "the comparison inventory exceeded its limit", 413);
+  if (params.has("fingerprint") && params.get("fingerprint") !== initial.fingerprint) throw new RepoDiffError("stale_comparison", "the comparison changed; refresh it", 409);
   const pathspec = oldPath !== null && oldPath !== path ? [oldPath, path] : [path];
+  // Path-scoped detection preserves Git's rename semantics when the original path was reused.
   const listing = await changedFiles(context, repository.root, comparison, pathspec);
+  if (!listing.complete) throw new RepoDiffError("incomplete_comparison", "the comparison inventory exceeded its limit", 413);
   const file = listing.files.find((candidate) => candidate.path === path);
   if (file === undefined) throw new RepoDiffError("not_found", "nothing changed at that path in this comparison", 404);
   if (oldPath !== null && file.old_path !== oldPath) throw new RepoDiffError("invalid_path", "old_path no longer belongs to this file's change; refresh the list", 400);
 
+  let oldContent: string | null = null;
+  let newContent: string | null = null;
   const answer = (patch: string | null, unavailable: RepoDiffFilePatch["unavailable"], described: RepoDiffFile = file): RepoDiffFilePatch => ({
     repository,
     scope: comparison.scope,
     base: comparison.base,
     head: comparison.head,
+    fingerprint: initial.fingerprint,
+    old_content: unavailable === null ? oldContent : null,
+    new_content: unavailable === null ? newContent : null,
     file: described,
     patch,
     unavailable,
@@ -292,11 +537,20 @@ export async function repoDiffFile(cwd: string, params: URLSearchParams, options
   if (file.status === "unmerged") return answer(null, "unmerged");
   if (file.binary === true) return answer(null, "binary");
 
+  const previousPath = file.old_path ?? path;
+  const oldSide = file.status === "untracked" ? { content: null, unavailable: null } : await gitSide(context, repository.root, comparison.scope === "workspace" ? null : comparison.base, previousPath);
+  const newSide = comparison.scope === "commit" ? await gitSide(context, repository.root, comparison.head, path)
+    : comparison.scope === "staged" ? await gitSide(context, repository.root, null, path)
+    : diskSide(repository.root, path);
+  const unavailable = oldSide.unavailable ?? newSide.unavailable;
+  if (unavailable) return answer(null, unavailable, unavailable === "binary" ? { ...file, binary: true } : file);
+  oldContent = oldSide.content;
+  newContent = newSide.content;
+  const beforePatch = await snapshot(context, repository, comparison);
+  if (beforePatch.fingerprint !== initial.fingerprint) return answer(null, "stale");
+
   let run: GitRun;
   if (file.status === "untracked") {
-    const kind = untrackedKind(join(repository.root, path), context.maxPatchBytes);
-    if (kind === "binary") return answer(null, "binary", { ...file, binary: true });
-    if (kind !== "text") return answer(null, kind);
     // an untracked file has no index entry to compare with: it is shown as a new file, whole
     run = await runGit(context, repository.root, ["diff", "--no-index", ...DIFF_FLAGS, `-U${REPO_DIFF_CONTEXT_LINES}`, "--", "/dev/null", path], context.maxPatchBytes);
     if (!run.overflow && run.code !== 1 && run.code !== 0) throw new RepoDiffError("git_failed", "git could not read that file", 500);
@@ -304,17 +558,20 @@ export async function repoDiffFile(cwd: string, params: URLSearchParams, options
     run = await runGit(context, repository.root, ["diff", ...DIFF_FLAGS, `-U${REPO_DIFF_CONTEXT_LINES}`, ...comparison.args, "--", ...pathspec], context.maxPatchBytes);
     if (!run.overflow && run.code !== 0) throw new RepoDiffError("git_failed", "git could not compare that file", 500);
   }
+  const afterPatch = await snapshot(context, repository, comparison);
+  if (afterPatch.fingerprint !== initial.fingerprint) return answer(null, "stale");
   if (run.overflow) return answer(null, "too_large");
   // the file changed between the listing and this read, or git printed a form no patch reader takes
   if (run.stdout === "") throw new RepoDiffError("not_found", "nothing changed at that path in this comparison", 404);
   if (!run.stdout.startsWith("diff --git ")) return answer(null, "unsupported");
+  if (!patchMatchesSides(run.stdout, oldContent, newContent)) return answer(null, "stale");
   return answer(run.stdout, null, file.status === "untracked" ? { ...file, binary: false } : file);
 }
 
 /** The HTTP answer of either route, with every refusal in the `{ error: { code, message } }` envelope. */
-export async function repoDiffResponse(kind: "files" | "file", cwd: string, params: URLSearchParams, options: RepoDiffOptions = {}): Promise<Response> {
+export async function repoDiffResponse(kind: "files" | "file" | "commits", cwd: string, params: URLSearchParams, options: RepoDiffOptions = {}): Promise<Response> {
   try {
-    const body = kind === "files" ? await repoDiffFiles(cwd, params, options) : await repoDiffFile(cwd, params, options);
+    const body = kind === "files" ? await repoDiffFiles(cwd, params, options) : kind === "commits" ? await repoDiffCommits(cwd, params, options) : await repoDiffFile(cwd, params, options);
     return jsonResponse(body, 200, { "cache-control": "private, no-store" });
   } catch (error) {
     if (error instanceof RepoDiffError) return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);

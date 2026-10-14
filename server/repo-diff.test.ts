@@ -7,7 +7,7 @@ import { parsePatchFiles } from "@pierre/diffs";
 import type { ApiError, RepoDiffFileList, RepoDiffFilePatch } from "../shared/protocol.ts";
 import { DeviceStore } from "./devices.ts";
 import { createServer } from "./index.ts";
-import { REPO_DIFF_CONTEXT_LINES, REPO_DIFF_MAX_FILES, REPO_DIFF_MAX_LIST_BYTES, REPO_DIFF_MAX_PATCH_BYTES, repoDiffFile, repoDiffFiles } from "./repo-diff.ts";
+import { REPO_DIFF_CONTEXT_LINES, REPO_DIFF_MAX_FILES, REPO_DIFF_MAX_LIST_BYTES, REPO_DIFF_MAX_PATCH_BYTES, repoDiffCommits, repoDiffFile, repoDiffFiles } from "./repo-diff.ts";
 
 /**
  * Real git repositories in a temp folder: the routes are only as right as what git prints, so a
@@ -21,7 +21,7 @@ const scratch = realpathSync(mkdtempSync(join(tmpdir(), "herdr-repo-diff-")));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 function git(cwd: string, ...args: string[]): string {
-  const result = Bun.spawnSync(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" });
+  const result = Bun.spawnSync(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false", "-C", cwd, ...args], { stdout: "pipe", stderr: "pipe" });
   if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.toString()}`);
   return result.stdout.toString();
 }
@@ -130,7 +130,7 @@ describe("workspace and staged changes", () => {
   });
 
   it("refuses a path that is not one inside the repository, and one where nothing changed", async () => {
-    for (const path of ["", "../outside.txt", "/etc/hosts", "a//b", "dir/../keep.txt", "./keep.txt", "keep.txt\0"]) {
+    for (const path of ["", "../outside.txt", "/etc/hosts", "a//b", "dir/../keep.txt", "./keep.txt", "keep.txt\0", "C:/outside.txt", "dir\\outside.txt"]) {
       await expect(repoDiffFile(root, query({ path }))).rejects.toMatchObject({ code: "invalid_path", status: 400 });
     }
     await expect(repoDiffFile(root, query({ path: "keep.txt", old_path: "../x" }))).rejects.toMatchObject({ code: "invalid_path", status: 400 });
@@ -160,6 +160,115 @@ describe("workspace and staged changes", () => {
     await expect(repoDiffFile(root, query({ scope: "staged", path: "new.txt", old_path: "old.txt" }))).rejects.toMatchObject({ code: "invalid_path", status: 400 });
     const answer = await repoDiffFile(root, query({ scope: "staged", path: "new.txt" }));
     expect(parsed(answer.patch).map((file) => file.name)).toEqual(["new.txt"]);
+  });
+});
+
+describe("all changes and exact selected sides", () => {
+  it("distinguishes HEAD/working, HEAD/index and index/working, with missing sides null", async () => {
+    const root = repository("exact-sides");
+    writeFileSync(join(root, "a.txt"), "head\n");
+    writeFileSync(join(root, "gone.txt"), "old\n");
+    writeFileSync(join(root, "bom.txt"), "\ufeffone\r\nlast");
+    git(root, "add", "."); git(root, "commit", "-q", "-m", "base");
+    writeFileSync(join(root, "bom.txt"), "\ufefftwo\r\nlast\n");
+    writeFileSync(join(root, "a.txt"), "index\n");
+    git(root, "add", "a.txt"); git(root, "rm", "gone.txt");
+    writeFileSync(join(root, "a.txt"), "working\n");
+    writeFileSync(join(root, "gone.txt"), "disk is not the index\n");
+    writeFileSync(join(root, "new.txt"), "untracked\n");
+    for (const [scope, old_content, new_content] of [["all", "head\n", "working\n"], ["staged", "head\n", "index\n"], ["workspace", "index\n", "working\n"]]) {
+      const list = await repoDiffFiles(root, query({ scope: scope! }));
+      expect(list.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(await repoDiffFile(root, query({ scope: scope!, path: "a.txt", fingerprint: list.fingerprint! }))).toMatchObject({ old_content, new_content, fingerprint: list.fingerprint });
+      expect(list.files.some((file) => file.path === "new.txt")).toBe(scope !== "staged");
+    }
+    expect(await repoDiffFile(root, query({ scope: "staged", path: "gone.txt" }))).toMatchObject({ old_content: "old\n", new_content: null, file: { status: "deleted" } });
+    expect(await repoDiffFile(root, query({ scope: "all", path: "bom.txt" }))).toMatchObject({ old_content: "\ufeffone\r\nlast", new_content: "\ufefftwo\r\nlast\n", unavailable: null });
+    const all = await repoDiffFiles(root, query({ scope: "all" }));
+    writeFileSync(join(root, "a.txt"), "changed since listing\n");
+    await expect(repoDiffFile(root, query({ scope: "all", path: "a.txt", fingerprint: all.fingerprint! }))).rejects.toMatchObject({ code: "stale_comparison" });
+    expect((await repoDiffFiles(root, query({ scope: "all", path: "a.txt" }))).files.map((file) => file.path)).toEqual(["a.txt"]);
+  });
+
+  it("compares a reachable immutable historical base to disk, and an unborn repository to the empty tree", async () => {
+    const root = repository("historical-working");
+    writeFileSync(join(root, "a.txt"), "first\n"); git(root, "add", "."); git(root, "commit", "-q", "-m", "first");
+    const base = git(root, "rev-parse", "HEAD").trim();
+    writeFileSync(join(root, "a.txt"), "second\n"); git(root, "commit", "-q", "-am", "second");
+    writeFileSync(join(root, "a.txt"), "working\n");
+    expect(await repoDiffFile(root, query({ scope: "all", base, path: "a.txt" }))).toMatchObject({ base, old_content: "first\n", new_content: "working\n" });
+    await expect(repoDiffFiles(root, query({ scope: "all", base: "HEAD~1" }))).rejects.toMatchObject({ code: "invalid_revision" });
+    const empty = repository("all-unborn");
+    writeFileSync(join(empty, "staged.txt"), "index\n"); git(empty, "add", ".");
+    writeFileSync(join(empty, "new.txt"), "new\n");
+    expect((await repoDiffFiles(empty, query({ scope: "all" }))).files.map((file) => [file.path, file.status])).toEqual([["new.txt", "untracked"], ["staged.txt", "added"]]);
+    expect(await repoDiffFile(empty, query({ scope: "all", path: "staged.txt" }))).toMatchObject({ old_content: null, new_content: "index\n" });
+    writeFileSync(join(empty, "empty.txt"), "");
+    expect(await repoDiffFile(empty, query({ scope: "all", path: "empty.txt" }))).toMatchObject({ old_content: null, new_content: "", unavailable: null });
+  });
+
+  it("refuses directory symlink traversal, submodules and oversized selected text without partial contents", async () => {
+    const root = repository("unsupported-sides");
+    const outside = join(scratch, "outside"); mkdirSync(outside);
+    mkdirSync(join(root, "dir"));
+    writeFileSync(join(root, "dir", "a.txt"), "old\n");
+    writeFileSync(join(root, "large.txt"), "x".repeat(2 * 1024 * 1024 + 1));
+    writeFileSync(join(root, ".gitattributes"), "forced.txt diff\n");
+    writeFileSync(join(root, "forced.txt"), "was text\n");
+    git(root, "add", "."); git(root, "commit", "-q", "-m", "first");
+    rmSync(join(root, "dir"), { recursive: true });
+    writeFileSync(join(outside, "a.txt"), "secret\n");
+    symlinkSync(outside, join(root, "dir"));
+    writeFileSync(join(root, "large.txt"), "small\n");
+    git(root, "update-index", "--add", "--cacheinfo", "160000", git(root, "rev-parse", "HEAD").trim(), "module");
+    writeFileSync(join(root, "invalid-utf8.txt"), new Uint8Array([255]));
+    writeFileSync(join(root, "forced.txt"), new Uint8Array([0, 1, 2]));
+    expect((await repoDiffFiles(root, query({ scope: "all" }))).files.find((file) => file.path === "forced.txt")?.binary).toBeFalse();
+    for (const [scope, path, unavailable] of [["all", "dir/a.txt", "unsupported"], ["staged", "module", "unsupported"], ["all", "large.txt", "too_large"], ["all", "invalid-utf8.txt", "binary"], ["all", "forced.txt", "binary"]]) {
+      expect(await repoDiffFile(root, query({ scope: scope!, path: path! }))).toMatchObject({ unavailable, patch: null, old_content: null, new_content: null });
+    }
+  });
+
+  it("detects a write during side reads rather than mixing old content with a later patch", async () => {
+    const root = repository("mid-read");
+    writeFileSync(join(root, "a.txt"), "old\n"); git(root, "add", "."); git(root, "commit", "-q", "-m", "first");
+    writeFileSync(join(root, "a.txt"), "initial\n");
+    const wrapper = join(root, "git-fixture");
+    writeFileSync(wrapper, `#!/bin/sh\ncase "$*" in *"cat-file blob"*) printf 'replacement\\n' > '${join(root, "a.txt")}' ;; esac\nexec git "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    const result = await repoDiffFile(root, query({ scope: "all", path: "a.txt" }), { git: wrapper });
+    expect(result).toMatchObject({ unavailable: "stale", patch: null, old_content: null, new_content: null });
+    // Metadata alone cannot prove an atomic snapshot: also refuse hunks from a replaced/restored path.
+    writeFileSync(wrapper, `#!/bin/sh\ncase "$*" in *" -U3 "*) printf 'diff --git a/a.txt b/a.txt\\n--- a/a.txt\\n+++ b/a.txt\\n@@ -1 +1 @@\\n-old\\n+not the selected content\\n'; exit 0 ;; esac\nexec git "$@"\n`);
+    expect(await repoDiffFile(root, query({ scope: "all", path: "a.txt" }), { git: wrapper })).toMatchObject({ unavailable: "stale", patch: null, old_content: null, new_content: null });
+  });
+});
+
+describe("history search", () => {
+  it("searches literal case-insensitive whole messages, resolves reachable IDs, and discloses bounds", async () => {
+    const root = repository("history-search");
+    writeFileSync(join(root, "a.txt"), "first\n"); git(root, "add", "."); git(root, "commit", "-q", "-m", "First [literal]", "-m", "Body NEEDLE ünicode");
+    const first = git(root, "rev-parse", "HEAD").trim();
+    writeFileSync(join(root, "a.txt"), "second\n"); git(root, "commit", "-q", "-am", "Second wildcard .* is literal");
+    for (const q of ["needle", "ÜNICODE", "[LITERAL]", first.slice(0, 8), first]) {
+      const result = await repoDiffCommits(root, query({ q }));
+      expect(result.commits.map((entry) => entry.id)).toEqual([first]);
+      expect(result.commits[0]).toMatchObject({ subject: "First [literal]", author: "Fixture" });
+      expect(result.commits[0]!.date).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    }
+    expect((await repoDiffCommits(root, query({ q: ".*" }))).commits.map((entry) => entry.subject)).toEqual(["Second wildcard .* is literal"]);
+    expect((await repoDiffCommits(root, query({ q: "Fixture" }))).commits).toEqual([]);
+    expect((await repoDiffCommits(root, query({ q: "--all" }))).commits).toEqual([]);
+    const unreachable = git(root, "commit-tree", "HEAD^{tree}", "-m", "unreachable message").trim();
+    expect((await repoDiffCommits(root, query({ q: unreachable.slice(0, 8) }))).commits).toEqual([]);
+    await expect(repoDiffFiles(root, query({ scope: "all", base: unreachable }))).rejects.toMatchObject({ code: "revision_not_found" });
+    expect(await repoDiffCommits(root, query(), { maxListBytes: 80 })).toMatchObject({ truncated: true, commits: [] });
+    for (let index = 0; index < 99; index += 1) git(root, "commit", "-q", "--allow-empty", "-m", `bounded ${index}`);
+    const bounded = await repoDiffCommits(root, query());
+    expect(bounded.commits).toHaveLength(100);
+    expect(bounded.truncated).toBeTrue();
+    const unborn = repository("history-unborn");
+    expect(await repoDiffCommits(unborn, query())).toMatchObject({ head: null, commits: [], truncated: false });
   });
 });
 
@@ -254,7 +363,10 @@ describe("repositories in an unusual state", () => {
     git(root, "commit", "-q", "-a", "-m", "main");
     expect(Bun.spawnSync(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-C", root, "merge", "side"], { stdout: "ignore", stderr: "ignore" }).exitCode).toBe(1);
     expect((await repoDiffFiles(root, query())).files).toEqual([{ path: "c.txt", old_path: null, status: "unmerged", additions: null, deletions: null, binary: null }]);
-    expect(await repoDiffFile(root, query({ path: "c.txt" }))).toMatchObject({ patch: null, unavailable: "unmerged", truncated: false });
+    for (const scope of ["workspace", "all", "staged"]) {
+      expect((await repoDiffFiles(root, query({ scope }))).files.find((file) => file.path === "c.txt")?.status).toBe("unmerged");
+      expect(await repoDiffFile(root, query({ scope, path: "c.txt" }))).toMatchObject({ patch: null, unavailable: "unmerged", truncated: false });
+    }
   });
 });
 
@@ -279,6 +391,8 @@ describe("bounds", () => {
   it("cuts a list at the byte cap on a whole name, with the total unknown", async () => {
     const list = await repoDiffFiles(root, query(), { maxListBytes: 64 });
     expect(list).toMatchObject({ total: null, truncated: true, limits: { max_list_bytes: 64 } });
+    expect(list.fingerprint).toBeUndefined();
+    await expect(repoDiffFile(root, query({ path: "big.txt" }), { maxListBytes: 64 })).rejects.toMatchObject({ code: "incomplete_comparison", status: 413 });
     expect(list.files.length).toBeGreaterThan(0);
     expect(list.files.length).toBeLessThan(31);
     for (const file of list.files) expect(["big.txt", ...names]).toContain(file.path);
@@ -300,7 +414,10 @@ describe("bounds", () => {
     const secret = join(scratch, "secret.txt");
     writeFileSync(secret, "do not read\n");
     symlinkSync(secret, join(root, "link.txt"));
-    expect(await repoDiffFile(root, query({ path: "link.txt" }))).toMatchObject({ patch: null, unavailable: "unsupported", truncated: false });
+    const link = await repoDiffFile(root, query({ path: "link.txt" }));
+    expect(link).toMatchObject({ old_content: null, new_content: secret, unavailable: null, truncated: false });
+    expect(link.patch).toContain("new file mode 120000");
+    expect(link.patch).not.toContain("do not read");
   });
 
   it("stops a git that does not answer by its deadline, and says when there is no git", async () => {
@@ -309,6 +426,18 @@ describe("bounds", () => {
     chmodSync(hung, 0o755);
     await expect(repoDiffFiles(root, query(), { git: hung, deadlineMs: 50 })).rejects.toMatchObject({ code: "git_timeout", status: 504 });
     await expect(repoDiffFiles(root, query(), { git: join(scratch, "no-git-here") })).rejects.toMatchObject({ code: "git_unavailable", status: 503 });
+  });
+
+  it("bounds aggregate output and honours cancellation before launching Git", async () => {
+    await expect(repoDiffFiles(root, query(), { maxInspectionBytes: 1 })).rejects.toMatchObject({ code: "git_output_limit", status: 413 });
+    const controller = new AbortController(); controller.abort();
+    for (const inspect of [repoDiffFiles, repoDiffCommits]) await expect(inspect(root, query(), { signal: controller.signal })).rejects.toMatchObject({ code: "git_cancelled" });
+    const hung = join(scratch, "cancel-git");
+    writeFileSync(hung, "#!/bin/sh\nexec sleep 30\n"); chmodSync(hung, 0o755);
+    const pending = new AbortController();
+    const read = repoDiffCommits(root, query(), { git: hung, signal: pending.signal });
+    pending.abort();
+    await expect(read).rejects.toMatchObject({ code: "git_cancelled" });
   });
 
   it("runs none of the programs a repository's configuration names", async () => {
@@ -328,8 +457,14 @@ describe("bounds", () => {
     git(hooked, "config", "core.fsmonitor", program);
     rmSync(marker, { force: true });
     expect((await repoDiffFiles(hooked, query())).files.map((file) => file.path)).toEqual(["a.txt", "b.txt"]);
-    for (const path of ["a.txt", "b.txt"]) expect((await repoDiffFile(hooked, query({ path }))).patch).toStartWith(`diff --git a/${path} b/${path}\n`);
-    expect(existsSync(marker)).toBeFalse();
+    const injected = { GIT_DIR: join(scratch, "wrong-repository"), GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.fsmonitor", GIT_CONFIG_VALUE_0: program };
+    const saved = Object.fromEntries(Object.keys(injected).map((name) => [name, process.env[name]]));
+    try {
+      Object.assign(process.env, injected);
+      for (const path of ["a.txt", "b.txt"]) expect((await repoDiffFile(hooked, query({ path }))).patch).toStartWith(`diff --git a/${path} b/${path}\n`);
+      expect((await repoDiffCommits(hooked, query())).commits).toHaveLength(1);
+      expect(existsSync(marker)).toBeFalse();
+    } finally { for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; } }
   });
 });
 
@@ -378,7 +513,7 @@ describe("GET /api/workspace/diff/*", () => {
       ["directory=relative%2Ffolder", 400, "invalid_cwd"],
       [`directory=${encodeURIComponent(join(scratch, "nowhere"))}`, 400, "invalid_cwd"],
       [`directory=${encodeURIComponent(scratch)}`, 409, "not_a_repository"],
-      [`${directory()}&scope=all`, 400, "invalid_scope"],
+      [`${directory()}&scope=unknown`, 400, "invalid_scope"],
       [`${directory()}&scope=commit&base=--output%3D%2Ftmp%2Fx`, 400, "invalid_revision"],
       [`${directory()}&scope=commit&base=nope`, 404, "revision_not_found"],
     ];
