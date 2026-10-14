@@ -901,7 +901,11 @@ try {
   await report.getByRole("button", { name: "Source", exact: true }).click();
   await report.locator(".file-viewer-text[data-line-numbers] .hl-line").first().waitFor();
   await report.locator(".file-viewer-text .hl-string").first().waitFor();
-  assert.equal(await report.locator(".file-viewer-text button").count(), 0, "file source paths remain text");
+  assert.equal(await report.locator(".file-viewer-text button:not(.hl-comment-button)").count(), 0, "file source paths remain text; only explicit gutter comment actions are buttons");
+  await report.locator(".hl-comment-button").first().focus();
+  await page.keyboard.press("Enter");
+  await page.locator(".review-editor").getByRole("textbox", { name: "Comment", exact: true }).waitFor();
+  await page.locator(".review-editor").getByRole("button", { name: "Close comments", exact: true }).click();
   await report.getByRole("button", { name: "Copy file", exact: true }).waitFor();
   assert.equal(await report.getByRole("link", { name: "Download", exact: true }).getAttribute("download"), "report.html");
   assert.match(await report.locator(".file-viewer-text").innerText(), /<h1 id="ran">static<\/h1>/);
