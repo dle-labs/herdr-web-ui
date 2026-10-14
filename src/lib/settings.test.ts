@@ -6,7 +6,7 @@ import { FONT_FAMILY_MAX_CHARS } from "./fontFamily.ts";
 import { DEFAULT_KEY_BAR_ITEMS, migrateKeyBarItems } from "./keyBar.ts";
 import { SHARED_SETTING_KEYS } from "../../shared/preferences.ts";
 import { NOTICE_VERSION, TELEMETRY_SETTINGS_KEYS, telemetrySettings } from "../../shared/telemetry.ts";
-import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
+import { SETTING_SCOPE, telemetrySettingsSnapshot, alertPrefs, CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_LANE_MAX_REM, CHAT_LANE_MIN, CHAT_WIDTHS, chatFontSize, chatLaneLength, chatLaneWidth, DEFAULT_SETTINGS, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, quickReplyButtons, refreshDeviceSettings, sanitizeSettings, terminalTheme, forgetPaneViews, DICTATION_LANGUAGES, VOICE_BUTTONS, wantsVoiceInput } from "./settings.ts";
 
 it("keeps a tab's pane while out of use until this device turns the pause on", () => {
   expect(DEFAULT_SETTINGS.releasePaneAway).toBe(false);
@@ -256,6 +256,51 @@ describe("device-local review settings", () => {
       expect(sanitizeSettings({ [key]: "false" })[key]).toBe(true);
       expect(SETTING_SCOPE[key]).toBe("device");
     }
+  });
+});
+
+describe("device settings refresh", () => {
+  const current = sanitizeSettings({ theme: "light", density: "compact", reviewComments: true, composerFilesShortcut: true });
+  const read = () => JSON.stringify({ ...DEFAULT_SETTINGS, theme: "dark", reviewComments: false, composerFilesShortcut: false });
+
+  it("takes another tab's device choices without changing server-shared choices", () => {
+    const fresh = refreshDeviceSettings(current, read);
+    expect(fresh).toMatchObject({ theme: "light", density: "comfortable", reviewComments: false, composerFilesShortcut: false });
+    expect(current.reviewComments).toBe(true);
+  });
+
+  it("merges unrelated local edits over the latest device choices, not stale tab state", () => {
+    const fresh = refreshDeviceSettings(current, read);
+    const updated = sanitizeSettings({ ...fresh, terminalFontSize: 17, theme: "dark" });
+    expect(updated).toMatchObject({ terminalFontSize: 17, theme: "dark", reviewComments: false, composerFilesShortcut: false });
+    // A deliberate new choice still wins; refreshing does not lock the setting off.
+    expect(sanitizeSettings({ ...fresh, reviewComments: true }).reviewComments).toBe(true);
+  });
+
+  it("resets only device choices when the record is removed and sanitizes hand-edited values", () => {
+    expect(refreshDeviceSettings(current, () => null)).toMatchObject({ theme: "light", density: DEFAULT_SETTINGS.density });
+    expect(refreshDeviceSettings(current, () => JSON.stringify({ reviewComments: "false", terminalFontSize: 99 })))
+      .toMatchObject({ theme: "light", reviewComments: true, terminalFontSize: 22 });
+  });
+
+  it("keeps in-memory preferences when storage is blocked or its record cannot be parsed", () => {
+    for (const read of [() => { throw new Error("storage blocked"); }, () => "{"]) {
+      expect(refreshDeviceSettings(current, read)).toBe(current);
+      expect(sanitizeSettings({ ...refreshDeviceSettings(current, read), terminalFontSize: 17 }))
+        .toMatchObject({ theme: "light", density: "compact", terminalFontSize: 17, reviewComments: true });
+    }
+  });
+
+  it("retains failed local writes without hiding unrelated cross-tab changes", () => {
+    const memory = sanitizeSettings({ ...current, density: "compact", enterSends: false });
+    const fresh = refreshDeviceSettings(memory, read, { density: "compact", enterSends: false });
+    expect(fresh).toMatchObject({ density: "compact", enterSends: false, reviewComments: false, composerFilesShortcut: false });
+    const updated = sanitizeSettings({ ...fresh, terminalFontSize: 17 });
+    expect(updated).toMatchObject({ density: "compact", enterSends: false, terminalFontSize: 17, reviewComments: false });
+    // A failed turn-off stays off even while storage still holds the old enabled value.
+    const disabled = sanitizeSettings({ ...current, reviewComments: false });
+    expect(refreshDeviceSettings(disabled, () => JSON.stringify(current), { reviewComments: false }).reviewComments).toBe(false);
+    expect(refreshDeviceSettings(memory, () => { throw new Error("storage blocked"); }, { enterSends: false })).toBe(memory);
   });
 });
 

@@ -7,7 +7,7 @@
 
 import type { TelemetrySettings } from "../../shared/telemetry.ts";
 import { SHARED_SETTING_KEYS, type SharedSettingKey } from "../../shared/preferences.ts";
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
@@ -497,11 +497,27 @@ export function loadSettings(): Settings {
   }
 }
 
-function saveSettings(settings: Settings): void {
+/** Another tab's device choices replace ours, but shared choices stay with preferencesSync.
+ * Failed local writes ride over a later read until they can be saved; failed reads keep memory. */
+export function refreshDeviceSettings(current: Settings, read: () => string | null = () => window.localStorage.getItem(STORAGE_KEY), unsaved: Partial<Settings> = {}): Settings {
+  try {
+    const raw = read();
+    const persisted = raw === null ? DEFAULT_SETTINGS : sanitizeSettings(JSON.parse(raw));
+    const device = Object.fromEntries((Object.keys(SETTING_SCOPE) as (keyof Settings)[])
+      .filter((key) => SETTING_SCOPE[key] === "device").map((key) => [key, persisted[key]]));
+    return sanitizeSettings({ ...current, ...device, ...unsaved });
+  } catch {
+    return current;
+  }
+}
+
+function saveSettings(settings: Settings): boolean {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    return true;
   } catch {
     /* private mode: preferences last for the session */
+    return false;
   }
 }
 
@@ -579,6 +595,21 @@ const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(loadSettings);
+  const unsaved = useRef<Partial<Settings>>({});
+  useEffect(() => {
+    const refresh = (): void => setSettings((current) => refreshDeviceSettings(current, undefined, unsaved.current));
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key !== STORAGE_KEY && event.key !== null) return;
+      try {
+        if (event.storageArea !== null && event.storageArea !== window.localStorage) return;
+      } catch { return; }
+      // Read the latest record, not a queued event's older newValue. Never write it back.
+      refresh();
+    };
+    window.addEventListener("storage", onStorage);
+    refresh();
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
   const [systemDark, setSystemDark] = useState(() => resolveTheme("system") === "dark");
 
   useEffect(() => {
@@ -609,8 +640,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const update = useCallback((patch: Partial<Settings>) => {
     setSettings((current) => {
-      const next = sanitizeSettings({ ...current, ...patch });
-      saveSettings(next);
+      const fresh = refreshDeviceSettings(current, undefined, unsaved.current);
+      const next = sanitizeSettings({ ...fresh, ...patch });
+      if (saveSettings(next)) unsaved.current = {};
+      else unsaved.current = { ...unsaved.current, ...Object.fromEntries(Object.keys(patch).map((key) => [key, next[key as keyof Settings]])) };
       return next;
     });
   }, []);

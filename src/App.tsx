@@ -970,6 +970,7 @@ export function App() {
   // `keepFocus`: the focus already went somewhere in the half made active (a Tab onto one of its
   // buttons): the half's terminal and composer must not take the keyboard from it (autoSelected)
   const applySplit = (next: SplitState | null, select: SplitTarget, keepFocus = false): void => {
+    if (!reviewNotes.close()) return;
     const was = splitOn ? split : null;
     const current: SplitTarget | null = selectedPaneId === null ? null : { machineId: selectedMachineId, paneId: selectedPaneId };
     const after: SplitSlot = next ? next.active : was && sameTarget(select, was.other) ? otherSlot(was.active) : was ? was.active : soloSlot;
@@ -985,7 +986,7 @@ export function App() {
   };
   const closeSlot = (slot: SplitSlot): void => {
     if (!splitOn) return;
-    if (slot !== split.active) { endSplit(split.active); return; }
+    if (slot !== split.active) { if (reviewNotes.close()) endSplit(split.active); return; }
     applySplit(null, split.other);
   };
   const selectInSlot = (slot: SplitSlot, machineId: string, paneId: string, focusInput = true): void => {
@@ -1219,6 +1220,7 @@ export function App() {
       toggleView: () => { setView(view === "chat" ? "terminal" : "chat"); setDrawerOpen(false); },
       scrollPage: (direction) => paneControls.current?.scrollPage(direction),
       openNewSession: () => {
+        if (!reviewNotes.close()) return;
         setDrawerOpen(false);
         setNewSessionMachineId(selectedMachineId);
         setNewTab(null);
@@ -1238,6 +1240,7 @@ export function App() {
         const inFront = panes.find((pane) => pane.pane_id === selectedPaneId)
           ?? panes.find((pane) => pane.pane_id === roster.layouts?.find((layout) => layout.tab_id === workspace.active_tab_id)?.focused_pane_id)
           ?? panes[0];
+        if (!reviewNotes.close()) return;
         setDrawerOpen(false);
         setNewSessionMachineId(machineId);
         setNewTab({ workspaceId: workspace.workspace_id, workspaceLabel: workspace.label, cwd: workspace.worktree?.checkout_path ?? inFront?.cwd ?? null, number: workspace.tab_count + 1 });
@@ -1258,6 +1261,7 @@ export function App() {
         setSettingsOpen(true);
       },
       openAddPc: () => {
+        if (!reviewNotes.close()) return;
         // the new PC reports its progress in the sidebar: nothing should sit over it
         setSettingsOpen(false);
         setUpdateRemote(false);
@@ -1507,7 +1511,7 @@ export function App() {
           {/* a sidebar that cannot be drawn leaves the panes working */}
           <RenderBoundary resetKey={null} fallback={(retry) => <RegionCrash message={t("The sidebar can't be shown.")} retry={retry} />}>
             <CrashProbe region="sidebar" />
-            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} onSetup={(machine, update = false) => { setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
+            <MachineSidebar machines={machines} selectedMachineId={selectedMachineId} selectedPaneId={selectedPaneId} actions={actions} onSelect={selectTarget} onSetup={(machine, update = false) => { if (!reviewNotes.close()) return; setUpdateRemote(update); setMachineDialog(machine); }} onNew={(id) => { if (!reviewNotes.close()) return; setNewSessionMachineId(id); setNewTab(null); setNewSessionOpen(true); setDrawerOpen(false); }} />
           </RenderBoundary>
           <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
         </aside>
@@ -1519,11 +1523,11 @@ export function App() {
         <OpenFileContext.Provider value={selectedPaneId !== null ? viewFile : null}>
         <div className={`pane-column${chatShown ? " is-chat" : ""}`}>
         {/* over the pane only: a bar across the window would cut the sidebar off from its top row in the header */}
-        <UpdateNotice updates={updates} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
-        <TelemetryNotice enabled={locked === false} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
-        <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />
+        <UpdateNotice updates={updates} onOpen={() => { if (!reviewNotes.close()) return; setSettingsSection("updates"); setSettingsOpen(true); }} />
+        <TelemetryNotice enabled={locked === false} onOpen={() => { if (!reviewNotes.close()) return; setSettingsSection("updates"); setSettingsOpen(true); }} />
+        <MachineActionBanner machines={machines} onSetup={(machine, update = false) => { if (!reviewNotes.close()) return; setDrawerOpen(false); setUpdateRemote(update); setMachineDialog(machine); }} />
         {layoutNotice && <p className="pane-notice" role="alert">{layoutNotice}</p>}
-        {health?.lan_exposure && <LanExposureNotice host={health.lan_exposure.host} onOpen={() => { setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
+        {health?.lan_exposure && <LanExposureNotice host={health.lan_exposure.host} onOpen={() => { if (!reviewNotes.close()) return; setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         {/* the pane's tab, or two tabs side by side (lib/split.ts): a tab dragged down out of its strip,
             or a sidebar row dragged over this area, opens its pane in the half it is dropped on */}
         <div ref={paneAreaRef} className={`pane-split${splitOn ? " is-split" : ""}`} onDragEnterCapture={paneDragOver} onDragOverCapture={paneDragOver} onDragLeave={paneDragLeave} onDropCapture={paneDrop}>
