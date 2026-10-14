@@ -57,7 +57,7 @@ function ReviewDraftEditor({ draft, box, cancel }: { draft: ReviewDraft; box: Re
 /** One stable editor across renderer updates and resizing; source keeps its own scroll root. */
 export function ReviewNotes() {
   const t = useT();
-  const { update } = useSettings();
+  const { settings, update } = useSettings();
   useReviewNotes();
   const draft = reviewNotes.draft;
   const owner = draft?.owner ?? reviewNotes.listOwner;
@@ -66,6 +66,10 @@ export function ReviewNotes() {
   const surface = useFocusTrap<HTMLElement>(open, { initialFocus: box });
   const phone = useMediaQuery("(max-width: 768px)");
   const cancelVoice = useRef<(() => boolean) | null>(null);
+  useEffect(() => {
+    // The device-wide confirmed action also reaches other tabs' memory-only drafts.
+    if (!settings.reviewComments) { cancelVoice.current?.(); reviewNotes.clear(); }
+  }, [settings.reviewComments]);
   const [dockWidth, setDockWidth] = useState(360);
   useLayoutEffect(() => {
     if (!open || phone || draft?.target.kind !== "reply") { setDockWidth(360); return; }
@@ -153,5 +157,5 @@ export function ReplyComment({ paneId, turn, order, part, text, children }: { pa
     const target: ReviewTarget = { kind: "reply", turn, order, part, block: `part:${part}/source:${blockStart}`, blockStart, start, end, evidence };
     reviewNotes.begin(owner, target, honest ? selected : evidence);
   };
-  return <div ref={block} className="reply-review-part" onClick={settings.reviewComments ? (event) => { if (event.target !== event.currentTarget || window.getSelection()?.toString()) return; comment(); } : undefined}>{children}{settings.reviewComments && <span className="reply-review-controls"><button type="button" className="btn btn-ghost chat-meta-btn" onMouseDown={(event) => event.preventDefault()} onClick={comment}><MessageSquarePlus aria-hidden="true" />{t("Comment")}</button>{notes.map((note) => <button className="btn btn-ghost review-marker" type="button" key={note.key} onClick={() => reviewNotes.edit(note)} title={note.text}>{t("Saved comment")}</button>)}</span>}</div>;
+  return <div ref={block} className={settings.reviewComments ? "reply-review-part" : undefined} onClick={settings.reviewComments ? (event) => { if (event.target !== event.currentTarget || window.getSelection()?.toString()) return; comment(); } : undefined}>{children}{settings.reviewComments && <span className="reply-review-controls"><button type="button" className="btn btn-ghost chat-meta-btn" onMouseDown={(event) => event.preventDefault()} onClick={comment}><MessageSquarePlus aria-hidden="true" />{t("Comment")}</button>{notes.map((note) => <button className="btn btn-ghost review-marker" type="button" key={note.key} onClick={() => reviewNotes.edit(note)} title={note.text}>{t("Saved comment")}</button>)}</span>}</div>;
 }
