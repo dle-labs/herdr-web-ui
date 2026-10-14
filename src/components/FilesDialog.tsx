@@ -69,7 +69,7 @@ function FilesPicker({ kind, paneId, directory, onFile, onCommit, onClose }: {
       if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || composing.current) return;
       if (event.key === "Escape") { event.preventDefault(); onClose(); }
       else if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); if (count) setSelected((current) => (current + (event.key === "ArrowDown" ? 1 : count - 1)) % count); }
-      else if (event.key === "Enter") { event.preventDefault(); choose(selected); }
+      else if (event.key === "Enter" && event.target instanceof HTMLInputElement) { event.preventDefault(); choose(selected); }
     }}>
       <header className="modal-header"><h2 className="modal-title">{t(kind === "files" ? "Find files…" : "Choose a historical base")}</h2><button type="button" className="icon-button" aria-label={t("Close picker")} onClick={onClose}><X aria-hidden="true" /></button></header>
       <input className="input" type="search" aria-label={t(kind === "files" ? "Filename or path" : "Commit message or hexadecimal ID")} value={query} autoFocus autoComplete="off" spellCheck={false} onChange={(event) => setQuery(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} />
