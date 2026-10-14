@@ -20,6 +20,9 @@ import { join } from "node:path";
 import { chromium, type Page } from "playwright-core";
 import { build as viteBuild } from "vite";
 import { repoDiffResponse } from "../server/repo-diff.ts";
+import { paneFileSearch } from "../server/files.ts";
+import { listDirectories } from "../server/directories.ts";
+import { VOICE_DEFAULTS } from "../shared/voice.ts";
 import { serveStatic } from "../server/static.ts";
 import { buildDemoApp } from "./demo-build.ts";
 import { runMoreItem } from "./header-more.ts";
@@ -122,13 +125,18 @@ let demoServer: ReturnType<typeof Bun.serve> | undefined;
 
 /** The route the real server gives these paths, on a stand-in that maps a pane to its folder. */
 async function api(request: Request, url: URL): Promise<Response | null> {
-  const diff = /^\/api\/(?:machines\/([^/]+)\/)?workspace\/diff\/(files|file)$/.exec(url.pathname);
+  if (url.pathname === "/api/voice") return Response.json({ configured: false, source: null, ...VOICE_DEFAULTS });
+  const diff = /^\/api\/(?:machines\/([^/]+)\/)?workspace\/diff\/(files|file|commits)$/.exec(url.pathname);
   if (diff) {
     requests.push(url.pathname);
     const paneId = url.searchParams.get("pane_id");
     const cwd = (paneId !== null ? panes.get(paneId) : undefined) ?? url.searchParams.get("directory");
     if (!cwd) return Response.json({ error: { code: "pane_not_found", message: "no such pane" } }, { status: 404 });
-    return repoDiffResponse(diff[2] === "files" ? "files" : "file", cwd, url.searchParams);
+    return repoDiffResponse(diff[2] === "files" ? "files" : diff[2] === "commits" ? "commits" : "file", cwd, url.searchParams);
+  }
+  if (/^\/api\/(?:machines\/[^/]+\/)?pane\/files$/.test(url.pathname)) {
+    const cwd = panes.get(url.searchParams.get("pane_id") ?? "");
+    return cwd ? Response.json(await paneFileSearch(cwd, url.searchParams.get("q") ?? "")) : Response.json({ error: { code: "pane_not_found", message: "no such pane" } }, { status: 404 });
   }
   const fs = /^\/api\/(?:machines\/([^/]+)\/)?fs\/(stat|file)$/.exec(url.pathname);
   if (fs) {
@@ -147,7 +155,7 @@ async function api(request: Request, url: URL): Promise<Response | null> {
   }
   if (/^\/api\/(?:machines\/[^/]+\/)?workspace\/directories$/.test(url.pathname)) {
     const path = url.searchParams.get("path") || repos.main;
-    return Response.json({ path, parent: null, home: root, directories: [], files: [], truncated: false });
+    return Response.json(listDirectories(path, true, true));
   }
   return null;
 }
@@ -580,6 +588,83 @@ try {
     console.log("PASS a remote PC's changes and files read through its bridge");
   }
 
+  // Deliberately ignore fetch aborts: ownership generations, not cancellation alone, reject old answers.
+  {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    await context.addInitScript(() => {
+      localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" }));
+      const fetch = window.fetch.bind(window);
+      window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, String(input).includes("/pane/files?") ? { ...init, signal: undefined } : init)) as typeof window.fetch;
+    });
+    const page = await context.newPage(); page.setDefaultTimeout(20_000); await page.goto(origin);
+    const integrated = (machine: string, pane: string) => page.evaluate(([machine, pane, directory]) => window.repoDiffQA.openIntegrated(machine, pane, directory), [machine, pane, panes.get(pane)!] as const);
+    for (const boundary of ["query", "pane", "machine"] as const) {
+      await integrated("local", "pane-main");
+      await page.locator(".files-tree").waitFor();
+      let ready!: () => void, release!: () => void;
+      const captured = new Promise<void>((resolve) => { ready = resolve; });
+      const released = new Promise<void>((resolve) => { release = resolve; });
+      let held = false;
+      await page.route(/\/api\/pane\/files\?/, async (route) => {
+        const url = new URL(route.request().url());
+        if (held || url.searchParams.get("q") !== "money") { await route.continue(); return; }
+        held = true; ready(); await released;
+        await route.fulfill({ json: { root: "/wrong-owner", files: ["wrong-owner.txt"], repository: true, truncated: false, incomplete: [], limits: { max_entries: 5000, max_results: 100, max_depth: 6 } } });
+      });
+      await page.getByRole("button", { name: "Find files…", exact: true }).click();
+      const query = page.locator(".files-find input"); await query.fill("money"); await captured;
+      if (boundary !== "query") await integrated(boundary === "machine" ? "remote-fixture" : "local", boundary === "pane" ? "pane-conflict" : "pane-main");
+      const wanted = boundary === "query" ? "staged" : boundary === "pane" ? "conflict" : "money";
+      await query.fill(wanted);
+      await page.getByRole("option", { name: `src/${wanted}.ts`, exact: true }).waitFor();
+      release(); await page.unrouteAll({ behavior: "wait" });
+      await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      assert.equal(await page.getByRole("option", { name: "wrong-owner.txt", exact: true }).count(), 0, `${boundary}: late inventory cannot replace the current owner/query`);
+      await closeFiles(page);
+    }
+    await integrated("local", "pane-main");
+    await page.getByRole("button", { name: "Find files…", exact: true }).click();
+    await page.locator(".files-find input").fill("big.ts");
+    await page.getByRole("option", { name: "src/big.ts", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector(".virtual-source diffs-container")?.shadowRoot?.querySelector("[data-column-number]"));
+    await page.evaluate(() => {
+      const gutter = document.querySelector(".virtual-source diffs-container")!.shadowRoot!.querySelector<HTMLElement>("[data-column-number]")!;
+      gutter.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); gutter.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); gutter.click();
+    });
+    await page.getByRole("textbox", { name: "Comment", exact: true }).fill("Large source annotation");
+    await page.locator(".review-editor").getByRole("button", { name: "Save", exact: true }).click();
+    const savedSource = await page.evaluate(() => localStorage.getItem("herdr-web-ui:review-notes")!);
+    const originalLine = (JSON.parse(savedSource) as { target: { start: number } }[])[0]!.target.start;
+    const bigPath = join(panes.get("pane-main")!, "src/big.ts"), originalSource = readFileSync(bigPath, "utf8");
+    writeFileSync(bigPath, `// inserted header\n${originalSource}`);
+    const relocatedPage = await context.newPage(); await relocatedPage.goto(origin);
+    await relocatedPage.evaluate((directory) => window.repoDiffQA.openIntegrated("local", "pane-main", directory), panes.get("pane-main")!);
+    await relocatedPage.getByRole("button", { name: "Find files…", exact: true }).click();
+    await relocatedPage.locator(".files-find input").fill("big.ts");
+    await relocatedPage.getByRole("option", { name: "src/big.ts", exact: true }).click();
+    await relocatedPage.locator(".file-review-bar .review-marker").click();
+    assert.ok((await relocatedPage.locator(".review-reference").textContent())?.includes(`lines ${originalLine + 1}`), "editor references follow the verified source relocation");
+    await page.locator(".file-review-bar .review-marker").click();
+    assert.ok((await page.locator(".review-reference").textContent())?.includes(`lines ${originalLine}`), "another tab retains coordinates for its own loaded snapshot");
+    assert.equal(await page.evaluate(() => localStorage.getItem("herdr-web-ui:review-notes")), savedSource, "viewer relocation does not write back competing snapshots");
+    await page.locator(".review-editor").getByRole("button", { name: "Close comments", exact: true }).click();
+    await relocatedPage.close(); writeFileSync(bigPath, originalSource);
+    await page.evaluate(() => {
+      const key = "herdr-web-ui:review-notes", [note] = JSON.parse(localStorage.getItem(key)!);
+      if (note.target.kind !== "source" || !note.target.evidence.includes("line_")) throw new Error("virtual source callback lost its source evidence");
+      localStorage.setItem(key, JSON.stringify(Array.from({ length: 1000 }, (_, index) => ({ ...note, key: `many-${index}`, id: `many-version-${index}`, created: index, text: `Many note ${index}` }))));
+      window.dispatchEvent(new StorageEvent("storage", { key }));
+    });
+    await page.waitForFunction(() => document.querySelectorAll(".file-review-bar .review-marker").length === 100);
+    assert.ok(await page.locator(".virtual-source").evaluate((node) => (node.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) < 1000), "many comments do not expand the virtual source DOM");
+    await page.locator(".file-review-bar .composer-review-notes button").click();
+    assert.equal(await page.locator(".review-note-list li").count(), 100);
+    await page.getByRole("button", { name: "Next comments", exact: true }).click();
+    assert.ok((await page.locator(".review-note-list").textContent())?.includes("Many note 100"));
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:review-notes")!).length), 1000, "marker/list bounds never delete saved comments");
+    await context.close(); console.log("PASS stale query/pane/machine responses and bounded virtual-source annotations");
+  }
+
   // the static demo answers the routes from its fixture: the list, a diff and no missing route
   {
     const app = join(root, "demo");
@@ -637,7 +722,11 @@ try {
       await picker.getByRole("option", { name: "src/money.ts", exact: true }).waitFor();
       await query.dispatchEvent("keydown", { key: "Escape", isComposing: true, keyCode: 229 });
       assert.equal(await picker.count(), 1, "IME Escape keeps the picker");
-      await query.press("Enter"); await picker.waitFor({ state: "detached" });
+      await query.fill("src");
+      const moneyChoice = picker.getByRole("option", { name: "src/money.ts", exact: true });
+      await moneyChoice.waitFor(); await moneyChoice.focus(); await moneyChoice.press("ArrowUp");
+      assert.equal(await picker.locator('[aria-selected="true"]').evaluate((node) => node === document.activeElement), true, "arrows move a Tab-focused result, not just its highlight");
+      await page.keyboard.press("ArrowDown"); await page.keyboard.press("Enter"); await picker.waitFor({ state: "detached" });
       await page.locator(".files-detail .hl-line[data-line='4']").waitFor();
       await page.evaluate(() => {
         const line = document.querySelector(".files-detail .hl-line[data-line='4']")!, range = document.createRange();
@@ -670,12 +759,18 @@ try {
       if (phone) await files.getByRole("button", { name: "Back to files", exact: true }).click();
       await files.getByRole("button", { name: "Compare", exact: true }).click();
       await changeRows(page, "all");
+      const fileOnly = files.getByRole("checkbox", { name: "This file only", exact: true });
+      await fileOnly.check();
+      await files.getByRole("button", { name: "Unstaged", exact: true }).click();
+      assert.deepEqual((await changeRows(page)).map((row) => row.split(" ")[1]), ["src/money.ts"], "mode changes retain the selected file scope");
       await files.getByRole("button", { name: "Choose a historical base", exact: true }).click();
       await picker.getByRole("searchbox").fill("money");
       await picker.getByRole("option").first().waitFor();
       await picker.getByRole("searchbox").press("ArrowDown"); await picker.getByRole("searchbox").press("Enter");
       await picker.waitFor({ state: "detached" });
       await files.getByRole("button", { name: "Reset to current changes", exact: true }).waitFor();
+      assert.equal(await fileOnly.isChecked(), true);
+      assert.deepEqual((await changeRows(page, "all")).map((row) => row.split(" ")[1]), ["src/money.ts"], "historical selection retains the selected file scope");
       await openChange(page, "src/money.ts"); await waitRows(page);
       const demoDiff = await mounted(page); assert.ok(demoDiff.rows >= 8 && demoDiff.rows < 40, `bounded demo rows: ${JSON.stringify(demoDiff)}`);
       assert.ok((await page.locator(".repo-diff-meta").textContent())?.includes("versus working tree"), "historical direction is explicit");
@@ -727,8 +822,18 @@ try {
       await editor.getByRole("button", { name: "Turn off review comments?", exact: true }).click();
       await page.locator(".confirm-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
       assert.equal(await comment.inputValue(), "Dirty note must require destructive confirmation", "cancel preserves the dirty draft");
+      const otherTab = await context.newPage();
+      await otherTab.goto(`http://127.0.0.1:${demoServer.port}/herdr-web-ui/demo/app/`);
+      await otherTab.locator('.agent-select[title*="Ship the retry flag"]').first().evaluate((node: HTMLElement) => node.click());
+      await otherTab.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+      await otherTab.locator(".composer-review-notes button").click();
+      await otherTab.locator(".review-note-open").click();
+      await otherTab.getByRole("textbox", { name: "Comment", exact: true }).fill("Dirty in the other tab");
       await editor.getByRole("button", { name: "Turn off review comments?", exact: true }).click();
       await page.locator(".confirm-dialog").getByRole("button", { name: "Turn off and delete", exact: true }).click();
+      await otherTab.locator(".review-editor").waitFor({ state: "detached" });
+      assert.equal(await otherTab.locator(".reply-review-controls").count(), 0, "confirmed device-wide deletion disables other tabs and removes their dirty editor");
+      await otherTab.close();
       await editor.waitFor({ state: "detached" });
       assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:review-notes") ?? "[]").length), 0);
       assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).reviewComments), false);

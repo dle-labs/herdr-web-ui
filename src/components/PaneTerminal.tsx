@@ -2477,7 +2477,7 @@ export function PaneTerminal({
         const socket = socketRef.current;
         if (!socket?.canSubmitAgentOnly()) return t("This bridge cannot safely send comments to an agent. Comments and message were kept.");
         pendingMessages.refresh(owner);
-        const message = composeReviewMessage(captured, text, MAX_COMPOSER_CHARS, (key) => reviewNotes.status(key));
+        const message = composeReviewMessage(captured.map(reviewNotes.project), text, MAX_COMPOSER_CHARS, (key) => reviewNotes.status(key));
         if (message === null) return t("Comments and message exceed the message limit. Shorten them before sending.");
         const recoveries = pendingMessages.read(owner).filter((copy) => copy.agent_only && !copy.serverOwned && copy.state === "uncertain");
         // The existing explicit override is only for a definitive no-input draft refusal,

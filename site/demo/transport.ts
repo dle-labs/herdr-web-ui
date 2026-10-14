@@ -1010,16 +1010,20 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
       return json({ repository, head: DEMO_HEAD, commits: hash ? [hash] : DEMO_COMMITS.filter((commit) => commit.subject.toLowerCase().includes(q)), truncated: false } satisfies RepoCommitSearch);
     }
     const resolveCommit = (value: string | null) => value === null || value === "HEAD" ? DEMO_HEAD : DEMO_COMMITS.find((commit) => commit.id.startsWith(value))?.id;
-    const base = scope === "all" || scope === "commit" ? resolveCommit(query.get("base")) : null;
-    const head = scope === "commit" ? resolveCommit(query.get("head")) : null;
+    const base = scope === "all" || scope === "commit" ? resolveCommit(query.get("base")) : scope === "staged" ? DEMO_HEAD : null;
+    const head = scope === "commit" ? resolveCommit(query.get("head")) : scope === "workspace" ? null : DEMO_HEAD;
     if (base === undefined || head === undefined) return error("revision_not_found", "No commit by that name in the fictional repository", 404);
     // The two fictional commits have the same files; their history remains searchable.
     const changed = scope === "workspace" || scope === "all" ? DEMO_DIFF : [];
     const compared: RepoDiffScope = scope;
     const fingerprint = `demo:${root}:${scope}:${base ?? ""}:${head ?? ""}`;
     const shared = { repository, scope: compared, base, head, fingerprint };
-    if (path.endsWith("/files")) return json({ ...shared, files: changed.map((entry) => entry.file), total: changed.length, truncated: false,
-      limits: { max_files: DEMO_DIFF_LIMITS.max_files, max_list_bytes: DEMO_DIFF_LIMITS.max_list_bytes } } satisfies RepoDiffFileList);
+    if (path.endsWith("/files")) {
+      const selected = query.get("path");
+      const files = changed.map((entry) => entry.file).filter((file) => selected === null || file.path === selected || file.old_path === selected);
+      return json({ ...shared, files, total: files.length, truncated: false,
+        limits: { max_files: DEMO_DIFF_LIMITS.max_files, max_list_bytes: DEMO_DIFF_LIMITS.max_list_bytes } } satisfies RepoDiffFileList);
+    }
     const entry = changed.find((candidate) => candidate.file.path === query.get("path"));
     if (!entry) return error("not_found", "nothing changed at that path in this comparison", 404);
     const stale = query.has("fingerprint") && query.get("fingerprint") !== fingerprint;

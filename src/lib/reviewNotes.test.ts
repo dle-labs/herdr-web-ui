@@ -65,21 +65,28 @@ describe("one-send review notes", () => {
     first.begin("other pane", source, "context"); first.write("other note"); first.save(); second.refresh(); expect(second.read()).toHaveLength(2);
     second.clear(); expect(second.read()).toEqual([]); first.refresh(); expect(first.read()).toEqual([]);
   });
-  it("keeps verified relocated references without overwriting a later text version", () => {
+  it("projects relocated references without storage ping-pong or overwriting a later text version", () => {
     const local = storage(), store = new ReviewNotesStore(() => local), other = new ReviewNotesStore(() => local);
     store.begin("pane", source, "quote"); store.write("review"); store.save();
     const captured = store.read(), saved = captured[0]!;
     const locate = sourceAnchorReader("new\nhead\noriginal\nlines\nend", true);
     const anchor = source.kind === "source" ? locate(source) : null;
-    store.reanchor(captured, new Map([[saved.key, anchor]]));
-    expect(reviewReference(store.read()[0]!.target)).toContain("lines 3–4");
-    expect(composeReviewMessage(store.read(), "", 10000)).toContain("lines 3–4");
+    const persisted = local.getItem("herdr-web-ui:review-notes");
+    for (let cycle = 0; cycle < 4; cycle++) {
+      store.reanchor(captured, new Map([[saved.key, anchor]]));
+      other.refresh(); other.reanchor(other.read(), new Map([[saved.key, { start: 2, end: 3 }]])); store.refresh();
+      expect(reviewReference(store.project(store.read()[0]!).target)).toContain("lines 3–4");
+      expect(reviewReference(other.project(other.read()[0]!).target)).toContain("lines 2–3");
+      expect(local.getItem("herdr-web-ui:review-notes")).toBe(persisted);
+    }
+    expect(composeReviewMessage(store.read().map(store.project), "", 10000)).toContain("lines 3–4");
+    store.edit(saved); expect(store.draft!.target.start).toBe(3); store.close();
     expect(store.read()[0]!.id).toBe(saved.id);
-    other.refresh(); other.edit(other.read()[0]!); other.write("later text"); other.save();
+    other.edit(other.read()[0]!); other.write("later text"); other.save();
     store.reanchor(captured, new Map([[saved.key, { start: 8, end: 9 }]]));
     store.acknowledge(captured);
     expect(store.read()[0]!.text).toBe("later text");
-    expect(store.read()[0]!.target.start).toBe(3);
+    expect(store.project(store.read()[0]!).target.start).toBe(2);
     expect(composeReviewMessage(store.read(), "", 10000, () => "outdated")).toContain("outdated target; last known location");
   });
   it("captures exact versions across late edits and preserves unmatched notes", () => {

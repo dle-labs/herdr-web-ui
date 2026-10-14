@@ -110,7 +110,7 @@ export function ReviewNotes() {
   const confirmation = reviewNotes.confirmDisable ? <ConfirmDialog title={t("Turn off review comments?")} body={t("Delete saved comments across every pane on this device and discard the comment draft. Already accepted pending messages keep their text and are not cancelled.")} confirmLabel={t("Turn off and delete")} onClose={() => reviewNotes.disableConfirmation(false)} onConfirm={async () => { reviewNotes.clear(); update({ reviewComments: false }); reviewNotes.disableConfirmation(false); }} /> : null;
   if (!open) return confirmation;
   const deviceList = owner === "*";
-  const notes = orderedNotes(reviewNotes.read(deviceList ? undefined : owner));
+  const notes = orderedNotes(reviewNotes.read(deviceList ? undefined : owner).map(reviewNotes.project));
   const at = draft?.key ? notes.findIndex((note) => note.key === draft.key) : -1;
   const page = Math.min(listPage, Math.max(0, Math.ceil(notes.length / REVIEW_MARKER_LIMIT) - 1));
   return <><aside ref={surface} className={`review-editor${phone ? " review-editor-sheet" : ""}`} style={phone ? undefined : { width: dockWidth }} data-target-kind={draft?.target.kind} role="dialog" aria-modal="true" aria-label={t("Review comments")} tabIndex={-1}>

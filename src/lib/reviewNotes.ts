@@ -126,6 +126,7 @@ export class ReviewNotesStore {
   private cacheSource: ReviewNote[] | null = null;
   private ownerCache = new Map<string, ReviewNote[]>();
   private availability = new Map<string, "current" | "outdated" | "unavailable">();
+  private locations = new Map<string, SourceRange>();
   draft: ReviewDraft | null = null;
   listOwner: string | null = null;
   storageFailed = false;
@@ -145,12 +146,16 @@ export class ReviewNotesStore {
       if (!Array.isArray(raw)) throw new Error("invalid notes");
       const next = raw.filter(validNote);
       for (const [key, note] of this.unsaved) { const index = next.findIndex((item) => item.key === key); if (index !== -1) next.splice(index, 1); if (note !== null) next.push(note); }
-      if (JSON.stringify(next) !== JSON.stringify(this.notes)) { this.notes = next; this.emit(); }
+      if (JSON.stringify(next) !== JSON.stringify(this.notes)) { this.notes = next; this.trimAnnotations(); this.emit(); }
     } catch { this.storageFailed = true; }
   };
-  private persist(changed: readonly string[]): void {
-    const keys = new Set(this.notes.map((note) => note.key));
+  private trimAnnotations(): void {
+    const keys = new Set(this.notes.map((note) => note.key)), ids = new Set(this.notes.map((note) => note.id));
     for (const key of this.availability.keys()) if (!keys.has(key)) this.availability.delete(key);
+    for (const id of this.locations.keys()) if (!ids.has(id)) this.locations.delete(id);
+  }
+  private persist(changed: readonly string[]): void {
+    this.trimAnnotations();
     try {
       const storage = this.storage();
       if (storage === null) throw new Error("storage unavailable");
@@ -194,7 +199,7 @@ export class ReviewNotesStore {
   edit(note: ReviewNote): boolean {
     if (!this.guard()) return false;
     this.contextRefused = false;
-    this.draft = { id: reviewVersionId(), owner: note.owner, key: note.key, target: note.target, quote: note.quote, original: note.text, text: note.text }; this.listOwner = null; this.emit(); return true;
+    this.draft = { id: reviewVersionId(), owner: note.owner, key: note.key, target: this.project(note).target, quote: note.quote, original: note.text, text: note.text }; this.listOwner = null; this.emit(); return true;
   }
   write(text: string): void { if (this.draft === null) return; this.draft = { ...this.draft, text: text.slice(0, REVIEW_TEXT_LIMIT) }; this.emit(); }
   composition(active: boolean): void { this.composing = active; this.emit(); }
@@ -211,19 +216,22 @@ export class ReviewNotesStore {
     if (draft.text.trim()) this.notes.push({ key, id: reviewVersionId(), owner: draft.owner, created: old?.created ?? Date.now(), target: draft.target, quote: draft.quote, text: draft.text });
     this.draft = null; this.persist([key]); return true;
   }
-  /** Verified relocation changes location metadata, not the saved text version. A concurrent
-   * edit still wins, and an acknowledgment of the same text version still settles the note. */
+  /** Verified coordinates belong to this tab's loaded source, never a storage write from a
+   * viewer effect: two tabs may legitimately hold different snapshots of the same file. */
+  project = (note: ReviewNote): ReviewNote => {
+    const anchor = this.locations.get(note.id);
+    return anchor && note.target.kind === "source" ? { ...note, target: { ...note.target, ...anchor } } : note;
+  };
   reanchor(captured: readonly ReviewNote[], anchors: ReadonlyMap<string, SourceRange | null | undefined>): void {
     this.refresh();
     const versions = new Map(captured.map((note) => [note.key, note.id]));
-    const changed: string[] = [];
-    const next = this.notes.map((note) => {
-      const anchor = anchors.get(note.key);
-      if (!anchor || note.target.kind !== "source" || versions.get(note.key) !== note.id || note.target.start === anchor.start && note.target.end === anchor.end) return note;
-      changed.push(note.key);
-      return { ...note, target: { ...note.target, ...anchor } };
-    });
-    if (changed.length) { this.notes = next; this.persist(changed); }
+    let changed = false;
+    for (const note of this.notes) {
+      const anchor = anchors.get(note.key), previous = this.locations.get(note.id);
+      if (!anchor || note.target.kind !== "source" || versions.get(note.key) !== note.id || previous?.start === anchor.start && previous.end === anchor.end) continue;
+      this.locations.set(note.id, anchor); changed = true;
+    }
+    if (changed) this.emit();
   }
   remove(key: string): void { this.refresh(); this.notes = this.notes.filter((note) => note.key !== key); if (this.draft?.key === key) { this.draft = null; this.composing = false; } this.persist([key]); }
   acknowledge(captured: readonly ReviewNote[]): void {

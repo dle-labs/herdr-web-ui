@@ -173,7 +173,15 @@ Review comments use device-local, machine/pane-owned storage, not a new server q
 reuses the existing pending-message recovery lifecycle and requires agent-only support; see
 [Terminal input](terminal-input.md#review-comment-submissions) for refusal guarantees and the
 remaining upstream recipient-binding limitations. No navigation, reload or reconnect submits a
-saved comment by itself.
+saved comment by itself. Verified source relocations are tab-local projections of the loaded
+source, not automatic storage writes: two tabs may hold different snapshots. Editors and outgoing
+references use the verified projection; unavailable targets are labeled as last-known locations.
+
+The tree retains at most 24 expanded directories and 2,000 visible rows. Viewers cap displayed
+comment markers at 100 and the comment list pages by 100, without dropping saved comments or
+excluding them from outgoing composition. Source matching shares an 8 MiB comparison-work budget
+per loaded source/notes batch; unverified matches are unavailable, not guessed current anchors.
+These are resource bounds, not cross-platform performance measurements.
 
 The focused backend suites are `server/files.test.ts` and `server/repo-diff.test.ts`; API, submit
 and pending contract tests must run through `bun run check run` on an isolated session. Existing
