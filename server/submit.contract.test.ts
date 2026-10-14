@@ -179,6 +179,47 @@ afterAll(async () => {
 });
 
 describe("WebSocket submit", () => {
+  it("agent-only comments refuse shell, blocked, unready and authoritative API failures without raw fallback", async () => {
+    const socket = await Socket.connect();
+    const prompt = spyOn(herdr, "agentPrompt");
+    const text = spyOn(herdr, "paneSendText");
+    const keys = spyOn(herdr, "paneSendKeys");
+    try {
+      expect(socket.seen.find((frame) => frame.type === "snapshot").features).toContain("agent-only-submit");
+      await attached(socket, shell.pane); await attached(socket, agent.pane); await attached(socket, codex.pane);
+      let id = 9000;
+      for (const target of [shell, codex]) {
+        socket.send({ type: "submit", id: ++id, pane_id: target.pane, text: "review shell boundary", payload: "review shell boundary", agent_only: true });
+        expect(await socket.result(id)).toMatchObject({ ok: false });
+      }
+      for (const code of ["agent_not_found", "agent_not_ready", "agent_blocked", "timeout"]) {
+        prompt.mockRejectedValueOnce(new herdr.HerdrError(code, "fixture refusal"));
+        socket.send({ type: "submit", id: ++id, pane_id: agent.pane, text: "review API boundary", payload: "review API boundary", agent_only: true });
+        expect(await socket.result(id)).toMatchObject({ ok: false, code });
+      }
+      expect(prompt).toHaveBeenCalledTimes(4);
+      expect(text).not.toHaveBeenCalled(); expect(keys).not.toHaveBeenCalled();
+      socket.send({ type: "submit", id: ++id, pane_id: shell.pane, text: "review typed boundary", payload: "review typed boundary", typed: true, agent_only: true });
+      expect(await socket.result(id)).toMatchObject({ ok: false, code: "invalid_delivery" });
+    } finally { prompt.mockRestore(); text.mockRestore(); keys.mockRestore(); socket.close(); }
+  }, 30_000);
+
+  it("agent-only immediate delivery uses the authoritative agent API once, with a live lease guard", async () => {
+    const socket = await Socket.connect();
+    const from = chunks(agent).length;
+    try {
+      await attached(socket, agent.pane);
+      socket.send({ type: "submit", id: 9020, pane_id: agent.pane, text: "review immediate success", payload: "never use this raw payload", agent_only: true });
+      expect(await socket.result(9020)).toMatchObject({ ok: true });
+      await received(agent, from, 1);
+      expect(typed(agent, from)).toContain("review immediate success");
+      expect(typed(agent, from)).not.toContain("never use this raw payload");
+      socket.send({ type: "role", mode: "observe" });
+      await socket.waitFor((frame) => frame.type === "role-ack" && frame.mode === "observe");
+      socket.send({ type: "submit", id: 9021, pane_id: agent.pane, text: "review observe refusal", payload: "review observe refusal", agent_only: true });
+      expect(await socket.result(9021)).toMatchObject({ ok: false, code: "read_only" });
+    } finally { socket.close(); }
+  }, 30_000);
   it("rejects a held-copy resend combined with Send anyway before reserving or replaying its id", async () => {
     const socket = await Socket.connect();
     const from = chunks(shell).length;

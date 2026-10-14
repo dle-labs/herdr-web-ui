@@ -10,10 +10,11 @@
  * pane replays a recording of `git log` and `bun test`, then a small pretend shell answers what you
  * type. `demo logs` loads fictional retained history for scrolling and search; agent panes show
  * one notice instead of a TUI. A message sent from a chat gets a demo answer.
- * What does not: files, images, push and remote PCs, which need a real machine.
+ * Files, filename search and commit comparisons use the fictional repository below. Uploads,
+ * push and remote PCs still need a real machine.
  */
 import type { AgentIntegration, AgentStatus, ConversationTurn, IntegrationsResponse, Machine, MachineEvent, PaneDirection, PaneFindMatch, PaneFindRequest, PanePlan, PaneResized, PaneSplit, PaneSwapped, PaneZoomed, PendingMessage, PlanStep, PluginActionResult, PluginActions, PluginActionsResponse, PortalStatus, ServerMessage, SessionSnapshot, TabMoved, UsageReport, WorkspaceCreated, WorkspaceInfo, WorktreeEntry, WorktreeListing, WorktreeOpened, WorktreeRemoved } from "../../shared/protocol.ts";
-import type { RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope } from "../../shared/protocol.ts";
+import type { FileInfo, FileSearchResult, RepoCommitSearch, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope } from "../../shared/protocol.ts";
 import { VOICE_DEFAULTS, type VoiceStatus } from "../../shared/voice.ts";
 import { isAgentName } from "../../shared/agent-name.ts";
 import { neighborPane } from "../../src/lib/layoutMap.ts";
@@ -31,7 +32,7 @@ const DEMO_VERSION = "demo";
 /** Only an explicit `demo logs` command starts this fictional retained history. */
 const histories = new Map<string, DemoHistory>();
 const terminalGrids = new Map<string, { cols: number; rows: number }>();
-const heldCopyResends = new Map<string, { text: string; reply: Extract<ServerMessage, { type: "submit-result" }>; at: number }>();
+const heldCopyResends = new Map<string, { text: string; agentOnly?: boolean; reply: Extract<ServerMessage, { type: "submit-result" }>; at: number }>();
 const demoGrid = (paneId: string) => terminalGrids.get(paneId) ?? { cols: 80, rows: 24 };
 function redrawHistory(paneId: string): void {
   for (const socket of sockets) socket.renderHistory(paneId);
@@ -374,6 +375,21 @@ async function layoutBodyOf(method: string, init: RequestInit | undefined, input
 }
 
 const DEMO_FILES = ["src/routes/payments.ts", "src/lib/idempotency.ts", "src/metrics.ts", "src/pages/Reports.tsx", "src/money.ts", "src/money.test.ts", "package.json", "README.md"];
+const DEMO_HEAD = "4f2a9c1d7e3b5a8c6d0e1f2a3b4c5d6e7f8a9b0c";
+const DEMO_BASE = "1268c32a6e07d54f1a8b09c76e2d5430b9a1f605";
+const DEMO_COMMITS = [
+  { id: DEMO_HEAD, subject: "Add payment retry tests", author: "Sam", date: "2026-10-12T12:00:00Z" },
+  { id: DEMO_BASE, subject: "Introduce money helpers", author: "Robin", date: "2026-10-11T09:30:00Z" },
+];
+const DEMO_CONTENT: Record<string, string> = {
+  "README.md": "# Checkout API\n\nA fictional checkout service for exploring Files.\n\n## Money\n\nAmounts are stored as integer cents.\n",
+  "package.json": '{\n  "name": "checkout-api",\n  "scripts": { "test": "bun test" }\n}\n',
+  "src/routes/payments.ts": "import { toCents } from '../money';\n\nexport const payment = (amount: number) => ({ cents: toCents(amount) });\n",
+  "src/lib/idempotency.ts": "export const responses = new Map<string, unknown>();\n",
+  "src/metrics.ts": "export const payments = { accepted: 0, retried: 0 };\n",
+  "src/pages/Reports.tsx": "export function Reports() {\n  return <h1>Payment reports</h1>;\n}\n",
+};
+const demoRoot = (paneId: string): string => paneOf(paneId)?.foreground_cwd ?? paneOf(paneId)?.cwd ?? "/home/demo/checkout-api";
 
 /**
  * The demo repository's uncommitted work, as GET /api/workspace/diff/* answers it: one file of
@@ -422,6 +438,16 @@ const DEMO_DIFF: { file: RepoDiffFile; patch: string | null }[] = [
     "",
   ].join("\n") },
 ];
+
+// These short patches contain each complete side, unlike a general Git patch with omitted context.
+const DEMO_SIDES = new Map(DEMO_DIFF.map(({ file, patch }) => {
+  if (!patch || file.status === "renamed") return [file.path, { old: DEMO_CONTENT[file.path] ?? null, next: DEMO_CONTENT[file.path] ?? null }];
+  const lines = patch.slice(patch.indexOf("@@")).split("\n").slice(1).filter((line) => /^[ +\-]/.test(line));
+  const old = lines.filter((line) => line[0] !== "+").map((line) => line.slice(1)).join("\n") + "\n";
+  const next = lines.filter((line) => line[0] !== "-").map((line) => line.slice(1)).join("\n") + "\n";
+  DEMO_CONTENT[file.path] = next;
+  return [file.path, { old: file.status === "untracked" ? null : old, next }];
+}));
 
 /** Settings → Subscription usage on the demo: plans as the workstation's CLIs might report them, resets counted from now. */
 function usageReport(): UsageReport {
@@ -628,8 +654,19 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   }
   if (path === "/api/pane/omo-tasks") return json(keyOfPane.get(paneId) === OMO_TASKS_PANE ? { tasks: omoTasks(), runs: omoRuns() } : { tasks: [], runs: [] });
   if (path === "/api/pane/files") {
-    const q = (query.get("q") ?? "").toLowerCase();
-    return json({ files: DEMO_FILES.filter((file) => file.toLowerCase().includes(q)).slice(0, Number(query.get("limit") ?? 20)) });
+    const q = (query.get("q") ?? "").trim().toLowerCase();
+    const score = (file: string): number => {
+      const lower = file.toLowerCase(), name = lower.slice(lower.lastIndexOf("/") + 1);
+      if (!q || name === q) return 0;
+      if (name.includes(q)) return 1;
+      if (lower.includes(q)) return 2;
+      let at = 0; for (const letter of lower) if (letter === q[at]) at++;
+      return at === q.length ? 3 : -1;
+    };
+    const matches = DEMO_FILES.filter((file) => score(file) >= 0).sort((a, b) => score(a) - score(b) || (a < b ? -1 : a > b ? 1 : 0));
+    const files = matches.slice(0, Math.min(100, Number(query.get("limit") ?? (query.get("detail") === "1" ? 100 : 20))));
+    return json(query.get("detail") === "1" ? { root: demoRoot(paneId), repository: true, files, truncated: files.length < matches.length,
+      incomplete: files.length < matches.length ? ["matches"] : [], limits: { max_entries: 5000, max_results: 100, max_depth: 6 } } satisfies FileSearchResult : { files });
   }
   if (path === "/api/pane/input" || path === "/api/pane/keys") return json({ ok: true });
   if (path === "/api/plugins/actions") return json({ plugins: PLUGINS } satisfies PluginActionsResponse);
@@ -907,8 +944,14 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     return json({ ok: true });
   }
   if (path === "/api/workspace/directories") {
-    const dir = query.get("path") || "/home/demo";
-    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "docs-site", "infra", "release", "web-dashboard"] : [], truncated: false, files: [] });
+    const root = demoRoot(paneId);
+    const requested = query.get("path") || (paneId ? root : "/home/demo");
+    const dir = requested.startsWith("/") ? requested : `${root}/${requested}`;
+    const prefix = dir === root ? "" : dir.startsWith(root + "/") ? dir.slice(root.length + 1) + "/" : null;
+    const children = prefix === null ? [] : DEMO_FILES.filter((file) => file.startsWith(prefix)).map((file) => file.slice(prefix.length));
+    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo",
+      directories: dir === "/home/demo" ? ["checkout-api", "docs-site", "infra", "release", "web-dashboard"] : [...new Set(children.filter((name) => name.includes("/")).map((name) => name.split("/")[0]))].sort(),
+      truncated: false, files: children.filter((name) => !name.includes("/")).map((name) => ({ name, size: new TextEncoder().encode(DEMO_CONTENT[(prefix ?? "") + name] ?? "").byteLength })) });
   }
   if (path === "/api/workspace/create") {
     const body = await bodyOf(init, input);
@@ -956,25 +999,46 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
   if (path === "/api/voice") return json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus, 200, { "cache-control": "no-store" });
   if (path === "/api/voice/config") return error("demo", "the demo saves no OpenAI key", 409);
   if (path === "/api/voice/transcribe") return error("voice_not_configured", "transcription is unavailable in the demo", 409);
-  if (path === "/api/workspace/diff/files" || path === "/api/workspace/diff/file") {
+  if (["/api/workspace/diff/files", "/api/workspace/diff/file", "/api/workspace/diff/commits"].includes(path)) {
     const scope = query.get("scope") || "workspace";
-    if (scope !== "workspace" && scope !== "staged" && scope !== "commit") return error("invalid_scope", "scope must be workspace, staged or commit", 400);
-    // the demo keeps no history to name commits in
-    if (scope === "commit") return error("revision_not_found", "the demo repository has no commits to compare", 404);
-    const root = snapshot().panes.find((pane) => pane.pane_id === paneId)?.cwd ?? query.get("directory") ?? "/home/demo/checkout-api";
-    const repository: RepoDiffRepository = { root, branch: "main", head: "4f2a9c1d7e3b5a8c6d0e1f2a3b4c5d6e7f8a9b0c", detached: false, unborn: false };
-    // everything in the demo is unstaged work
-    const changed = scope === "workspace" ? DEMO_DIFF : [];
-    const compared: RepoDiffScope = scope;
-    const shared = { repository, scope: compared, base: null, head: null };
-    if (path === "/api/workspace/diff/files") {
-      return json({ ...shared, files: changed.map((entry) => entry.file), total: changed.length, truncated: false, limits: { max_files: DEMO_DIFF_LIMITS.max_files, max_list_bytes: DEMO_DIFF_LIMITS.max_list_bytes } } satisfies RepoDiffFileList);
+    if (scope !== "all" && scope !== "workspace" && scope !== "staged" && scope !== "commit") return error("invalid_scope", "unknown comparison scope", 400);
+    const root = query.get("directory") || demoRoot(paneId);
+    const repository: RepoDiffRepository = { root, branch: "main", head: DEMO_HEAD, detached: false, unborn: false };
+    if (path.endsWith("/commits")) {
+      const q = (query.get("q") ?? "").trim().toLowerCase();
+      const hash = /^[0-9a-f]{4,64}$/.test(q) ? DEMO_COMMITS.find((commit) => commit.id.startsWith(q)) : undefined;
+      return json({ repository, head: DEMO_HEAD, commits: hash ? [hash] : DEMO_COMMITS.filter((commit) => commit.subject.toLowerCase().includes(q)), truncated: false } satisfies RepoCommitSearch);
     }
+    const resolveCommit = (value: string | null) => value === null || value === "HEAD" ? DEMO_HEAD : DEMO_COMMITS.find((commit) => commit.id.startsWith(value))?.id;
+    const base = scope === "all" || scope === "commit" ? resolveCommit(query.get("base")) : null;
+    const head = scope === "commit" ? resolveCommit(query.get("head")) : null;
+    if (base === undefined || head === undefined) return error("revision_not_found", "No commit by that name in the fictional repository", 404);
+    // The two fictional commits have the same files; their history remains searchable.
+    const changed = scope === "workspace" || scope === "all" ? DEMO_DIFF : [];
+    const compared: RepoDiffScope = scope;
+    const fingerprint = `demo:${root}:${scope}:${base ?? ""}:${head ?? ""}`;
+    const shared = { repository, scope: compared, base, head, fingerprint };
+    if (path.endsWith("/files")) return json({ ...shared, files: changed.map((entry) => entry.file), total: changed.length, truncated: false,
+      limits: { max_files: DEMO_DIFF_LIMITS.max_files, max_list_bytes: DEMO_DIFF_LIMITS.max_list_bytes } } satisfies RepoDiffFileList);
     const entry = changed.find((candidate) => candidate.file.path === query.get("path"));
     if (!entry) return error("not_found", "nothing changed at that path in this comparison", 404);
-    return json({ ...shared, file: entry.file, patch: entry.patch, unavailable: entry.patch === null ? "binary" : null, truncated: false, limits: { max_patch_bytes: DEMO_DIFF_LIMITS.max_patch_bytes, context_lines: DEMO_DIFF_LIMITS.context_lines } } satisfies RepoDiffFilePatch);
+    const stale = query.has("fingerprint") && query.get("fingerprint") !== fingerprint;
+    const sides = DEMO_SIDES.get(entry.file.path);
+    return json({ ...shared, file: entry.file, patch: stale ? null : entry.patch, unavailable: stale ? "stale" : entry.patch === null ? "binary" : null,
+      old_content: stale || entry.file.binary ? null : sides?.old ?? null, new_content: stale || entry.file.binary ? null : sides?.next ?? null,
+      truncated: false, limits: { max_patch_bytes: DEMO_DIFF_LIMITS.max_patch_bytes, context_lines: DEMO_DIFF_LIMITS.context_lines } } satisfies RepoDiffFilePatch);
   }
-  if (path.startsWith("/api/fs/")) return error("not_found", "the demo has no files to open", 404);
+  if (path === "/api/fs/stat" || path === "/api/fs/file") {
+    const requested = query.get("path") ?? "";
+    const relative = DEMO_FILES.find((file) => requested === file || requested.endsWith("/" + file));
+    const content = relative ? DEMO_CONTENT[relative] : undefined;
+    if (content === undefined || relative === undefined) return error("not_found", "No fictional file at that path", 404);
+    const absolute = requested.startsWith("/") ? requested : `${demoRoot(paneId)}/${relative}`;
+    const bytes = new TextEncoder().encode(content);
+    if (path.endsWith("/stat")) return json({ path: absolute, name: relative.split("/").at(-1)!, kind: "text", mime: relative.endsWith(".md") ? "text/markdown" : "text/plain",
+      size: bytes.length, modified: "2026-10-14T00:00:00Z" } satisfies FileInfo);
+    return new Response(method === "HEAD" ? null : content, { headers: { "content-type": "text/plain; charset=utf-8", "content-length": String(bytes.length), "cache-control": "no-store" } });
+  }
   return error("demo", `${method} ${path} is not part of the demo`, 404);
 }
 
@@ -1088,7 +1152,7 @@ class DemoSocket extends EventTarget {
       const open = new Event("open");
       this.onopen?.(open);
       this.dispatchEvent(open);
-      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "ping"] });
+      this.push({ type: "snapshot", snapshot: snapshot(), features: ["submit", "agent-only-submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "ping"] });
     }, 20);
     this.timers.add(opening);
   }
@@ -1121,10 +1185,10 @@ class DemoSocket extends EventTarget {
 
   send(raw: string): void {
     if (this.readyState !== 1) return;
-    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; send_anyway?: unknown; resend_id?: unknown; resend_generation?: unknown; pending_id?: string; action?: unknown; enabled?: boolean; stop?: unknown };
+    let message: { type: string; pane_id?: string; cols?: number; rows?: number; text?: string; payload?: string; keys?: string[]; id?: number; mode?: string; typed?: unknown; delivery?: unknown; clear_draft?: unknown; send_anyway?: unknown; resend_id?: unknown; resend_generation?: unknown; pending_id?: string; action?: unknown; enabled?: boolean; stop?: unknown; agent_only?: unknown };
     try { message = JSON.parse(raw); } catch { return; }
     if ((message.type === "submit" || message.type === "pending-action") && Number.isSafeInteger(message.id)) {
-      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, clear_draft: message.clear_draft, send_anyway: message.send_anyway, resend_id: message.resend_id, resend_generation: message.resend_generation, pending_id: message.pending_id, action: message.action });
+      const signature = JSON.stringify({ type: message.type, pane_id: message.pane_id, text: message.text, payload: message.payload, typed: message.typed, delivery: message.delivery, agent_only: message.agent_only, clear_draft: message.clear_draft, send_anyway: message.send_anyway, resend_id: message.resend_id, resend_generation: message.resend_generation, pending_id: message.pending_id, action: message.action });
       const previous = this.requests.get(message.id!);
       if (previous) {
         if (previous.signature !== signature) {
@@ -1212,6 +1276,9 @@ class DemoSocket extends EventTarget {
           break;
         }
         if (message.pane_id && message.text !== undefined && message.id !== undefined) {
+          if (message.agent_only !== undefined && (message.agent_only !== true || message.typed === true)) {
+            this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code: "invalid_delivery", message: "Review comments require agent-only submission" }); break;
+          }
           if (message.resend_id !== undefined && message.send_anyway !== undefined) {
             this.completeRequest({ type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code: "invalid_delivery", message: "Use a held-copy resend id only for an immediate chat message" });
             break;
@@ -1221,7 +1288,7 @@ class DemoSocket extends EventTarget {
           const resendKey = message.resend_id === undefined ? null : JSON.stringify([message.pane_id, message.resend_id, message.resend_generation ?? 0]);
           const previous = resendKey === null ? undefined : heldCopyResends.get(resendKey);
           if (previous && this.mode !== "observe" && message.clear_draft === undefined) {
-            this.push(previous.text === message.text ? { ...previous.reply, id: message.id }
+            this.push(previous.text === message.text && !!previous.agentOnly === !!message.agent_only ? { ...previous.reply, id: message.id }
               : { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code: "invalid_submit_id", message: "This resend id already belongs to another message." });
             break;
           }
@@ -1239,15 +1306,15 @@ class DemoSocket extends EventTarget {
           else if (message.resend_generation !== undefined && (typeof message.resend_generation !== "number" || !Number.isSafeInteger(message.resend_generation) || message.resend_generation < 0 || message.resend_id === undefined)) code = "invalid_delivery";
           else if (resendKey !== null && heldCopyResends.size >= 256) code = "pending_limit";
           else if (queued && (text.trim().length === 0 || text.length > 20_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text))) code = "invalid_submit_text";
-          else if (queued) code = this.pendingTargetError(message.pane_id);
+          else if (queued || message.agent_only) code = this.pendingTargetError(message.pane_id);
           if (code) {
             const reply: Extract<ServerMessage, { type: "submit-result" }> = { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code, message: "The demo agent cannot take this submission." };
-            if (resendKey !== null && this.mode !== "observe" && code !== "pending_limit" && !previous) heldCopyResends.set(resendKey, { text: message.text, reply, at: Date.now() });
+            if (resendKey !== null && this.mode !== "observe" && code !== "pending_limit" && !previous) heldCopyResends.set(resendKey, { text: message.text, agentOnly: message.agent_only === true, reply, at: Date.now() });
             this.completeRequest(reply);
             break;
           }
           if (queued && (message.delivery === "hold" || paneOf(message.pane_id)?.agent_status === "working")) {
-            const pending: PendingMessage = { id: `demo-pending-${nextPending++}`, request_id: message.id, text, state: message.delivery === "hold" ? "held" : "queued", created_at: now() };
+            const pending: PendingMessage = { id: `demo-pending-${nextPending++}`, request_id: message.id, text, state: message.delivery === "hold" ? "held" : "queued", created_at: now(), ...(message.agent_only ? { agent_only: true } : {}) };
             this.pending.set(message.pane_id, [...(this.pending.get(message.pane_id) ?? []), pending]);
             const reply: ServerMessage = { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: true, pending: structuredClone(pending) };
             this.rememberRequest(reply);
@@ -1256,7 +1323,7 @@ class DemoSocket extends EventTarget {
           } else {
             submitToChat(message.pane_id, text);
             const reply: Extract<ServerMessage, { type: "submit-result" }> = { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: true };
-            if (resendKey !== null) heldCopyResends.set(resendKey, { text: message.text, reply, at: Date.now() });
+            if (resendKey !== null) heldCopyResends.set(resendKey, { text: message.text, agentOnly: message.agent_only === true, reply, at: Date.now() });
             this.completeRequest(reply);
           }
         }
@@ -1287,14 +1354,14 @@ class DemoSocket extends EventTarget {
             for (const [id, receipt] of heldCopyResends) if (Date.now() - receipt.at >= 60_000) heldCopyResends.delete(id);
             const previous = heldCopyResends.get(key);
             if (previous) {
-              if (previous.text !== pending.text) { result(false, "invalid_submit_id"); break; }
+              if (previous.text !== pending.text || !!previous.agentOnly !== !!pending.agent_only) { result(false, "invalid_submit_id"); break; }
               if (previous.reply.ok) this.removePending(message.pane_id, pending.id, "sent");
               result(previous.reply.ok, previous.reply.code);
               break;
             }
             if (heldCopyResends.size >= 256) { result(false, "pending_limit"); break; }
             const resendResult = (ok: boolean, code?: string) => {
-              heldCopyResends.set(key, { text: pending.text, at: Date.now(), reply: {
+              heldCopyResends.set(key, { text: pending.text, agentOnly: pending.agent_only === true, at: Date.now(), reply: {
                 type: "submit-result", id: message.id!, pane_id: message.pane_id!, ok, ...(code ? { code } : {}),
               } });
               result(ok, code);

@@ -14,7 +14,7 @@ import { DeviceStore, handleDeviceRequest, type DeviceMatch } from "./devices.ts
 import { handlePreferencesRequest, PreferenceStore } from "./preferences.ts";
 import { remoteAccess, TailnetIdentitySource } from "./tailscale.ts";
 import { paneCommands } from "./commands.ts";
-import { paneFiles } from "./files.ts";
+import { paneFiles, paneFileSearch } from "./files.ts";
 import { badRequest, conflictResponse, errorResponse, isCount, isJsonObject, jsonResponse } from "./http.ts";
 import { serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
@@ -221,7 +221,7 @@ const RESTORED_CLEAR_GAP_MS = 200;
 const RESTORED_CLEAR_SETTLE_MS = 300;
 /** what a send must still have of its deadline before the copy is cleared: the clear, the box read again, then the send */
 const RESTORED_CLEAR_RESERVE_MS = 2_000;
-const SERVER_FEATURES: ServerFeature[] = ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "take-over", "watch", "conversation-watch", "ping"];
+const SERVER_FEATURES: ServerFeature[] = ["submit", "agent-only-submit", "pending-input", "pending-hold", "secret-input", "input-ready", "take-over", "watch", "conversation-watch", "ping"];
 
 /** the sides herdr's pane.swap and pane.resize take; anything else is refused before the RPC, which would answer invalid_request */
 const isPaneDirection = (value: unknown): value is PaneDirection => value === "left" || value === "right" || value === "up" || value === "down";
@@ -624,7 +624,7 @@ export function createServer(
    * the box still shows what they saw or reads empty. Never typed instead of agent.prompt.
    */
   async function submitText(paneId: string, text: string, payload: string, arrivedAt: number, fromTerminal = false, authorize: () => void = () => {},
-    clearDraft?: string, confirmation?: { draft: string | null; identity: PendingIdentity; box?: string | null }, sendAnyway = false): Promise<void> {
+    clearDraft?: string, confirmation?: { draft: string | null; identity: PendingIdentity; box?: string | null }, sendAnyway = false, agentOnly = false): Promise<void> {
     let clearedDraft = false;
     const inTime = (reserve = 0): void => {
       authorize();
@@ -646,6 +646,8 @@ export function createServer(
         });
         inTime();
         const identity = pane ? pendingIdentity(pane) : null;
+        if (agentOnly && !identity?.agent) throw new HerdrError("agent_not_found", "No agent is in front of this pane; review comments were not sent");
+        if (agentOnly && !["working", "idle", "done"].includes(pane!.agent_status)) throw new HerdrError("agent_not_ready", "The agent is not ready for review comments; nothing was sent");
         const sameClaude = (current: PendingIdentity | null): boolean => current?.agent === "claude"
           && confirmation !== undefined && confirmation.draft === clearDraft
           && current.terminalId === confirmation.identity.terminalId && current.session === confirmation.identity.session;
@@ -735,12 +737,13 @@ export function createServer(
           if (clearDraft !== undefined && !claudeInputEmpty(...reads)) throw new InputDraftError(null);
         }
         try {
-          await agentPrompt(paneId, closeMention(text));
+          inTime();
+          await agentPrompt(paneId, closeMention(text), undefined, agentOnly ? () => { try { inTime(); return true; } catch { return false; } } : undefined);
           noteSubmitted(paneId, text);
           return;
         } catch (error) {
           if (!(error instanceof HerdrError)) throw error;
-          if (clearDraft !== undefined || sendAnyway) throw error;
+          if (agentOnly || clearDraft !== undefined || sendAnyway) throw error;
           const queuedOnly = error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
           if (error.code !== "agent_not_found" && error.code !== "agent_not_ready" && !queuedOnly) throw error;
         }
@@ -826,7 +829,7 @@ export function createServer(
     if (attachment !== lease.attachment || attachment.pty !== lease.pty || !owner.data.attached.has(paneId)
       || !attachment.clients.has(owner) || !attachment.ready) throw new HerdrError("input_not_ready", "The pending message's pane connection changed");
   }
-  async function pendingContext(owner: Client, paneId: string, lease: PendingLease, identity?: PendingIdentity, pasted = false): Promise<{ pane: HerdrPane; identity: PendingIdentity; working: boolean; screen: string }> {
+  async function pendingContext(owner: Client, paneId: string, lease: PendingLease, identity?: PendingIdentity, pasted = false, agentOnly = false): Promise<{ pane: HerdrPane; identity: PendingIdentity; working: boolean; screen: string }> {
     authorizePending(owner, paneId, lease);
     // The same normalized snapshot the client sees includes a known Codex finish that
     // herdr reports as unknown. Nothing is inferred from a bare unknown state.
@@ -838,6 +841,8 @@ export function createServer(
       ...pendingIdentity(pane), processPid: pid, processBirth: pid === null ? null : processStartedAt(pid),
       omoSession: omo.sessionOf(paneId)?.sessionId ?? null,
     };
+    if (agentOnly && !current.agent) throw new HerdrError("agent_not_found", "No agent is in front of this pane; review comments were not sent");
+    if (agentOnly && !["working", "idle", "done"].includes(pane.agent_status)) throw new HerdrError("agent_not_ready", "The agent is not ready for review comments; nothing was sent");
     if (identity && !samePendingIdentity(identity, current)) {
       throw new HerdrError("pending_target_changed", "The pane's terminal or agent session changed; review the message before sending it again");
     }
@@ -921,7 +926,7 @@ export function createServer(
   }
 
   async function dispatchPendingText(owner: Client, paneId: string, text: string, lease: PendingLease, identity: PendingIdentity,
-    automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean) => void = () => {}, interruptWorkingCodex = false): Promise<SubmitReply> {
+    automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean) => void = () => {}, interruptWorkingCodex = false, agentOnly = false): Promise<SubmitReply> {
     let wrote = false;
     // what the checks below read is older than a status event that arrives while they run
     let mark = pending.mark(paneId);
@@ -929,7 +934,7 @@ export function createServer(
       const typed = Date.now() - (lastTyped.get(paneId) ?? 0);
       if (typed < TYPED_SETTLE_MS) await Bun.sleep(TYPED_SETTLE_MS - typed);
       mark = pending.mark(paneId);
-      const context = await pendingContext(owner, paneId, lease, identity);
+      const context = await pendingContext(owner, paneId, lease, identity, false, agentOnly);
       if (automatic && context.working) {
         pending.observe(paneId, "working", mark);
         throw new HerdrError("pending_wait", "The agent is working again; this message still waits for its next turn");
@@ -939,6 +944,7 @@ export function createServer(
       // read comes after the colors, so text typed between the two is in the box and holds the message.
       if (context.identity.agent === "claude") await freeClaudeBox(paneId, context.working, () => authorizePending(owner, paneId, lease), arrivedAt + (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS));
       if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "The pending message waited too long; nothing was typed");
+      if (agentOnly) await pendingContext(owner, paneId, lease, identity, false, true);
       authorizePending(owner, paneId, lease);
       // asked again right before herdr is written to: its connect is awaited (#666)
       const allowed = (): boolean => {
@@ -953,7 +959,7 @@ export function createServer(
         throw error;
       });
       await Bun.sleep(options.submitDelayMs ?? SUBMIT_DELAY_MS);
-      const beforeEnter = await pendingContext(owner, paneId, lease, identity, true);
+      const beforeEnter = await pendingContext(owner, paneId, lease, identity, true, agentOnly);
       if (automatic && beforeEnter.working) throw new HerdrError("pending_wait", "The agent started another turn before this queued message could be committed");
       authorizePending(owner, paneId, lease);
       const steering = !automatic && beforeEnter.working;
@@ -965,7 +971,7 @@ export function createServer(
       let statusAtRead = pending.current(paneId);
       await interruptCodexSteering(interruptWorkingCodex, closeMention(text), { agent: beforeEnter.identity.agent, working: beforeEnter.working, screen: beforeEnter.screen }, {
         read: async () => {
-          const current = await pendingContext(owner, paneId, lease, identity, true);
+          const current = await pendingContext(owner, paneId, lease, identity, true, agentOnly);
           statusAtRead = pending.current(paneId);
           return { agent: current.identity.agent, working: current.working, screen: current.screen };
         },
@@ -984,7 +990,7 @@ export function createServer(
   }
   async function dispatchPending(item: PendingItem, automatic: boolean, arrivedAt: number, interruptWorkingCodex = false): Promise<SubmitReply> {
     const reply = await dispatchPendingText(item.owner, item.paneId, item.message.text, item.lease, item.identity,
-      automatic, arrivedAt, (working, restarting) => pending.committing(item, working, restarting), interruptWorkingCodex);
+      automatic, arrivedAt, (working, restarting) => pending.committing(item, working, restarting), interruptWorkingCodex, item.message.agent_only === true);
     pending.settle(item, reply.ok ? undefined : { code: reply.code!, message: reply.message! }, reply.code === "submit_changed",
       automatic && ["pending_wait", "agent_blocked"].includes(reply.code ?? ""));
     return reply;
@@ -2002,7 +2008,7 @@ export function createServer(
         return listing === null ? badRequest("invalid_cwd", "path must be a directory this user can read") : jsonResponse(listing);
       }
 
-      if (pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file") {
+      if (pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file" || pathname === "/api/workspace/diff/commits") {
         if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
         // file contents, like /api/fs/file: this app reads them, another site's page does not
         if (request.headers.get("sec-fetch-site") === "cross-site") return jsonResponse({ error: { code: "cross_site", message: "A repository's changes are read from this app" } }, 403);
@@ -2023,7 +2029,7 @@ export function createServer(
           cwd = expandedDirectory(relative ? resolve(base!, directory) : directory) ?? undefined;
         }
         if (cwd === undefined) return badRequest("invalid_cwd", "directory must be a directory this user can read");
-        return repoDiffResponse(pathname.endsWith("/files") ? "files" : "file", cwd, url.searchParams);
+        return repoDiffResponse(pathname.endsWith("/files") ? "files" : pathname.endsWith("/commits") ? "commits" : "file", cwd, url.searchParams);
       }
 
       // A tab is made the way a workspace is: herdr opens it with a shell in its root pane, and
@@ -2382,6 +2388,7 @@ export function createServer(
         if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
         const paneId = url.searchParams.get("pane_id");
         if (!paneId) return badRequest("missing_pane_id", "pane_id query parameter is required");
+        if (pathname === "/api/pane/files" && crossSiteFileRead(request)) return jsonResponse({ error: { code: "cross_site", message: "Files are searched from this app" } }, 403);
         try {
           const context = await paneContext(paneId);
           if (pathname === "/api/pane/commands") {
@@ -2392,7 +2399,10 @@ export function createServer(
           const limitRaw = url.searchParams.get("limit");
           const limit = limitRaw === null ? 20 : Number(limitRaw);
           if (!Number.isInteger(limit) || limit < 1) return badRequest("invalid_limit", "limit must be a positive integer");
-          return jsonResponse({ files: await paneFiles(context.cwd, url.searchParams.get("q") ?? "", Math.min(limit, 100)) });
+          const query = url.searchParams.get("q") ?? "";
+          return jsonResponse(url.searchParams.get("detail") === "1"
+            ? await paneFileSearch(context.cwd, query, Math.min(limitRaw === null ? 100 : limit, 100))
+            : { files: await paneFiles(context.cwd, query, Math.min(limit, 100)) });
         } catch (error) {
           return errorResponse(error);
         }
@@ -3292,6 +3302,9 @@ export function createServer(
                 break;
               }
               const waits = message.delivery === "queue" || message.delivery === "hold";
+              if (message.agent_only !== undefined && (message.agent_only !== true || message.typed === true)) {
+                result(false, "invalid_delivery", "Agent-only messages cannot use terminal input"); break;
+              }
               if ((message.delivery !== undefined && message.delivery !== "immediate" && !waits)
                 || (waits && message.typed !== undefined && message.typed !== false)) {
                 result(false, "invalid_delivery", "Use immediate delivery, or queue or hold a chat message");
@@ -3331,13 +3344,13 @@ export function createServer(
                   let book = pendingRequests.get(client);
                   if (!book) { book = new PendingRequestBook((reply: SubmitReply) => reply.pending !== undefined && pending.retains(client, reply.pending.id)); pendingRequests.set(client, book); }
                   // a digest, so a receipt kept for replay never holds a large request's bytes
-                  const fingerprint = new Bun.CryptoHasher("sha256").update(JSON.stringify([message.pane_id, message.text, message.payload, message.delivery])).digest("hex");
+                  const fingerprint = new Bun.CryptoHasher("sha256").update(JSON.stringify([message.pane_id, message.text, message.payload, message.delivery, !!message.agent_only])).digest("hex");
                   const previous = book.get(message.id, fingerprint);
                   const lease = previous ? null : pendingLease(client, message.pane_id);
                   const reply = previous ?? book.run(message.id, fingerprint, () => serialize(message.pane_id, async (): Promise<SubmitReply> => {
                     const text = pendingText(message.text);
                     const mark = pending.mark(message.pane_id);
-                    const context = await pendingContext(client, message.pane_id, lease!);
+                    const context = await pendingContext(client, message.pane_id, lease!, undefined, false, message.agent_only === true);
                     if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "This pending message waited too long; nothing was typed");
                     if (!context.working) {
                       // the agent left while the message was on its way: a chat follow-up is not typed into what is there now
@@ -3346,11 +3359,11 @@ export function createServer(
                       // paste + Enter; agent.prompt commits its key inside herdr. With a message
                       // already waiting its turn here, this one takes its place behind it instead.
                       // A held message is never typed by arriving after the turn: it waits for Send now.
-                      if (message.delivery === "queue" && !pending.waiting(message.pane_id)) return dispatchPendingText(client, message.pane_id, text, lease!, context.identity, false, arrivedAt);
+                      if (message.delivery === "queue" && !pending.waiting(message.pane_id)) return dispatchPendingText(client, message.pane_id, text, lease!, context.identity, false, arrivedAt, undefined, false, message.agent_only === true);
                     }
                     pending.observe(message.pane_id, context.pane.agent_status, mark);
                     // hold: kept for the owner's Send now, never sent by the turn's end
-                    const item = pending.enqueue(client, message.pane_id, message.id, text, lease!, context.identity, message.delivery === "hold");
+                    const item = pending.enqueue(client, message.pane_id, message.id, text, lease!, context.identity, message.delivery === "hold", message.agent_only === true);
                     return { ok: true, pending: item.message };
                   }).catch((error): SubmitReply => ({ ok: false, ...pendingFault(error) })));
                   const answer = await reply;
@@ -3360,16 +3373,23 @@ export function createServer(
                   drainPending(message.pane_id);
                   break;
                 }
-                const dispatch = () => {
+                // An agent-only send captures the connection/pane lease before waiting its turn.
+                const agentLease = message.agent_only ? pendingLease(client, message.pane_id) : null;
+                const dispatch = async () => {
                   // held while this waited its turn (the attach was refused after the check above)
                   if (attachments.get(message.pane_id)?.held) throw new HerdrError("attach_held", ATTACH_HELD_MESSAGE);
-                  return submitText(message.pane_id, message.text, message.payload, arrivedAt, message.typed === true, () => authorizeSocket(client), message.clear_draft,
-                    draftConfirmations.get(client)?.get(message.pane_id), message.send_anyway === true);
+                  if (agentLease) {
+                    pendingText(message.text);
+                    await pendingContext(client, message.pane_id, agentLease, undefined, false, true);
+                  }
+                  return submitText(message.pane_id, message.text, message.payload, arrivedAt, message.typed === true,
+                    () => agentLease ? authorizePending(client, message.pane_id, agentLease) : authorizeSocket(client), message.clear_draft,
+                    draftConfirmations.get(client)?.get(message.pane_id), message.send_anyway === true, message.agent_only === true);
                 };
                 if (message.resend_id !== undefined) {
                   authorizeSocket(client);
                   const answer = await serialize(message.pane_id, () => pending.resend(message.pane_id, message.resend_id!,
-                    new Bun.CryptoHasher("sha256").update(message.text).digest("hex"), async () => {
+                    new Bun.CryptoHasher("sha256").update(JSON.stringify([message.text, !!message.agent_only])).digest("hex"), async () => {
                       try { await dispatch(); return { ok: true }; }
                       catch (error) { return { ok: false, ...pendingFault(error) }; }
                     }, message.resend_generation));
@@ -3416,9 +3436,9 @@ export function createServer(
                   if (item.message.state === "uncertain") return { ok: false, code: "pending_uncertain", message: "Check the terminal before sending this message again" };
                   let dispatched = false;
                   const reply = await pending.resend(item.paneId, item.message.id,
-                    new Bun.CryptoHasher("sha256").update(item.message.text).digest("hex"), async (): Promise<SubmitReply> => {
+                    new Bun.CryptoHasher("sha256").update(JSON.stringify([item.message.text, !!item.message.agent_only])).digest("hex"), async (): Promise<SubmitReply> => {
                       try {
-                        await pendingContext(client, item.paneId, lease!, item.identity);
+                        await pendingContext(client, item.paneId, lease!, item.identity, false, item.message.agent_only === true);
                         if (!pending.claim(item, false)) return { ok: false, code: "pending_busy", message: "This message is already being sent" };
                         item.lease = lease!;
                         dispatched = true;

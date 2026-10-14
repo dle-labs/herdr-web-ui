@@ -207,7 +207,7 @@ export class HerdrSocket {
   /** submits waiting for their submit-result, by id */
   private readonly submits = new Map<number, (result: SubmitResult) => void>();
   /** Receipts match the operation and captured target on this connection, never an ID alone. */
-  private readonly requests = new Map<number, { type: "submit" | "pending-action" | "secret"; paneId: string; queued?: boolean; pendingId?: string }>();
+  private readonly requests = new Map<number, { type: "submit" | "pending-action" | "secret"; paneId: string; queued?: boolean; pendingId?: string; text?: string; agentOnly?: boolean }>();
 
   constructor(url: string = defaultUrl()) {
     this.url = url;
@@ -346,11 +346,15 @@ export class HerdrSocket {
       }
       if ((message.type === "input-ready" && message.ready === false) || message.type === "pty-exit" || (message.type === "error" && message.pane_id && ["attach_held", "input_not_ready"].includes(message.code))) this.inputReady.delete(message.pane_id!);
       if (message.type === "submit-result" && this.matchesRequest(message.id, "submit", message.pane_id)) {
+        if (message.ok && message.pending && !this.matchesPending(message.id, message.pane_id, message.pending)) return;
         this.resolveRequest(message.id, message.ok ? { ok: true, ...(message.pending ? { pending: message.pending } : {}) }
           : { ok: false, code: message.code ?? "submit_failed", message: message.message ?? "the pane did not take the message", ...(message.draft ? { draft: message.draft } : {}),
             ...(!message.draft && typeof message.box === "string" ? { box: message.box } : {}) });
       }
       if (message.type === "pending-messages") {
+        const pane = message.pane_id;
+        message = { ...message, messages: message.messages.filter((pending) => !this.requests.has(pending.request_id)
+          || this.matchesPending(pending.request_id, pane, pending)) };
         // The owner-only live queue is also an acceptance receipt if its submit ACK
         // was lost. A reconnect's empty list never implies that an old item was sent.
         for (const pending of message.messages) {
@@ -772,6 +776,11 @@ export class HerdrSocket {
     return this.connected && this.mode === "interact" && this.features.has("submit") && this.features.has("pending-input");
   }
 
+  /** A bridge guarantee against shell fallback, not atomic binding to an agent instance. */
+  canSubmitAgentOnly(): boolean {
+    return this.connected && this.mode === "interact" && this.features.has("submit") && this.features.has("agent-only-submit");
+  }
+
   /** Whether the bridge can keep a pending message for Send now alone (`delivery: "hold"`). */
   canHoldMessages(): boolean {
     return this.canQueueMessages() && this.features.has("pending-hold");
@@ -795,7 +804,7 @@ export class HerdrSocket {
   /** `typed`: from the terminal's input line, typed into the pane like the keyboard (see ClientMessage).
    * `clearDraft`: an immediate send over the draft an input_draft refusal named (ClientMessage `clear_draft`)
    * `sendAnyway`: an immediate send after a refusal that showed the box (ClientMessage `send_anyway`) */
-  submit(paneId: string, text: string, payload: string, typed = false, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number): Promise<SubmitResult> | null {
+  submit(paneId: string, text: string, payload: string, typed = false, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number, agentOnly = false): Promise<SubmitResult> | null {
     const socket = this.socket;
     if (!this.connected || socket === null || this.mode === "observe") return null;
     if (resendId !== undefined && sendAnyway) return Promise.resolve({ ok: false, code: "invalid_delivery", message: "Use a held-copy resend id only for an immediate chat message" });
@@ -804,6 +813,7 @@ export class HerdrSocket {
       // a liveness probe in flight is waited out: nothing is sent on a socket that may be dead
       if (!(await this.probeSettled(socket))) return DISCONNECTED;
       if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot submit messages." };
+      if (agentOnly && (typed || !this.canSubmitAgentOnly())) return { ok: false, code: "agent_only_unsupported", message: "This PC cannot safely send review comments to an agent. Update its bridge; nothing was sent." };
       // hold is decided once the snapshot said what the bridge supports: one too old to hold queues it as before
       if (delivery === "hold" && !this.canHoldMessages()) delivery = "queue";
       if (delivery === "queue" && !this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to queue messages." };
@@ -814,7 +824,7 @@ export class HerdrSocket {
       }
       const id = this.nextSubmit++;
       return this.submitRequest({ type: "submit", id, pane_id: paneId, text, payload, ...(typed ? { typed: true } : {}), ...(delivery !== "immediate" ? { delivery } : {}),
-        ...(clearDraft !== undefined ? { clear_draft: clearDraft } : {}), ...(sendAnyway ? { send_anyway: true as const } : {}), ...(resendId !== undefined ? { resend_id: resendId, resend_generation: generation ?? 0 } : {}) });
+        ...(clearDraft !== undefined ? { clear_draft: clearDraft } : {}), ...(sendAnyway ? { send_anyway: true as const } : {}), ...(resendId !== undefined ? { resend_id: resendId, resend_generation: generation ?? 0 } : {}), ...(agentOnly ? { agent_only: true as const } : {}) });
     })();
   }
 
@@ -835,7 +845,7 @@ export class HerdrSocket {
   /** Only an acknowledgement callback is retained, never a frame to resend. */
   private submitRequest(message: Extract<ClientMessage, { type: "submit" | "pending-action" }>): Promise<SubmitResult> {
     const id = message.id;
-    this.requests.set(id, { type: message.type, paneId: message.pane_id, ...(message.type === "submit" ? { queued: message.delivery === "queue" || message.delivery === "hold" } : { pendingId: message.pending_id }) });
+    this.requests.set(id, { type: message.type, paneId: message.pane_id, ...(message.type === "submit" ? { queued: message.delivery === "queue" || message.delivery === "hold", text: message.text.replace(/[\r\n]+$/, "").replace(/\r\n?/g, "\n"), agentOnly: message.agent_only === true } : { pendingId: message.pending_id }) });
     const result = new Promise<SubmitResult>((resolve) => {
       this.submits.set(id, resolve);
       window.setTimeout(() => {
@@ -879,6 +889,13 @@ export class HerdrSocket {
       } finally { secret = ""; }
       return result;
     })();
+  }
+
+  private matchesPending(id: number, paneId: string, pending: PendingMessage): boolean {
+    const request = this.requests.get(id);
+    return request?.type === "submit" && request.queued === true && request.paneId === paneId
+      && pending.request_id === id && typeof pending.id === "string" && pending.id.length > 0
+      && pending.text === request.text && (pending.agent_only === true) === request.agentOnly;
   }
 
   private matchesRequest(id: number, type: "submit" | "pending-action" | "secret", paneId: string, pendingId?: string): boolean {

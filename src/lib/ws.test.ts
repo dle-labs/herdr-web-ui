@@ -41,6 +41,60 @@ const snapshot = (features: string[]) => ({ type: "snapshot", snapshot: { worksp
 const secrets = (socket: FakeSocket) => socket.sent.filter((frame) => frame.type === "secret");
 const submissions = (socket: FakeSocket) => socket.sent.filter((frame) => ["submit", "input", "keys"].includes(frame.type));
 
+it("refuses review comments on old bridges and through terminal input without a fallback frame", async () => {
+  for (const [features, typed] of [[[], false], [["submit", "pending-input"], false], [["submit", "agent-only-submit"], true]] as const) {
+    const client = new HerdrSocket("ws://test/ws"); client.connect();
+    const socket = FakeSocket.last; socket.open(); socket.receive(snapshot([...features]));
+    try {
+      for (const delivery of ["immediate", "queue"] as const) {
+        expect(await client.submit("w1:p1", "review note", "review note", typed, delivery, undefined, false, undefined, undefined, true))
+          .toMatchObject({ ok: false, code: "agent_only_unsupported" });
+      }
+      expect(submissions(socket)).toEqual([]);
+    } finally { client.close(); }
+  }
+});
+
+it("carries agent-only intent and keeps mismatched or disconnected review submissions unacknowledged", async () => {
+  for (const delivery of ["immediate", "queue"] as const) {
+    const client = new HerdrSocket("ws://test/ws"); client.connect();
+    const socket = FakeSocket.last; socket.open(); socket.receive(snapshot(["submit", "pending-input", "agent-only-submit"]));
+    try {
+      expect(client.canSubmitAgentOnly()).toBe(true);
+      const next = socket.nextSubmission();
+      const result = client.submit("w1:p1", "review note", "review note", false, delivery, undefined, false, undefined, undefined, true);
+      const { id } = await next;
+      expect(submissions(socket)[0]?.agent_only).toBe(true);
+      socket.receive({ type: "submit-result", id, pane_id: "another:p1", ok: true });
+      socket.disconnect();
+      expect(await result).toMatchObject({ ok: false, code: "disconnected" });
+      expect(submissions(socket)).toHaveLength(1);
+    } finally { client.close(); }
+  }
+});
+
+it("accepts review queue ownership only for the captured request, payload and agent-only intent", async () => {
+  for (const fault of ["request", "text", "intent"] as const) {
+    const client = new HerdrSocket("ws://test/ws"); client.connect();
+    const socket = FakeSocket.last; socket.open(); socket.receive(snapshot(["submit", "pending-input", "agent-only-submit"]));
+    try {
+      const next = socket.nextSubmission();
+      let acknowledged = false;
+      const result = client.submit("w1:p1", "review note", "review note", false, "queue", undefined, false, undefined, undefined, true)!;
+      void result.then(() => { acknowledged = true; });
+      const { id } = await next;
+      const pending: PendingMessage = { id: "accepted-review", request_id: id, text: "review note", agent_only: true, state: "queued", created_at: "2026-10-14T00:00:00Z" };
+      const wrong = { ...pending, ...(fault === "request" ? { request_id: id + 1 } : fault === "text" ? { text: "different payload" } : { agent_only: undefined }) };
+      socket.receive({ type: "submit-result", id, pane_id: "w1:p1", ok: true, pending: wrong });
+      socket.receive({ type: "pending-messages", pane_id: "w1:p1", messages: [wrong] });
+      await Promise.resolve();
+      expect(acknowledged).toBe(false);
+      socket.receive({ type: "pending-messages", pane_id: "w1:p1", messages: [pending] });
+      expect(await result).toEqual({ ok: true, pending });
+    } finally { client.close(); }
+  }
+});
+
 it("refuses clear-and-send on a legacy bridge without sending payload or Enter", async () => {
   const client = new HerdrSocket("ws://test/ws");
   client.connect();

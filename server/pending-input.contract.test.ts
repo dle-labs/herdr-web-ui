@@ -141,8 +141,8 @@ async function setup(label: string, agent = "claude", screen = "› Message\n", 
       await Bun.sleep(25);
     }
   };
-  const queue = async (id: number, text: string): Promise<PendingMessage> => {
-    socket.send({ type: "submit", id, pane_id: pane, text, payload: "unused\r", delivery: "queue" });
+  const queue = async (id: number, text: string, agentOnly = false): Promise<PendingMessage> => {
+    socket.send({ type: "submit", id, pane_id: pane, text, payload: "unused\r", delivery: "queue", ...(agentOnly ? { agent_only: true } : {}) });
     const answer = await socket.result(id); expect(answer.ok).toBe(true); expect(answer.pending?.request_id).toBe(id); return answer.pending;
   };
   const removed = (id: string, outcome = "sent", reader = socket) => reader.wait((frame) => frame.type === "pending-messages" && frame.pane_id === pane && frame.removed?.some((entry: any) => entry.id === id && entry.outcome === outcome));
@@ -156,7 +156,8 @@ describe("connection-owned pending input", () => {
     const before = await herdrClient.paneGet(f.pane);
     const process = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.find((entry) => entry.name === "claude");
     if (!process) throw new Error("SESSION1 has no foreground claude process");
-    const message = await f.queue(540, "MSG-FOR-SESSION-1");
+    const message = await f.queue(540, "MSG-FOR-SESSION-1", true);
+    expect(message.agent_only).toBe(true);
     expect(before.agent_session ?? null).toBeNull(); // control: no native session distinguishes the processes
     expect(f.bytes()).toBe(""); // control: enqueue never types while working
     const started = new Promise<void>((resolve, reject) => {
@@ -189,7 +190,8 @@ describe("connection-owned pending input", () => {
     const before = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.[0];
     if (!before) throw new Error("No foreground recorder");
     const birth = processStart.processStartedAt(before.pid);
-    const message = await f.queue(541, "same process");
+    const message = await f.queue(541, "same process", true);
+    expect(message.agent_only).toBe(true);
     const removed = f.socket.event((frame) => frame.removed?.some((entry) => entry.id === message.id) === true);
     await f.state("idle"); await removed; await f.waitBytes("\r");
     const after = (await herdrClient.paneProcessInfo(f.pane))?.foreground_processes?.[0];
@@ -512,7 +514,7 @@ describe("connection-owned pending input", () => {
   }, 30_000);
 
   it("holds on observe mode and requires a fresh explicit steer after interact resumes", async () => {
-    const f = await setup("observe"); const message = await f.queue(1, "held");
+    const f = await setup("observe"); const message = await f.queue(1, "held", true);
     f.socket.send({ type: "role", mode: "observe" });
     await f.socket.wait((frame) => frame.type === "role-ack" && frame.mode === "observe");
     await f.socket.wait((frame) => frame.type === "pending-messages" && frame.messages.some((item: PendingMessage) => item.id === message.id && item.state === "held"));
@@ -525,7 +527,7 @@ describe("connection-owned pending input", () => {
   }, 30_000);
 
   it("does not auto-send or replay a closed connection's pending input", async () => {
-    const f = await setup("disconnect"); const keeper = await f.another(); const message = await f.queue(1, "never replay");
+    const f = await setup("disconnect"); const keeper = await f.another(); const message = await f.queue(1, "never replay", true);
     await f.socket.disconnect(); await f.state("idle", keeper);
     keeper.send({ type: "submit", id: 20, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });
     expect(await keeper.result(20)).toMatchObject({ ok: true }); await f.waitBytes("barrier\r"); expect(f.bytes()).toBe("barrier\r");
@@ -534,7 +536,7 @@ describe("connection-owned pending input", () => {
   }, 30_000);
 
   it("cancels the committing key when a sender closes after its paste", async () => {
-    const f = await setup("partial", "claude", "› Message\n", { submitDelayMs: 750 }); const keeper = await f.another(); const message = await f.queue(1, "partial");
+    const f = await setup("partial", "claude", "› Message\n", { submitDelayMs: 750 }); const keeper = await f.another(); const message = await f.queue(1, "partial", true);
     f.socket.send({ type: "pending-action", id: 10, pane_id: f.pane, pending_id: message.id, action: "steer" });
     await f.waitBytes("\u001b[201~"); await f.socket.disconnect();
     keeper.send({ type: "submit", id: 20, pane_id: f.pane, text: "barrier", payload: "barrier", typed: true });

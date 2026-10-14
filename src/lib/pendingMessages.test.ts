@@ -9,6 +9,17 @@ const storage = () => {
 const message = (id: string, state: PendingMessage["state"] = "queued", text = "check the tests"): PendingMessage => ({ id, request_id: 1, text, state, created_at: "2026-10-06T00:00:00Z" });
 
 describe("pending message ownership", () => {
+  it("retains agent-only intent through acceptance, reload, refusal and another tab's update", () => {
+    const port = storage(), live = new PendingMessageStore(() => port);
+    live.accept("pc:pane", { ...message("review", "held"), agent_only: true }, "connection");
+    const recovered = new PendingMessageStore(() => port);
+    expect(recovered.read("pc:pane")[0]).toMatchObject({ agent_only: true, serverOwned: false, state: "held" });
+    recovered.begin("pc:pane", "review"); recovered.unconfirm("pc:pane", "review");
+    recovered.fail("pc:pane", "review", { code: "agent_only_unsupported", message: "Update the bridge" }, false, 0);
+    recovered.end("pc:pane", "review");
+    live.suspendScope("connection");
+    expect(new PendingMessageStore(() => port).read("pc:pane")[0]).toMatchObject({ agent_only: true, text: "check the tests" });
+  });
   it("regression: advances a persisted attempt only on a definitive no-input refusal", () => {
     const port = storage(), store = new PendingMessageStore(() => port);
     store.accept("p", message("h", "held"), null);

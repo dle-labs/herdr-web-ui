@@ -41,7 +41,7 @@ export class PendingMessageStore {
         return [{ id: message.id, request_id: message.request_id, text: message.text, created_at: message.created_at,
           state: message.state === "held" && message.resendInFlight !== true ? "held" as const : "uncertain" as const,
           ...(typeof message.resendGeneration === "number" && Number.isSafeInteger(message.resendGeneration) && message.resendGeneration >= 0 ? { resendGeneration: message.resendGeneration } : {}),
-          ...(message.resendInFlight === true ? { resendInFlight: true as const } : {}), ...(error ? { error } : {}), serverOwned: false }];
+          ...(message.resendInFlight === true ? { resendInFlight: true as const } : {}), ...(message.agent_only === true ? { agent_only: true as const } : {}), ...(error ? { error } : {}), serverOwned: false }];
       });
     } catch { return []; }
   }
