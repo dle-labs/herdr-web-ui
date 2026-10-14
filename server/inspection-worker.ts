@@ -74,10 +74,13 @@ export class Inspection {
     clearTimeout(this.timer);
     this.signal?.removeEventListener("abort", this.cancel);
     const worker = this.worker; this.worker = null;
-    if (worker) void worker.terminate();
-    // Cleanup is asynchronous: even an unavailable temp filesystem cannot block the bridge.
-    for (const path of this.temporary) void rm(path, { recursive: true, force: true }).catch(() => undefined);
+    const temporary = [...this.temporary];
     this.temporary.clear();
+    // A late worker write must finish before cleanup, but neither termination nor an unavailable
+    // temp filesystem may hold the response or the bridge event loop open.
+    void Promise.resolve(worker?.terminate()).catch(() => undefined).then(async () => {
+      await Promise.all(temporary.map((path) => rm(path, { recursive: true, force: true }).catch(() => undefined)));
+    });
   }
 }
 

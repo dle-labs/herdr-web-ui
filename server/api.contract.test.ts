@@ -3437,7 +3437,9 @@ describe("repository diff of a pane's folder", () => {
     expect(answer).toMatchObject({ old_content: "one\n", new_content: "two\n" });
 
     writeFileSync(join(root, "untracked.txt"), "new\n");
-    const inventory = await (await fetch(`${base()}/api/pane/files?${pane}&detail=1&q=UNTRACKED`)).json() as FileSearchResult;
+    const inventoryResponse = await fetch(`${base()}/api/pane/files?${pane}&detail=1&q=UNTRACKED`);
+    expect(inventoryResponse.headers.get("cache-control")).toBe("private, no-store");
+    const inventory = await inventoryResponse.json() as FileSearchResult;
     expect(inventory).toMatchObject({ root, repository: true, files: ["untracked.txt"], truncated: false, incomplete: [] });
     expect((await fetch(`${base()}/api/pane/files?pane_id=missing&detail=1`)).status).toBe(404);
     const commits = await (await fetch(`${base()}/api/workspace/diff/commits?${pane}&q=FIRST`)).json() as RepoCommitSearch;
@@ -3460,6 +3462,9 @@ describe("repository diff of a pane's folder", () => {
     const relative = await fetch(`${base()}/api/workspace/diff/files?pane_id=no-such-pane&directory=sub`);
     expect(relative.status).toBe(400);
     expect(((await relative.json()) as ApiError).error.code).toBe("invalid_cwd");
+    const missingDirectory = await fetch(`${base()}/api/workspace/diff/files?directory=${encodeURIComponent(join(root, "absent"))}`);
+    expect(missingDirectory.status).toBe(400);
+    expect(((await missingDirectory.json()) as ApiError).error.code).toBe("invalid_cwd");
     const posted = await fetch(`${base()}/api/workspace/diff/files?${pane}`, { method: "POST", headers: { "x-herdr-machine": "1" } });
     expect(posted.status).toBe(400);
     expect(((await posted.json()) as ApiError).error.code).toBe("method_not_allowed");

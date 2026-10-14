@@ -37,7 +37,7 @@ import { launchedAgents } from "./launched-agents.ts";
 import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent } from "./shell-agent.ts";
 import { listDirectories } from "./directories.ts";
 import { fileResponse, locateFile, crossSiteFileRead } from "./file-view.ts";
-import { REPO_DIFF_DEADLINE_MS, repoDiffResponse } from "./repo-diff.ts";
+import { REPO_DIFF_DEADLINE_MS, RepoDiffError, repoDiffResponse } from "./repo-diff.ts";
 import {
   agentManifests,
   agentPrompt,
@@ -2408,8 +2408,9 @@ export function createServer(
           const query = url.searchParams.get("q") ?? "";
           return jsonResponse(url.searchParams.get("detail") === "1"
             ? await paneFileSearch(context.cwd, query, Math.min(limitRaw === null ? 100 : limit, 100), { signal: request.signal })
-            : { files: await paneFiles(context.cwd, query, Math.min(limit, 100)) });
+            : { files: await paneFiles(context.cwd, query, Math.min(limit, 100)) }, 200, { "cache-control": "private, no-store" });
         } catch (error) {
+          if (error instanceof RepoDiffError) return jsonResponse({ error: { code: error.code, message: error.message } }, error.status);
           return errorResponse(error);
         }
       }
