@@ -230,13 +230,20 @@ describe("WebSocket submit", () => {
   it("agent-only immediate delivery uses the authoritative agent API once, with a live lease guard", async () => {
     const socket = await Socket.connect();
     const from = chunks(agent).length;
+    const shellFrom = chunks(shell).length;
     try {
+      // Establish the authoritative API's own no-agent refusal on an owned recorder,
+      // independently of the bridge preflight. There is no immutable recipient token in this API.
+      const refusal = await herdr.agentPrompt(shell.pane, "review native refusal probe").then(() => null, (error: unknown) => error);
+      expect(refusal).toBeInstanceOf(herdr.HerdrError);
+      expect(["agent_not_found", "agent_not_ready"]).toContain((refusal as herdr.HerdrError).code);
       await attached(socket, agent.pane);
       socket.send({ type: "submit", id: 9020, pane_id: agent.pane, text: "review immediate success", payload: "never use this raw payload", agent_only: true });
       expect(await socket.result(9020)).toMatchObject({ ok: true });
       await received(agent, from, 1);
       expect(typed(agent, from)).toContain("review immediate success");
       expect(typed(agent, from)).not.toContain("never use this raw payload");
+      expect(typed(shell, shellFrom)).toBe("");
       socket.send({ type: "role", mode: "observe" });
       await socket.waitFor((frame) => frame.type === "role-ack" && frame.mode === "observe");
       socket.send({ type: "submit", id: 9021, pane_id: agent.pane, text: "review observe refusal", payload: "review observe refusal", agent_only: true });
