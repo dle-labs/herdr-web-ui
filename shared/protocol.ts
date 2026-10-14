@@ -694,8 +694,28 @@ export interface FileInfo {
   kind: FileKind;
 }
 
-/** Which two states of a repository are compared. */
-export type RepoDiffScope = "workspace" | "staged" | "commit";
+/** GET /api/pane/files?detail=1; legacy callers still receive {files}. */
+export interface FileSearchResult {
+  root: string;
+  files: string[];
+  repository: boolean;
+  /** Inventory or results are incomplete; reasons distinguish the two. */
+  truncated: boolean;
+  incomplete: Array<"entries" | "depth" | "deadline" | "output" | "traversal" | "matches">;
+  limits: { max_entries: number; max_results: number; max_depth: number };
+}
+
+/** workspace preserves the older index-versus-working-tree comparison (unstaged). */
+export type RepoDiffScope = "all" | "workspace" | "staged" | "commit";
+
+/** GET /api/workspace/diff/commits; literal subject/message or reachable hexadecimal ID search. */
+export interface RepoCommitSearch {
+  repository: RepoDiffRepository;
+  /** Immutable HEAD captured before searching; null for an empty history. */
+  head: string | null;
+  commits: Array<{ id: string; subject: string; author: string; date: string }>;
+  truncated: boolean;
+}
 
 /** How one file changed. `untracked` exists only in the `workspace` scope. */
 export type RepoDiffStatus = "added" | "deleted" | "modified" | "renamed" | "copied" | "type_changed" | "unmerged" | "untracked";
@@ -740,6 +760,8 @@ export interface RepoDiffFileList {
   /** `files` is not the whole list */
   truncated: boolean;
   limits: { max_files: number; max_list_bytes: number };
+  /** Snapshot detection, not an atomic filesystem snapshot. Absent on older bridges. */
+  fingerprint?: string;
 }
 
 /**
@@ -758,7 +780,13 @@ export interface RepoDiffFilePatch {
    * `unmerged` (a conflict: git prints a combined diff, which is not a unified patch) or
    * `unsupported` (an untracked path that is not a regular file). Null when `patch` is set.
    */
-  unavailable: "binary" | "too_large" | "unmerged" | "unsupported" | null;
+  unavailable: "binary" | "too_large" | "unmerged" | "unsupported" | "stale" | null;
+  /** Matches the inventory that was displayed; stale reads never return a complete-looking patch. */
+  fingerprint?: string;
+  /** Exact selected sides, bounded to 2 MiB each; null means absent, not a disk fallback.
+   * Older bridges omit these fields. Unavailable previews must not use them as complete text. */
+  old_content?: string | null;
+  new_content?: string | null;
   /** the patch exists and was left out for its size */
   truncated: boolean;
   limits: { max_patch_bytes: number; context_lines: number };
@@ -1094,6 +1122,8 @@ export interface PendingMessage {
   text: string;
   state: "queued" | "sending" | "held" | "uncertain";
   created_at: string;
+  /** Preserve no-shell-fallback intent in browser-held recovery copies. */
+  agent_only?: true;
   error?: { code: string; message: string };
 }
 
@@ -1134,8 +1164,11 @@ export type ClientMessage =
    * shares the first outcome for 60 seconds after settlement. `resend_generation` defaults to 0;
    * only a definitive no-input refusal permits the next attempt generation. Not with `send_anyway`:
    * that combination returns invalid_delivery before reserving or replaying an ID. No `clear_draft`.
-   * Older peers ignore it. */
-  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue" | "hold"; clear_draft?: string; send_anyway?: true; resend_id?: string; resend_generation?: number }
+   * Older peers ignore it.
+   * `agent_only` requires "agent-only-submit": immediate delivery uses agent.prompt with no
+   * raw-input fallback, including refusal for absent/unready/blocked agents. Queue/hold retains
+   * this intent and the existing identity/lease guarded delivery. Neither is atomic recipient binding. */
+  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue" | "hold"; clear_draft?: string; send_anyway?: true; resend_id?: string; resend_generation?: number; agent_only?: true }
   | { type: "pending-action"; id: number; pane_id: string; pending_id: string; action: "steer" | "discard"; resend_generation?: number }
   /** Masked input: revalidate the visible prompt, type literal bytes + Enter immediately.
    * Never queued, retried, sent through agent.prompt, or echoed in a result. */
@@ -1163,7 +1196,7 @@ export type ClientMessage =
   | { type: "ping"; id: number };
 
 /** What a server supports beyond the base protocol, listed in its first snapshot; older bridges list nothing. */
-export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping";
+export type ServerFeature = "submit" | "agent-only-submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping";
 
 export type ServerMessage =
   | { type: "snapshot"; snapshot: SessionSnapshot; features?: ServerFeature[] }
