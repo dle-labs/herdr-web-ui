@@ -3,6 +3,7 @@ import { isAbsolute, join, relative, sep } from "node:path";
 
 import type { FileSearchResult } from "../shared/protocol.ts";
 import { RepoDiffError, repoDiffFileInventory } from "./repo-diff.ts";
+import { Inspection } from "./inspection-worker.ts";
 
 const CACHE_MS = 5_000;
 const MAX_ENTRIES = 5_000;
@@ -13,7 +14,8 @@ type Inventory = Pick<FileSearchResult, "root" | "files" | "repository" | "incom
 interface CachedInventory { expires: number; result: Promise<Inventory>; controller: AbortController; users: number; settled: boolean }
 const cache = new Map<string, CachedInventory>();
 
-function walkFiles(cwd: string, deadline = Date.now() + DEADLINE_MS): Inventory {
+/** Shared with the inspection worker; only legacy general-preview filesNamed calls it inline. */
+export function walkFiles(cwd: string, deadline = Date.now() + DEADLINE_MS): Inventory {
   try { cwd = realpathSync(cwd); }
   catch { return { root: cwd, files: [], repository: false, incomplete: ["traversal"] }; }
   const files: string[] = [];
@@ -56,33 +58,46 @@ function walkFiles(cwd: string, deadline = Date.now() + DEADLINE_MS): Inventory 
   return { root: cwd, files, repository: false, incomplete: [...incomplete] };
 }
 
-async function loadInventory(cwd: string, signal: AbortSignal): Promise<Inventory> {
-  const deadline = Date.now() + DEADLINE_MS;
+async function loadInventory(cwd: string, signal: AbortSignal, deadline: number): Promise<Inventory> {
   try {
-    const result = await repoDiffFileInventory(cwd, { deadlineMs: DEADLINE_MS, signal });
+    const result = await repoDiffFileInventory(cwd, { deadlineMs: Math.max(0, deadline - Date.now()), signal });
     const files = result.files.sort(lexical);
     return { root: result.root, files, repository: true, incomplete: result.incomplete };
   } catch (error) {
     if (!(error instanceof RepoDiffError) || error.code === "git_cancelled") throw error;
     if (error.code === "not_a_repository" || error.code === "git_unavailable") {
-      const result = walkFiles(cwd, deadline);
-      if (error.code === "git_unavailable") result.incomplete.push("traversal");
-      return result;
+      const fs = new Inspection(deadline, signal);
+      try {
+        const result = await fs.call("walk", cwd);
+        if (error.code === "git_unavailable" && !result.incomplete.includes("traversal")) result.incomplete.push("traversal");
+        return result;
+      } catch (walkError) {
+        if (signal.aborted) throw new RepoDiffError("git_cancelled", "file inventory was cancelled", 499);
+        const code = (walkError as { code?: string }).code;
+        return { root: cwd, files: [], repository: false, incomplete: [code === "git_timeout" ? "deadline" : code === "git_output_limit" ? "output" : "traversal"] };
+      } finally { fs.close(); }
     }
     // A failed Git inventory is not an apparently complete non-Git walk.
     return { root: cwd, files: [], repository: true, incomplete: [error.code === "git_timeout" ? "deadline" : error.code === "git_output_limit" ? "output" : "traversal"] };
   }
 }
 
-async function inventory(cwd: string, signal?: AbortSignal): Promise<Inventory> {
+async function inventory(cwd: string, signal?: AbortSignal): Promise<Inventory & { cwd: string }> {
   // A missing/relative pane cwd must never fall back to the bridge's own cwd.
   if (!isAbsolute(cwd)) throw new Error("file inventory requires an absolute pane directory");
   if (signal?.aborted) throw new RepoDiffError("git_cancelled", "file inventory was cancelled", 499);
-  const canonical = realpathSync(cwd);
+  const deadline = Date.now() + DEADLINE_MS;
+  const fs = new Inspection(deadline, signal);
+  let canonical: string;
+  try { canonical = await fs.call("canonical", cwd); }
+  catch (error) {
+    if (error instanceof Error && "code" in error && "status" in error) throw new RepoDiffError(String(error.code), error.message, Number(error.status));
+    throw error;
+  } finally { fs.close(); }
   let hit = cache.get(canonical);
   if (!hit || hit.expires <= Date.now() || hit.controller.signal.aborted) {
     const controller = new AbortController();
-    hit = { expires: Date.now() + CACHE_MS, result: loadInventory(canonical, controller.signal), controller, users: 0, settled: false };
+    hit = { expires: Date.now() + CACHE_MS, result: loadInventory(canonical, controller.signal, deadline), controller, users: 0, settled: false };
     cache.set(canonical, hit);
     if (cache.size > 16) cache.delete(cache.keys().next().value!);
     const entry = hit;
@@ -95,7 +110,7 @@ async function inventory(cwd: string, signal?: AbortSignal): Promise<Inventory> 
     cancel = () => reject(new RepoDiffError("git_cancelled", "file inventory was cancelled", 499));
     signal?.addEventListener("abort", cancel, { once: true });
   });
-  try { return await (signal ? Promise.race([entry.result, cancelled]) : entry.result); }
+  try { return { ...await (signal ? Promise.race([entry.result, cancelled]) : entry.result), cwd: canonical }; }
   finally {
     if (cancel) signal?.removeEventListener("abort", cancel);
     entry.users -= 1;
@@ -130,7 +145,7 @@ function matches(files: string[], query: string): string[] {
 
 /** Detailed search is rooted at the canonical repository root, or pane cwd outside Git. */
 export async function paneFileSearch(cwd: string, query = "", limit = 100, options: { signal?: AbortSignal } = {}): Promise<FileSearchResult> {
-  const result = await inventory(cwd, options.signal);
+  const { cwd: _cwd, ...result } = await inventory(cwd, options.signal);
   const boundedLimit = Math.min(100, Math.max(1, Math.trunc(limit) || 100));
   const ranked = matches(result.files, query);
   const incomplete = [...result.incomplete];
@@ -142,7 +157,7 @@ export async function paneFileSearch(cwd: string, query = "", limit = 100, optio
 /** Legacy composer callers keep cwd-relative names and the same string[] response. */
 export async function paneFiles(cwd: string, query = "", limit = 20): Promise<string[]> {
   const result = await inventory(cwd);
-  const prefix = relative(result.root, realpathSync(cwd)).split(sep).join("/");
+  const prefix = relative(result.root, result.cwd).split(sep).join("/");
   const files = prefix ? result.files.filter((path) => path.startsWith(`${prefix}/`)).map((path) => path.slice(prefix.length + 1)) : result.files;
   return matches(files, query).slice(0, Math.min(100, Math.max(1, Math.trunc(limit) || 20)));
 }

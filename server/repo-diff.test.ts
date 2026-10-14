@@ -207,6 +207,55 @@ describe("all changes and exact selected sides", () => {
     expect(await repoDiffFile(empty, query({ scope: "all", path: "empty.txt" }))).toMatchObject({ old_content: null, new_content: "", unavailable: null });
   });
 
+  it("keeps recreated deletions and rename originals bound to the full inventory", async () => {
+    const root = repository("recreated-deletions");
+    const original = (name: string) => lines(12, name === "old.txt" ? "line" : name);
+    for (const name of ["gone.txt", "ignored.txt", "same.txt", "old.txt", "$&.txt"]) writeFileSync(join(root, name), original(name));
+    writeFileSync(join(root, "same.bin"), new Uint8Array([0, 255]));
+    git(root, "add", "."); git(root, "commit", "-qm", "base");
+    const base = git(root, "rev-parse", "HEAD").trim();
+    git(root, "commit", "-q", "--allow-empty", "-m", "later");
+    git(root, "rm", "gone.txt", "ignored.txt", "same.txt", "same.bin", "$&.txt"); git(root, "mv", "old.txt", "new.txt");
+    writeFileSync(join(root, ".git", "info", "exclude"), "ignored.txt\n");
+    for (const name of ["gone.txt", "ignored.txt", "old.txt", "$&.txt"]) writeFileSync(join(root, name), "-- quoted hunk text\nreplacement\n");
+    writeFileSync(join(root, "same.txt"), original("same.txt"));
+    writeFileSync(join(root, "same.bin"), new Uint8Array([0, 255]));
+    const historicalBases: Record<string, string>[] = [{}, { base }];
+    for (const historical of historicalBases) {
+      const params = { scope: "all", ...historical };
+      const list = await repoDiffFiles(root, query(params));
+      expect(list.files.map((file) => [file.path, file.status, file.old_path])).toEqual([
+        ["$&.txt", "modified", null], ["gone.txt", "modified", null], ["ignored.txt", "modified", null], ["new.txt", "renamed", "old.txt"], ["old.txt", "untracked", null],
+      ]);
+      for (const path of ["gone.txt", "ignored.txt", "$&.txt"]) {
+        const answer = await repoDiffFile(root, query({ ...params, path, fingerprint: list.fingerprint! }));
+        expect(answer).toMatchObject({ old_content: original(path), new_content: "-- quoted hunk text\nreplacement\n", unavailable: null });
+        expect(parsed(answer.patch).map((file) => file.name)).toEqual([path]);
+      }
+      expect(await repoDiffFile(root, query({ ...params, path: "old.txt" }))).toMatchObject({ old_content: null, new_content: "-- quoted hunk text\nreplacement\n", unavailable: null, file: { status: "untracked" } });
+      expect(await repoDiffFile(root, query({ ...params, path: "new.txt" }))).toMatchObject({ old_content: lines(12), new_content: lines(12), unavailable: null, file: { status: "renamed" } });
+    }
+    expect(await repoDiffFile(root, query({ scope: "staged", path: "gone.txt" }))).toMatchObject({ old_content: original("gone.txt"), new_content: null, unavailable: null });
+    expect(await repoDiffFile(root, query({ scope: "workspace", path: "gone.txt" }))).toMatchObject({ old_content: null, new_content: "-- quoted hunk text\nreplacement\n", unavailable: null });
+  });
+
+  it("refuses stable regular/symlink type changes explicitly instead of asking for endless refresh", async () => {
+    const root = repository("type-changes");
+    writeFileSync(join(root, "regular.txt"), "before\n");
+    symlinkSync("before.txt", join(root, "link.txt"));
+    git(root, "add", "."); git(root, "commit", "-qm", "base");
+    rmSync(join(root, "regular.txt")); symlinkSync("after.txt", join(root, "regular.txt"));
+    rmSync(join(root, "link.txt")); writeFileSync(join(root, "link.txt"), "after\n");
+    for (const scope of ["all", "workspace", "staged"]) {
+      if (scope === "staged") git(root, "add", ".");
+      const list = await repoDiffFiles(root, query({ scope }));
+      for (const path of ["regular.txt", "link.txt"]) {
+        expect(list.files.find((file) => file.path === path)?.status).toBe("type_changed");
+        expect(await repoDiffFile(root, query({ scope, path, fingerprint: list.fingerprint! }))).toMatchObject({ unavailable: "unsupported", patch: null });
+      }
+    }
+  });
+
   it("refuses directory symlink traversal, submodules and oversized selected text without partial contents", async () => {
     const root = repository("unsupported-sides");
     const outside = join(scratch, "outside"); mkdirSync(outside);
@@ -256,6 +305,11 @@ describe("history search", () => {
       expect(result.commits[0]).toMatchObject({ subject: "First [literal]", author: "Fixture" });
       expect(result.commits[0]!.date).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     }
+    const hexBranch = ["abcd", "bcde", "cdef", "def0"].find((prefix) => git(root, "rev-parse", `--disambiguate=${prefix}`).trim() === "")!;
+    git(root, "branch", hexBranch);
+    expect((await repoDiffCommits(root, query({ q: hexBranch }))).commits).toEqual([]);
+    git(root, "branch", first.slice(0, 8)); // same-named ref points at a different commit
+    expect((await repoDiffCommits(root, query({ q: first.slice(0, 8).toUpperCase() }))).commits.map((entry) => entry.id)).toEqual([first]);
     expect((await repoDiffCommits(root, query({ q: ".*" }))).commits.map((entry) => entry.subject)).toEqual(["Second wildcard .* is literal"]);
     expect((await repoDiffCommits(root, query({ q: "Fixture" }))).commits).toEqual([]);
     expect((await repoDiffCommits(root, query({ q: "--all" }))).commits).toEqual([]);
@@ -349,7 +403,8 @@ describe("repositories in an unusual state", () => {
     mkdirSync(plain);
     await expect(repoDiffFiles(plain, query())).rejects.toMatchObject({ code: "not_a_repository", status: 409 });
     await expect(repoDiffFile(plain, query({ path: "a.txt" }))).rejects.toMatchObject({ code: "not_a_repository", status: 409 });
-    await expect(repoDiffFiles(join(scratch, "missing"), query())).rejects.toMatchObject({ code: "not_a_repository", status: 409 });
+    writeFileSync(join(plain, "file.txt"), "not a directory");
+    for (const cwd of [join(scratch, "missing"), join(plain, "file.txt"), "relative", ""]) await expect(repoDiffFiles(cwd, query())).rejects.toMatchObject({ code: "invalid_cwd", status: 400 });
 
     const root = repository("conflict");
     writeFileSync(join(root, "c.txt"), "base\n");

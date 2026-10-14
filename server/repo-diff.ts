@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, readlinkSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import type { FileSearchResult, RepoCommitSearch, RepoDiffFile, RepoDiffFileList, RepoDiffFilePatch, RepoDiffRepository, RepoDiffScope, RepoDiffStatus } from "../shared/protocol.ts";
 import { errorResponse, jsonResponse } from "./http.ts";
+import { Inspection } from "./inspection-worker.ts";
 
 /**
  * What changed in the repository a pane (or a named folder) sits in, read with git and never
@@ -52,6 +52,7 @@ export class RepoDiffError extends Error {
 interface GitRun { code: number | null; stdout: string; overflow: boolean; bytes?: Buffer }
 
 interface Context {
+  fs: Inspection;
   git: string;
   deadlineAt: number;
   remainingBytes: number;
@@ -61,8 +62,8 @@ interface Context {
   maxPatchBytes: number;
 }
 
-function contextOf(options: RepoDiffOptions): Context {
-  return {
+async function inspect<T>(options: RepoDiffOptions, read: (context: Context) => Promise<T>): Promise<T> {
+  const context = {
     git: options.git ?? "git",
     deadlineAt: Date.now() + Math.min(options.deadlineMs ?? REPO_DIFF_DEADLINE_MS, REPO_DIFF_DEADLINE_MS),
     remainingBytes: Math.min(options.maxInspectionBytes ?? MAX_INSPECTION_BYTES, MAX_INSPECTION_BYTES),
@@ -70,7 +71,13 @@ function contextOf(options: RepoDiffOptions): Context {
     maxFiles: Math.min(options.maxFiles ?? REPO_DIFF_MAX_FILES, REPO_DIFF_MAX_FILES),
     maxListBytes: Math.min(options.maxListBytes ?? REPO_DIFF_MAX_LIST_BYTES, REPO_DIFF_MAX_LIST_BYTES),
     maxPatchBytes: Math.min(options.maxPatchBytes ?? REPO_DIFF_MAX_PATCH_BYTES, REPO_DIFF_MAX_PATCH_BYTES),
-  };
+  } as Context;
+  context.fs = new Inspection(context.deadlineAt, context.signal, context);
+  try { return await read(context); }
+  catch (error) {
+    if (error instanceof Error && "code" in error && "status" in error && !(error instanceof RepoDiffError)) throw new RepoDiffError(String(error.code), error.message, Number(error.status));
+    throw error;
+  } finally { context.fs.close(); }
 }
 
 function gitEnvironment(): Record<string, string> {
@@ -127,7 +134,7 @@ async function runGit(context: Context, cwd: string, args: string[], maxBytes: n
     }
     const code = await proc.exited;
     if (context.signal?.aborted) throw new RepoDiffError("git_cancelled", "git inspection was cancelled", 499);
-    if (timedOut) throw new RepoDiffError("git_timeout", "git did not answer in time", 504);
+    if (timedOut || Date.now() >= context.deadlineAt) throw new RepoDiffError("git_timeout", "git did not answer in time", 504);
     const bytes = Buffer.concat(chunks);
     return { code: overflow ? null : code, stdout: bytes.toString("utf8"), bytes, overflow };
   } finally {
@@ -137,10 +144,12 @@ async function runGit(context: Context, cwd: string, args: string[], maxBytes: n
 }
 
 async function repositoryOf(context: Context, cwd: string): Promise<RepoDiffRepository> {
+  if (!isAbsolute(cwd)) throw new RepoDiffError("invalid_cwd", "directory must be an existing absolute directory on this PC", 400);
+  cwd = await context.fs.call("canonical", cwd);
   const top = await runGit(context, cwd, ["rev-parse", "--show-toplevel"], 16 * 1024);
   let root = top.stdout.replace(/\r?\n$/, "");
   if (top.code !== 0 || root === "") throw new RepoDiffError("not_a_repository", "that folder is not inside a git working tree", 409);
-  try { root = realpathSync(root); } catch { throw new RepoDiffError("not_a_repository", "that folder is not inside a git working tree", 409); }
+  root = await context.fs.call("canonical", root);
   const [branch, head] = await Promise.all([
     runGit(context, root, ["symbolic-ref", "--quiet", "--short", "HEAD"], 16 * 1024),
     runGit(context, root, ["rev-parse", "--quiet", "--verify", "HEAD^{commit}"], 1024),
@@ -213,17 +222,17 @@ function fields(output: string): string[] {
   return end < 0 ? [] : output.slice(0, end).split("\0");
 }
 
-interface Listing { files: RepoDiffFile[]; complete: boolean }
+interface Listing { files: RepoDiffFile[]; complete: boolean; replacements: Set<string> }
 
-async function changedFiles(context: Context, root: string, comparison: Comparison, pathspec: string[]): Promise<Listing> {
-  const tail = [...comparison.args, "--", ...pathspec];
+async function changedFiles(context: Context, root: string, comparison: Comparison): Promise<Listing> {
+  const tail = [...comparison.args, "--"];
   const [names, counts, others, conflicts] = await Promise.all([
     runGit(context, root, ["diff", ...DIFF_FLAGS, "--name-status", "-z", ...tail], context.maxListBytes),
     runGit(context, root, ["diff", ...DIFF_FLAGS, "--numstat", "-z", ...tail], context.maxListBytes),
     (comparison.scope === "workspace" || comparison.scope === "all")
-      ? runGit(context, root, ["ls-files", "-z", "--others", "--exclude-standard", "--", ...pathspec], context.maxListBytes)
+      ? runGit(context, root, ["ls-files", "-z", "--others", "--exclude-standard", "--"], context.maxListBytes)
       : Promise.resolve<GitRun>({ code: 0, stdout: "", overflow: false }),
-    comparison.scope !== "commit" ? runGit(context, root, ["ls-files", "--unmerged", "-z", "--", ...pathspec], context.maxListBytes)
+    comparison.scope !== "commit" ? runGit(context, root, ["ls-files", "--unmerged", "-z", "--"], context.maxListBytes)
       : Promise.resolve<GitRun>({ code: 0, stdout: "", overflow: false }),
   ]);
   for (const run of [names, counts, others, conflicts]) {
@@ -256,9 +265,25 @@ async function changedFiles(context: Context, root: string, comparison: Comparis
     if (found.get(path)?.status !== "unmerged") found.set(path, file);
     index += paired ? 3 : 2;
   }
+  const replacements = new Set<string>();
+  const recreated = new Set<string>();
+  if (comparison.scope === "all") for (const file of found.values()) {
+    if (file.status !== "deleted") continue;
+    const path = repositoryPath("path", file.path);
+    // Git's base/index/worktree diff omits an index-deleted path recreated on disk.
+    // Even an ignored replacement belongs to its existing immutable-base identity.
+    const current = await context.fs.call("disk", root, path);
+    if (current.content === null && current.unavailable === null) continue;
+    const old = await gitSide(context, root, comparison.base, path);
+    recreated.add(path);
+    if (old.digest && old.digest === current.digest && old.mode === current.mode) { found.delete(path); continue; }
+    replacements.add(path);
+    found.set(path, { path, old_path: null, status: old.mode && current.mode && (old.mode === "120000") !== (current.mode === "120000") ? "type_changed" : "modified", additions: null, deletions: null, binary: old.unavailable === "binary" || current.unavailable === "binary" ? true : null });
+  }
   for (const path of fields(others.stdout)) {
     if (path.endsWith("/")) continue; // embedded repositories are directory entries, not files
-    if (!found.has(path)) found.set(path, { path, old_path: null, status: "untracked", additions: null, deletions: null, binary: null });
+    repositoryPath("path", path);
+    if (!found.has(path) && !recreated.has(path)) found.set(path, { path, old_path: null, status: "untracked", additions: null, deletions: null, binary: null });
   }
   for (const entry of fields(conflicts.stdout)) {
     const path = entry.slice(entry.indexOf("\t") + 1);
@@ -269,21 +294,25 @@ async function changedFiles(context: Context, root: string, comparison: Comparis
     if (file.old_path) repositoryPath("old_path", file.old_path);
   }
   const files = [...found.values()].sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
-  return { files, complete: !names.overflow && !counts.overflow && !others.overflow && !conflicts.overflow };
+  return { files, replacements, complete: !names.overflow && !counts.overflow && !others.overflow && !conflicts.overflow };
 }
 
 async function reachableRevision(context: Context, repository: RepoDiffRepository, value: string): Promise<string | null> {
   if (!repository.head || !/^[0-9a-fA-F]{4,64}$/.test(value)) return null;
-  const parsed = await runGit(context, repository.root, ["rev-parse", "--quiet", "--verify", "--end-of-options", `${value}^{commit}`], 1024);
-  const oid = parsed.stdout.trim();
-  if (parsed.code !== 0 || !/^[0-9a-f]{40,64}$/.test(oid)) return null;
+  // --disambiguate consults object identities only, never a same-named branch/tag.
+  const parsed = await runGit(context, repository.root, ["rev-parse", `--disambiguate=${value.toLowerCase()}`], 1024);
+  const ids = parsed.stdout.trim().split("\n");
+  const oid = ids[0] ?? "";
+  if (parsed.overflow || parsed.code !== 0 || ids.length !== 1 || !/^[0-9a-f]{40,64}$/.test(oid)) return null;
+  const type = await runGit(context, repository.root, ["cat-file", "-t", oid], 32);
+  if (type.code !== 0 || type.stdout.trim() !== "commit") return null;
   const reachable = await runGit(context, repository.root, ["merge-base", "--is-ancestor", oid, repository.head], 1024);
   return reachable.code === 0 ? oid : null;
 }
 
 /** Shared bounded Git inventory for filename search; directory/gitlink entries are omitted. */
 export async function repoDiffFileInventory(cwd: string, options: RepoDiffOptions = {}): Promise<Pick<FileSearchResult, "root" | "files" | "incomplete">> {
-  const context = contextOf(options);
+  return inspect(options, async (context) => {
   const repository = await repositoryOf(context, cwd);
   const [tracked, others] = await Promise.all([
     runGit(context, repository.root, ["ls-files", "--stage", "-z"], context.maxListBytes),
@@ -291,26 +320,24 @@ export async function repoDiffFileInventory(cwd: string, options: RepoDiffOption
   ]);
   for (const run of [tracked, others]) if (!run.overflow && run.code !== 0) throw new RepoDiffError("git_failed", "git could not list this repository", 500);
   const incomplete: FileSearchResult["incomplete"] = tracked.overflow || others.overflow ? ["output"] : [];
-  const paths = fields(tracked.stdout).filter((entry) => !entry.startsWith("160000 ")).map((entry) => entry.slice(entry.indexOf("\t") + 1));
+  const paths = fields(tracked.stdout).filter((entry) => !entry.startsWith("160000 ") && !entry.startsWith("040000 ")).map((entry) => entry.slice(entry.indexOf("\t") + 1));
   const files = new Set<string>();
   for (const path of [...paths, ...fields(others.stdout)]) {
     if (Date.now() >= context.deadlineAt) { incomplete.push("deadline"); break; }
     if (files.has(path) || path.endsWith("/")) continue;
     if (files.size >= 5_000) { incomplete.push("entries"); break; }
     repositoryPath("path", path);
-    try { if (lstatSync(workingPath(repository.root, path)).isDirectory()) continue; }
-    catch (error) {
-      if (error instanceof RepoDiffError) continue;
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !incomplete.includes("traversal")) incomplete.push("traversal");
-    }
+    // Git's stored mode already excludes gitlinks. Keep tracked identities even when
+    // their current parents were replaced by symlinks; opening them is a separate refusal.
     files.add(path);
   }
   return { root: repository.root, files: [...files], incomplete };
+  });
 }
 
 /** GET /api/workspace/diff/commits: bounded message search from the captured immutable HEAD. */
 export async function repoDiffCommits(cwd: string, params: URLSearchParams, options: RepoDiffOptions = {}): Promise<RepoCommitSearch> {
-  const context = contextOf(options);
+  return inspect(options, async (context) => {
   const repository = await repositoryOf(context, cwd);
   if (!repository.head) return { repository, head: null, commits: [], truncated: false };
   const query = (params.get("q") ?? "").trim();
@@ -330,50 +357,12 @@ export async function repoDiffCommits(cwd: string, params: URLSearchParams, opti
     if (commits.length < 100) commits.push({ id, subject: parts[index + 1]!, author: parts[index + 2]!, date: parts[index + 3]! });
   }
   return { repository, head: repository.head, commits, truncated: run.overflow || matches > 100 };
-}
-
-function metadata(path: string): string {
-  try {
-    const stat = lstatSync(path, { bigint: true });
-    return `${stat.dev}:${stat.ino}:${stat.mode}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-  } catch { return "absent"; }
-}
-
-/** Do not follow directory symlinks, even when the leaf's name originally came from Git. */
-function workingPath(root: string, path: string): string {
-  let directory = root;
-  for (const segment of path.split("/").slice(0, -1)) {
-    directory = join(directory, segment);
-    try {
-      const stat = lstatSync(directory);
-      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new RepoDiffError("unsupported", "directory symlinks and directory diffs are not supported", 409);
-    } catch (error) {
-      if (error instanceof RepoDiffError) throw error;
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new RepoDiffError("unsupported", "that path cannot be inspected safely", 409);
-    }
-  }
-  return join(root, path);
+  });
 }
 
 function checkDeadline(context: Context): void {
   if (context.signal?.aborted) throw new RepoDiffError("git_cancelled", "git inspection was cancelled", 499);
   if (Date.now() >= context.deadlineAt) throw new RepoDiffError("git_timeout", "git did not answer in time", 504);
-}
-
-/** Capture parent identities too, stopping at a symlink rather than inspecting its target. */
-function workingState(context: Context, root: string, path: string): string[] {
-  const state: string[] = [];
-  let absolute = root;
-  const segments = path.split("/");
-  for (let index = 0; index < segments.length; index += 1) {
-    checkDeadline(context);
-    absolute = join(absolute, segments[index]!);
-    state.push(metadata(absolute));
-    if (index < segments.length - 1) {
-      try { if (!lstatSync(absolute).isDirectory()) break; } catch { break; }
-    }
-  }
-  return state;
 }
 
 interface Snapshot { listing: Listing; fingerprint: string }
@@ -382,12 +371,13 @@ async function snapshot(context: Context, repository: RepoDiffRepository, compar
   if (index.code !== 0 || index.overflow) throw new RepoDiffError("git_failed", "git could not inspect this repository", 500);
   const indexName = index.stdout.replace(/\r?\n$/, "");
   const indexPath = isAbsolute(indexName) ? indexName : join(repository.root, indexName);
-  const before = metadata(indexPath);
+  const before = await context.fs.call("metadata", indexPath);
   const head = await runGit(context, repository.root, ["rev-parse", "--quiet", "--verify", "HEAD^{commit}"], 1024);
   if ((head.code === 0 ? head.stdout.trim() : null) !== repository.head) throw new RepoDiffError("stale_comparison", "the comparison changed; refresh it", 409);
-  const listing = await changedFiles(context, repository.root, comparison, []);
-  if (before !== metadata(indexPath)) throw new RepoDiffError("stale_comparison", "the index changed; refresh the comparison", 409);
-  const work = comparison.scope === "commit" || comparison.scope === "staged" ? [] : listing.files.map((file) => [file.path, workingState(context, repository.root, file.path), file.old_path ? workingState(context, repository.root, file.old_path) : null]);
+  const listing = await changedFiles(context, repository.root, comparison);
+  if (before !== await context.fs.call("metadata", indexPath)) throw new RepoDiffError("stale_comparison", "the index changed; refresh the comparison", 409);
+  const paths = comparison.scope === "commit" || comparison.scope === "staged" ? [] : listing.files.flatMap((file) => file.old_path ? [file.path, file.old_path] : [file.path]);
+  const work = await context.fs.call("states", repository.root, paths);
   checkDeadline(context);
   const fingerprint = createHash("sha256").update(JSON.stringify([comparison.scope, comparison.base, comparison.head, repository.head, comparison.scope === "commit" ? null : before, listing.complete, listing.files, work])).digest("hex");
   return { listing, fingerprint };
@@ -395,7 +385,7 @@ async function snapshot(context: Context, repository: RepoDiffRepository, compar
 
 /** GET /api/workspace/diff/files */
 export async function repoDiffFiles(cwd: string, params: URLSearchParams, options: RepoDiffOptions = {}): Promise<RepoDiffFileList> {
-  const context = contextOf(options);
+  return inspect(options, async (context) => {
   const repository = await repositoryOf(context, cwd);
   const comparison = await comparisonOf(context, repository, params);
   const { listing, fingerprint } = await snapshot(context, repository, comparison);
@@ -406,13 +396,15 @@ export async function repoDiffFiles(cwd: string, params: URLSearchParams, option
     files: files.slice(0, context.maxFiles), total: listing.complete ? files.length : null,
     truncated: !listing.complete || files.length > context.maxFiles,
     limits: { max_files: context.maxFiles, max_list_bytes: context.maxListBytes } };
+  });
 }
 
-interface Side { content: string | null; unavailable: RepoDiffFilePatch["unavailable"] }
+interface Side { content: string | null; unavailable: RepoDiffFilePatch["unavailable"]; mode?: string; digest?: string }
 function textSide(bytes: Buffer): Side {
-  if (bytes.includes(0)) return { content: null, unavailable: "binary" };
-  try { return { content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes), unavailable: null }; }
-  catch { return { content: null, unavailable: "binary" }; }
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  if (bytes.includes(0)) return { content: null, unavailable: "binary", digest };
+  try { return { content: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes), unavailable: null, digest }; }
+  catch { return { content: null, unavailable: "binary", digest }; }
 }
 
 async function gitSide(context: Context, root: string, revision: string | null, path: string): Promise<Side> {
@@ -427,43 +419,7 @@ async function gitSide(context: Context, root: string, revision: string | null, 
   const blob = await runGit(context, root, ["cat-file", "blob", id], MAX_CONTENT_BYTES);
   if (blob.overflow) return { content: null, unavailable: "too_large" };
   if (blob.code !== 0) return { content: null, unavailable: "unsupported" };
-  return textSide(blob.bytes!);
-}
-
-function diskSide(root: string, path: string): Side {
-  let fd: number | null = null;
-  try {
-    const absolute = workingPath(root, path);
-    const before = metadata(absolute);
-    const stat = lstatSync(absolute);
-    if (stat.isSymbolicLink()) {
-      const content = readlinkSync(absolute);
-      return { content: before === metadata(absolute) ? content : null, unavailable: before === metadata(absolute) ? null : "stale" };
-    }
-    if (!stat.isFile()) return { content: null, unavailable: "unsupported" };
-    if (stat.size > MAX_CONTENT_BYTES) return { content: null, unavailable: "too_large" };
-    fd = openSync(absolute, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const opened = fstatSync(fd);
-    if (!opened.isFile() || opened.dev !== stat.dev || opened.ino !== stat.ino) return { content: null, unavailable: "stale" };
-    // Linux checks the actual descriptor's location; other platforms additionally verify path identity.
-    const canonical = realpathSync(process.platform === "linux" ? `/proc/self/fd/${fd}` : absolute);
-    const rel = relative(root, canonical);
-    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return { content: null, unavailable: "unsupported" };
-    const buffer = Buffer.alloc(MAX_CONTENT_BYTES + 1);
-    let size = 0;
-    while (size < buffer.length) {
-      const read = readSync(fd, buffer, size, buffer.length - size, size);
-      if (read === 0) break;
-      size += read;
-    }
-    if (size > MAX_CONTENT_BYTES) return { content: null, unavailable: "too_large" };
-    const bytes = buffer.subarray(0, size);
-    workingPath(root, path);
-    if (before !== metadata(absolute)) return { content: null, unavailable: "stale" };
-    return textSide(bytes);
-  } catch (error) {
-    return { content: null, unavailable: (error as NodeJS.ErrnoException).code === "ENOENT" ? null : "unsupported" };
-  } finally { if (fd !== null) closeSync(fd); }
+  return { ...textSide(blob.bytes!), mode };
 }
 
 /** Validate Git's hunks against the exact selected sides, including untouched spans and final newlines.
@@ -500,7 +456,7 @@ function patchMatchesSides(patch: string, oldContent: string | null, newContent:
 
 /** GET /api/workspace/diff/file */
 export async function repoDiffFile(cwd: string, params: URLSearchParams, options: RepoDiffOptions = {}): Promise<RepoDiffFilePatch> {
-  const context = contextOf(options);
+  return inspect(options, async (context) => {
   const path = repositoryPath("path", params.get("path") ?? "");
   const oldParam = params.get("old_path");
   const oldPath = oldParam === null || oldParam === "" ? null : repositoryPath("old_path", oldParam);
@@ -509,13 +465,12 @@ export async function repoDiffFile(cwd: string, params: URLSearchParams, options
   const initial = await snapshot(context, repository, comparison);
   if (!initial.listing.complete) throw new RepoDiffError("incomplete_comparison", "the comparison inventory exceeded its limit", 413);
   if (params.has("fingerprint") && params.get("fingerprint") !== initial.fingerprint) throw new RepoDiffError("stale_comparison", "the comparison changed; refresh it", 409);
-  const pathspec = oldPath !== null && oldPath !== path ? [oldPath, path] : [path];
-  // Path-scoped detection preserves Git's rename semantics when the original path was reused.
-  const listing = await changedFiles(context, repository.root, comparison, pathspec);
-  if (!listing.complete) throw new RepoDiffError("incomplete_comparison", "the comparison inventory exceeded its limit", 413);
-  const file = listing.files.find((candidate) => candidate.path === path);
+  // The full captured listing owns rename/untracked identity. A path-scoped redetection
+  // can turn a reused original name into the rename's deletion and select the wrong sides.
+  const file = initial.listing.files.find((candidate) => candidate.path === path);
   if (file === undefined) throw new RepoDiffError("not_found", "nothing changed at that path in this comparison", 404);
   if (oldPath !== null && file.old_path !== oldPath) throw new RepoDiffError("invalid_path", "old_path no longer belongs to this file's change; refresh the list", 400);
+  const pathspec = file.old_path && file.old_path !== path ? [file.old_path, path] : [path];
 
   let oldContent: string | null = null;
   let newContent: string | null = null;
@@ -538,10 +493,10 @@ export async function repoDiffFile(cwd: string, params: URLSearchParams, options
   if (file.binary === true) return answer(null, "binary");
 
   const previousPath = file.old_path ?? path;
-  const oldSide = file.status === "untracked" ? { content: null, unavailable: null } : await gitSide(context, repository.root, comparison.scope === "workspace" ? null : comparison.base, previousPath);
-  const newSide = comparison.scope === "commit" ? await gitSide(context, repository.root, comparison.head, path)
+  const oldSide: Side = file.status === "untracked" ? { content: null, unavailable: null } : await gitSide(context, repository.root, comparison.scope === "workspace" ? null : comparison.base, previousPath);
+  const newSide: Side = comparison.scope === "commit" ? await gitSide(context, repository.root, comparison.head, path)
     : comparison.scope === "staged" ? await gitSide(context, repository.root, null, path)
-    : diskSide(repository.root, path);
+    : await context.fs.call("disk", repository.root, path);
   const unavailable = oldSide.unavailable ?? newSide.unavailable;
   if (unavailable) return answer(null, unavailable, unavailable === "binary" ? { ...file, binary: true } : file);
   oldContent = oldSide.content;
@@ -550,7 +505,19 @@ export async function repoDiffFile(cwd: string, params: URLSearchParams, options
   if (beforePatch.fingerprint !== initial.fingerprint) return answer(null, "stale");
 
   let run: GitRun;
-  if (file.status === "untracked") {
+  if (file.status === "type_changed") return answer(null, "unsupported");
+  if (initial.listing.replacements.has(path)) {
+    // Use Git's own diff on the exact selected copies: an index deletion must not hide
+    // the actual recreated working file. No repository/index/object writes are needed.
+    const copies = await context.fs.call("copies", oldContent ?? "", newContent ?? "", oldSide.mode, newSide.mode);
+    run = await runGit(context, repository.root, ["diff", "--no-index", ...DIFF_FLAGS, `-U${REPO_DIFF_CONTEXT_LINES}`, "--", join(copies, "old"), join(copies, "new")], context.maxPatchBytes);
+    if (!run.overflow && run.code !== 1 && run.code !== 0) throw new RepoDiffError("git_failed", "git could not compare that file", 500);
+    const quote = (name: string) => /[\x00-\x1f"\\]/.test(name) ? JSON.stringify(name) : name;
+    // Only metadata headers are renamed; hunk text is left byte-for-byte as Git produced it.
+    run.stdout = run.stdout.replace(/^diff --git .*\n/, () => `diff --git ${quote(`a/${path}`)} ${quote(`b/${path}`)}\n`)
+      .replace(/^--- .*\n/m, () => `--- ${quote(`a/${path}`)}\n`).replace(/^\+\+\+ .*\n/m, () => `+++ ${quote(`b/${path}`)}\n`);
+    if (Buffer.byteLength(run.stdout) > context.maxPatchBytes) run.overflow = true;
+  } else if (file.status === "untracked") {
     // an untracked file has no index entry to compare with: it is shown as a new file, whole
     run = await runGit(context, repository.root, ["diff", "--no-index", ...DIFF_FLAGS, `-U${REPO_DIFF_CONTEXT_LINES}`, "--", "/dev/null", path], context.maxPatchBytes);
     if (!run.overflow && run.code !== 1 && run.code !== 0) throw new RepoDiffError("git_failed", "git could not read that file", 500);
@@ -566,6 +533,7 @@ export async function repoDiffFile(cwd: string, params: URLSearchParams, options
   if (!run.stdout.startsWith("diff --git ")) return answer(null, "unsupported");
   if (!patchMatchesSides(run.stdout, oldContent, newContent)) return answer(null, "stale");
   return answer(run.stdout, null, file.status === "untracked" ? { ...file, binary: false } : file);
+  });
 }
 
 /** The HTTP answer of either route, with every refusal in the `{ error: { code, message } }` envelope. */

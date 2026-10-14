@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { constants, cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { Worker } from "node:worker_threads";
 
 import { clearFileCache, paneFileSearch, paneFiles } from "./files.ts";
+import { Inspection } from "./inspection-worker.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -91,6 +93,21 @@ describe("paneFiles", () => {
     expect(files).not.toContain("absent-submodule");
   });
 
+  it("keeps tracked identities below replaced directory symlinks without reading their targets", async () => {
+    const root = fixture();
+    expect(Bun.spawnSync(["git", "init", "-q", root]).exitCode).toBe(0);
+    expect(Bun.spawnSync(["git", "-C", root, "add", "src"]).exitCode).toBe(0);
+    rmSync(join(root, "src"), { recursive: true });
+    const outside = fixture();
+    writeFileSync(join(outside, "secret.txt"), "outside");
+    symlinkSync(outside, join(root, "src"));
+    const result = await paneFileSearch(root);
+    expect(result.incomplete).toEqual([]);
+    expect(result.files).toContain("src/api.ts");
+    expect(result.files).toContain("src/components/PromptCard.tsx");
+    expect(result.files).not.toContain("src/secret.txt");
+  });
+
   it("clamps the result limit to one through one hundred", async () => {
     const root = fixture();
     expect(await paneFiles(root, "", 0)).toHaveLength(3);
@@ -112,5 +129,84 @@ describe("paneFiles", () => {
     writeFileSync(join(root, ".gitignore"), "src/secret.txt\n");
     writeFileSync(join(root, "src", "secret.txt"), "private");
     expect(await paneFiles(join(root, "src"), "", 100)).toEqual(["api.ts", "components/PromptCard.tsx"]);
+  });
+});
+
+describe("bounded inspection filesystem", () => {
+  it("enforces a parent deadline during synchronous worker work, cancellation and reply bounds", async () => {
+    const root = fixture();
+    const deep = join(root, ...Array(128).fill("d"));
+    mkdirSync(deep, { recursive: true });
+    const fs = new Inspection(Date.now() + 200);
+    const started = performance.now();
+    let bridgeResponsive = false;
+    setImmediate(() => { bridgeResponsive = true; });
+    try {
+      await expect(fs.call("states", root, Array(4_000).fill(relative(root, deep)))).rejects.toMatchObject({ code: "git_timeout", status: 504 });
+      expect(bridgeResponsive).toBeTrue();
+      expect(performance.now() - started).toBeLessThan(2_000);
+    } finally { fs.close(); }
+    const controller = new AbortController();
+    const cancelled = new Inspection(Date.now() + 5_000, controller.signal);
+    const read = cancelled.call("canonical", root);
+    controller.abort();
+    await expect(read).rejects.toMatchObject({ code: "git_cancelled" });
+    const capped = new Inspection(Date.now() + 5_000, undefined, { remainingBytes: 1 });
+    try { await expect(capped.call("canonical", root)).rejects.toMatchObject({ code: "git_output_limit" }); }
+    finally { capped.close(); }
+  });
+
+  it.skipIf(!Bun.which("mkfifo"))("opens nonblocking when a regular file is swapped for a FIFO before open", async () => {
+    const root = fixture();
+    const path = join(root, "swap.txt");
+    writeFileSync(path, "before\n");
+    const wrapper = join(root, "fifo-worker.ts");
+    // The mock lives only in this worker. Swap after the regular-file lstat, before the real open.
+    writeFileSync(wrapper, `import fs from "node:fs";
+import { mock } from "bun:test";
+import { parentPort, workerData } from "node:worker_threads";
+const stat = fs.lstatSync, open = fs.openSync;
+let swapped = false;
+fs.lstatSync = ((...args) => {
+  const result = stat(...args);
+  if (!swapped && args[0] === workerData.file && !args[1]) {
+    swapped = true; fs.rmSync(workerData.file);
+    if (Bun.spawnSync(["mkfifo", workerData.file]).exitCode !== 0) throw new Error("fixture FIFO failed");
+  }
+  return result;
+});
+fs.openSync = ((...args) => { parentPort.postMessage({ flags: args[1] }); return open(...args); });
+mock.module("node:fs", () => fs);
+await import(${JSON.stringify(new URL("./inspection-worker.ts", import.meta.url).href)});
+`);
+    const worker = new Worker(wrapper, { workerData: { inspection: true, deadlineAt: Date.now() + 2_000, file: path } });
+    let flags = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await new Promise<{ content: null; unavailable: string }>((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error("FIFO inspection blocked")), 2_000);
+        worker.on("error", reject);
+        worker.on("message", (reply: { flags?: number; text?: string }) => {
+          if (reply.flags !== undefined) flags = reply.flags;
+          if (reply.text) resolve(JSON.parse(reply.text));
+        });
+        worker.postMessage({ kind: "disk", args: [root, "swap.txt"] });
+      });
+      expect(flags & constants.O_NONBLOCK).toBe(constants.O_NONBLOCK);
+      expect(result).toEqual({ content: null, unavailable: "stale" });
+    } finally { clearTimeout(timer); await worker.terminate(); }
+  });
+
+  it("runs from the copied-source layout used by remote runtime bundles", async () => {
+    const root = fixture();
+    const packed = join(root, "runtime");
+    for (const directory of ["server", "shared"]) cpSync(join(import.meta.dir, "..", directory), join(packed, directory), { recursive: true, filter: (path) => !path.endsWith(".test.ts") });
+    const entry = join(packed, "probe.ts");
+    writeFileSync(entry, `import { paneFileSearch } from "./server/files.ts";\nconsole.log(JSON.stringify(await paneFileSearch(${JSON.stringify(join(root, "src"))})));\n`);
+    const probe = Bun.spawn([process.execPath, entry], { cwd: packed, stdout: "pipe", stderr: "pipe" });
+    expect(await probe.exited).toBe(0);
+    const result = JSON.parse(await new Response(probe.stdout).text());
+    expect(result.files).toEqual(["api.ts", "components/PromptCard.tsx"]);
+    expect(result.incomplete).toEqual([]);
   });
 });
