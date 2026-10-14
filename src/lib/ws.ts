@@ -895,6 +895,7 @@ export class HerdrSocket {
     const request = this.requests.get(id);
     return request?.type === "submit" && request.queued === true && request.paneId === paneId
       && pending.request_id === id && typeof pending.id === "string" && pending.id.length > 0
+      && ["queued", "sending", "held", "uncertain"].includes(pending.state) && typeof pending.created_at === "string" && pending.created_at.length > 0
       && pending.text === request.text && (pending.agent_only === true) === request.agentOnly;
   }
 

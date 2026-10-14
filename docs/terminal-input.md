@@ -96,6 +96,27 @@ and chat composer keep their native text editing. Ctrl+Left and Ctrl+Right are s
 sends them on every platform, so a program in the pane that binds them (tmux, an editor) still
 receives them; Option+Left and Option+Right move by word.
 
+## Review-comment submissions
+
+Review comments use the existing submit and pending-message paths, with an explicit `agent_only`
+intent. The browser sends them only to a bridge advertising `agent-only-submit`; older bridges
+refuse locally, without using their legacy text/Enter fallback. Immediate delivery calls herdr's
+`agent.prompt`. An absent, unready or blocked agent, or any error from that API, is a refusal, not
+permission to type the comment into the terminal. Ordinary messages without comments retain their
+existing shell, slash-command and prompt-answer behavior.
+
+Queued and browser-held review payloads keep that intent. Pending delivery retains the captured
+connection/pane lease, terminal, agent/session and available foreground-process identity, plus the
+existing live prompt and readiness checks before paste and Enter. Disconnect or a partial write
+never authorizes an automatic retry. Acceptance transfers the composed text to the existing pending
+recovery flow; it does not mean the agent read or answered it. Restored copies require explicit
+review and Send now.
+
+These are bridge-level refusal guarantees, not atomic recipient binding. `agent.prompt` addresses
+a pane, not an immutable agent instance, and herdr owns its delayed Enter after accepting that RPC.
+The pending path's identity/screen checks and writes are also not an atomic compare-and-deliver.
+Neither polling nor the advertised capability closes those upstream read/write windows.
+
 ## Readiness and failures
 
 A server advertising `input-ready` sends `{type:"input-ready", pane_id}` only after the attach's

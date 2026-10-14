@@ -738,11 +738,13 @@ export function createServer(
         }
         try {
           inTime();
-          await agentPrompt(paneId, closeMention(text), undefined, agentOnly ? () => { try { inTime(); return true; } catch { return false; } } : undefined);
+          if (agentOnly) await agentPrompt(paneId, closeMention(text), undefined, () => { try { inTime(); return true; } catch { return false; } });
+          else await agentPrompt(paneId, closeMention(text));
           noteSubmitted(paneId, text);
           return;
         } catch (error) {
           if (!(error instanceof HerdrError)) throw error;
+          if (agentOnly && error.code === "cancelled") inTime();
           if (agentOnly || clearDraft !== undefined || sendAnyway) throw error;
           const queuedOnly = error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
           if (error.code !== "agent_not_found" && error.code !== "agent_not_ready" && !queuedOnly) throw error;

@@ -22,7 +22,7 @@ import { handleMachineRequest } from "./machine-api.ts";
 import type { MachineManager } from "./machines.ts";
 import { TailnetIdentitySource } from "./tailscale.ts";
 import { forgetTranscriptState } from "./conversation.ts";
-import type { RepoDiffFileList, RepoDiffFilePatch } from "../shared/protocol.ts";
+import type { FileSearchResult, RepoCommitSearch, RepoDiffFileList, RepoDiffFilePatch } from "../shared/protocol.ts";
 
 /**
  * Contract test for herdr-web-ui's HTTP + WS surface.
@@ -3433,6 +3433,25 @@ describe("repository diff of a pane's folder", () => {
     expect(answer).toMatchObject({ file: expected[0], unavailable: null, truncated: false });
     expect(answer.patch).toStartWith("diff --git a/a.txt b/a.txt\n");
     expect(answer.patch).toEndWith("-one\n+two\n");
+    expect(answer).toMatchObject({ old_content: "one\n", new_content: "two\n" });
+
+    writeFileSync(join(root, "untracked.txt"), "new\n");
+    const inventory = await (await fetch(`${base()}/api/pane/files?${pane}&detail=1&q=UNTRACKED`)).json() as FileSearchResult;
+    expect(inventory).toMatchObject({ root, repository: true, files: ["untracked.txt"], truncated: false, incomplete: [] });
+    expect((await fetch(`${base()}/api/pane/files?pane_id=missing&detail=1`)).status).toBe(404);
+    const commits = await (await fetch(`${base()}/api/workspace/diff/commits?${pane}&q=FIRST`)).json() as RepoCommitSearch;
+    expect(commits.commits).toHaveLength(1);
+    expect(commits.commits[0]).toMatchObject({ id: commits.head, subject: "first", author: "Fixture" });
+    const current = await (await fetch(`${base()}/api/workspace/diff/files?${pane}&scope=all`)).json() as RepoDiffFileList;
+    expect(current.files.map((entry) => entry.path)).toEqual(["a.txt", "untracked.txt"]);
+    expect(current.fingerprint).toBeString();
+    writeFileSync(join(root, "a.txt"), "changed after inventory\n");
+    const stale = await fetch(`${base()}/api/workspace/diff/file?${pane}&scope=all&path=a.txt&fingerprint=${encodeURIComponent(current.fingerprint!)}`);
+    const staleBody = await stale.json();
+    expect(stale.status === 409 && staleBody.error?.code === "stale_comparison" || stale.status === 200 && staleBody.unavailable === "stale" && staleBody.patch === null).toBe(true);
+    for (const route of ["pane/files", "workspace/diff/commits", "workspace/diff/file"]) {
+      expect((await fetch(`${base()}/api/${route}?${pane}`, { headers: { "sec-fetch-site": "cross-site" } })).status).toBe(403);
+    }
 
     const gone = await fetch(`${base()}/api/workspace/diff/files?pane_id=no-such-pane`);
     expect(gone.status).toBe(404);

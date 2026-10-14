@@ -204,6 +204,29 @@ describe("WebSocket submit", () => {
     } finally { prompt.mockRestore(); text.mockRestore(); keys.mockRestore(); socket.close(); }
   }, 30_000);
 
+  it("agent-only immediate delivery cannot revive its revoked lease before the RPC write", async () => {
+    const socket = await Socket.connect();
+    const reached = deferred(), release = deferred();
+    const original = herdr.agentPrompt;
+    const prompt = spyOn(herdr, "agentPrompt").mockImplementation(async (...args) => {
+      reached.resolve(); await release.promise;
+      return original(...args);
+    });
+    const from = chunks(agent).length;
+    try {
+      await attached(socket, agent.pane);
+      socket.send({ type: "submit", id: 9010, pane_id: agent.pane, text: "review revoked lease", payload: "review revoked lease", agent_only: true });
+      await reached.promise;
+      socket.send({ type: "role", mode: "observe" });
+      await socket.waitFor((frame) => frame.type === "role-ack" && frame.mode === "observe");
+      socket.send({ type: "role", mode: "interact" });
+      await socket.waitFor((frame) => frame.type === "role-ack" && frame.mode === "interact");
+      release.resolve();
+      expect(await socket.result(9010)).toMatchObject({ ok: false, code: "pending_lease_lost" });
+      expect(typed(agent, from)).toBe("");
+    } finally { release.resolve(); prompt.mockRestore(); socket.close(); }
+  }, 30_000);
+
   it("agent-only immediate delivery uses the authoritative agent API once, with a live lease guard", async () => {
     const socket = await Socket.connect();
     const from = chunks(agent).length;
