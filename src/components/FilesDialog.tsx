@@ -174,7 +174,7 @@ export function FilesDialog({ start, paneId, viewing, onBrowseFolders, onClose }
         </div>
         <div className="files-nav-actions">
           <button type="button" className="icon-button" aria-label={t("Find files…")} title={t("Find files…")} onClick={() => guarded(() => setPicker("files"))}><Search aria-hidden="true" /></button>
-          <button type="button" className="icon-button" aria-label={t("Browse folders in the palette")} title={t("Browse folders in the palette")} onClick={() => guarded(() => onBrowseFolders(root ?? start))}><FolderSearch aria-hidden="true" /></button>
+          {!phone && <button type="button" className="icon-button" aria-label={t("Browse folders in the palette")} title={t("Browse folders in the palette")} onClick={() => guarded(() => onBrowseFolders(root ?? start))}><FolderSearch aria-hidden="true" /></button>}
         </div>
         <button type="button" className="icon-button files-close" aria-label={t("Close files")} title={t("Close files")} onClick={close}><X aria-hidden="true" /></button>
       </header>

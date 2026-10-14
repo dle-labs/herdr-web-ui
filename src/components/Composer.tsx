@@ -491,7 +491,8 @@ export function Composer({
       const model = status.querySelector<HTMLElement>(".composer-model");
       const draw = model === null ? first : composerLabelDraw(first, {
         modelClipped: model.scrollWidth > model.clientWidth,
-        modelWidth: model.clientWidth,
+        // clientWidth rounds fractional font metrics up, hiding that the label hit its floor.
+        modelWidth: model.getBoundingClientRect().width,
         modelFloor: parseFloat(getComputedStyle(model).minWidth) || 0,
       });
       if (draw !== first) status.setAttribute("data-model", draw);
@@ -1025,7 +1026,7 @@ export function Composer({
   // its number is open on desktop; transcript/status refreshes need no measurement layout.
   useLayoutEffect(fitStatus, [fitStatus, agent, metadata?.model, metadata?.reasoning_effort,
     metadata?.context?.window, contextShown && !mobile && metadata?.context ? contextLeftPercent(metadata.context) : null,
-    contextShown, mobile, usageCaption, usage?.problem, hintText, dictation.shown, backgroundTasks,
+    contextShown, mobile, usageCaption, usage?.problem, hintText, dictation.shown, backgroundTasks, settings.composerFilesShortcut,
     plan?.done, plan?.total, statusCompact, compactNow !== undefined, facesLoaded, t]);
   const menuId = `composer-menu-${paneId}`;
   // the arrow keys move the selection, not the focus (it stays in the box), so the browser does not scroll to it

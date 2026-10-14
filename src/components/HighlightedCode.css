@@ -46,14 +46,16 @@
   user-select: none;
 }
 
-/* An empty button overlays the counter: keyboard reachable, no extra text in a native copy. */
-.hl-line:has(.hl-comment-button) { position: relative; }
+/* The zero-net-width inline button overlays the counter without adding innerText line breaks,
+   as an absolutely positioned button would. It stays keyboard reachable and out of copied text. */
 .hl-comment-button {
-  position: absolute;
-  inset-inline-start: calc(-1 * var(--hl-gutter));
-  inset-block-start: 0;
+  display: inline-block;
+  position: relative;
+  vertical-align: top;
+  margin-inline-start: calc(-1 * var(--hl-gutter));
   width: var(--hl-gutter);
   height: calc(1em * var(--lh-base));
+  font: inherit;
   padding: 0;
   border: 0;
   background: transparent;
