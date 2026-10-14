@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { outsideSettings } from "./settingsHistory.ts";
+import { reviewNotes } from "./reviewNotes.ts";
 
 interface FilePreview {
   path: string;
@@ -21,19 +22,22 @@ function previewFromState(state: unknown): FilePreview | null {
 export function useFileViewer() {
   const [viewing, setViewing] = useState(() => previewFromState(window.history.state));
   const closing = useRef(false);
+  const shown = useRef(viewing); shown.current = viewing;
 
   useEffect(() => {
     const onPop = (event: PopStateEvent): void => {
+      const next = previewFromState(event.state), current = shown.current;
+      if (current !== null && (next?.path !== current.path || next.machineId !== current.machineId || next.paneId !== current.paneId) && !reviewNotes.guard()) { window.history.forward(); return; }
       closing.current = false;
       // Forward restores the preview with its original PC/pane, including after reload.
-      setViewing(previewFromState(event.state));
+      setViewing(next);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   const openFile = useCallback((preview: FilePreview) => {
-    if (closing.current) return;
+    if (closing.current || !reviewNotes.guard()) return;
     // a preview opened over Settings is no entry of Settings: a reload on it closes Settings and keeps the file
     const state = { ...outsideSettings(window.history.state), [HISTORY_KEY]: preview };
     // Choosing a different file inside an open preview must not add another Back step.
@@ -43,7 +47,7 @@ export function useFileViewer() {
   }, []);
 
   const closeFile = useCallback(() => {
-    if (closing.current) return;
+    if (closing.current || !reviewNotes.guard()) return;
     if (previewFromState(window.history.state)) {
       closing.current = true;
       // X, Escape and scrim clicks consume the same entry as the system Back button.

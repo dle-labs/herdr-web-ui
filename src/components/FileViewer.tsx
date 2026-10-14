@@ -27,6 +27,9 @@ import { hasPreview, type TextViewMode } from "../lib/textPreview.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { readFilePreviewText, SOURCE_PREVIEW_LINES, type FilePreviewText } from "../lib/filePreviewText.ts";
 import { readerHref } from "../lib/fileReader.ts";
+import { reviewNotes, sourceAnchor, type ReviewTarget } from "../lib/reviewNotes.ts";
+import { ReviewNotesButton, useReviewNotes } from "./ReviewNotes.tsx";
+import { useSettings } from "../lib/settings.ts";
 
 type Preview = { status: "none" | "pending" | "failed" } | { status: "ready"; blocks: MarkdownBlock[] };
 
@@ -70,6 +73,8 @@ export interface FileViewerProps {
   onOpen?: (path: string) => void;
   /** the document is the page (a markdown file's own tab, FileReader): no dialog, nothing to close */
   page?: boolean;
+  /** Files owns the dialog, history and Close; retain this viewer's existing readers/actions. */
+  embedded?: boolean;
 }
 
 /**
@@ -110,7 +115,7 @@ function selectSource(element: HTMLElement): void {
  * A file an agent wrote, opened in the browser: images, video and audio (streamed, so they
  * play and seek at once), PDFs, HTML pages, and the start of a text file (markdown drawn, its images read through the file endpoint). Anything can be downloaded.
  */
-export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActive = true, page = false }: FileViewerProps) {
+export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActive = true, page = false, embedded = false }: FileViewerProps) {
   const t = useT();
   const locale = useLocale();
   const { fetchFileInfo, fileUrl, fetchDirectories } = useMachineApi();
@@ -127,7 +132,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   // an HTML page shows as the page, or as its source when asked
   const [source, setSource] = useState(false);
   // Escape closes it, Tab stays in it, and the focus goes back to the row that opened it
-  const surface = useFocusTrap<HTMLElement>(!page);
+  const surface = useFocusTrap<HTMLElement>(!page && !embedded);
   // Settings → Chat width, Default: the Preview is as wide as the chat of the pane that opened it
   useOpeningPaneLane(surface, paneId === null ? null : paneStorageId(machineId, paneId));
   // a kind, not a message: it is said in the language of the moment it shows
@@ -145,6 +150,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const selectSourceOnCode = useRef(false);
   /** Switches a Preview to its source and has it selected once rendered, for Copy without a clipboard. */
   const showSourceToSelect = (): void => {
+    if (!reviewNotes.guard()) return;
     selectSourceOnCode.current = true;
     setSelectable(true);
     setChosen({ path, mode: "code" });
@@ -156,7 +162,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
     if (sourceRef.current) selectSource(sourceRef.current);
   }, [mode, loaded, source, selectable]);
 
-  useSheetSwipe(surface, page ? null : onClose);
+  useSheetSwipe(surface, page || embedded ? null : onClose);
   useEffect(() => setPath(asked), [asked]);
   useEffect(() => setSource(target.line !== null), [path, target.line]);
 
@@ -202,14 +208,14 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   }, [target.path, paneId, fetchFileInfo, fileUrl, fetchDirectories, remote]);
 
   useEffect(() => {
-    if (!keyboardActive || page) return;
+    if (!keyboardActive || page || embedded) return;
     // the FilesDialog beneath listens on window too (and stands down while this is open); this
     // one is the topmost overlay, so it takes the key, unless a native modal (Add PC) is over it
     /** Escape closes the viewer from anywhere in it. */
     const onKey = (event: KeyboardEvent): void => { if (event.key === "Escape" && !nativeModalOver(surface.current)) onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, keyboardActive, page]);
+  }, [onClose, keyboardActive, page, embedded]);
 
   // the file found (a bare name may have been found deeper in the folder), else as asked
   const url = fileUrl(info?.path ?? target.path, paneId);
@@ -218,14 +224,16 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const htmlPage = info !== null && info.kind === "text" && info.mime === "text/html";
   const pageUrl = `${url}&render=1`;
   const modes = <div className="segmented file-viewer-modes" role="group" aria-label={t("Show the HTML file as")}>
-    <button type="button" aria-pressed={!source} onClick={() => setSource(false)}>{t("Page")}</button>
-    <button type="button" aria-pressed={source} onClick={() => setSource(true)}>{t("Source")}</button>
+    <button type="button" aria-pressed={!source} onClick={() => { if (reviewNotes.guard()) setSource(false); }}>{t("Page")}</button>
+    <button type="button" aria-pressed={source} onClick={() => { if (reviewNotes.guard()) setSource(true); }}>{t("Source")}</button>
   </div>;
   const textFile = info?.kind === "text";
   const language = languageForPath(info?.path ?? target.path);
   // a Preview its parser gave up on (too slow, or failed) opens the source instead
   const preview = useMarkdownPreview(textFile && loaded !== null && mode === "preview" && hasPreview(language) ? loaded.text : null);
   const previewRefused = preview.status === "failed";
+  const [renderFailed, setRenderFailed] = useState(false);
+  useEffect(() => setRenderFailed(false), [loaded, mode, source]);
   const previewable = hasPreview(language) && !previewRefused;
   const view = previewable && mode === "preview" ? "markdown" : "code";
   const codeShown = textFile && loaded !== null && view === "code" && (!htmlPage || source);
@@ -277,12 +285,34 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   const imagePreview = useCallback((src: string) => markdownImagePreview(
     src, shownPath, (target) => fetchFileInfo(target, paneId), (target, download) => fileUrl(target, paneId, download),
   ), [shownPath, paneId, fetchFileInfo, fileUrl]);
+  const { settings } = useSettings();
+  const owner = paneId === null ? null : paneStorageId(machineId, paneId);
+  const savedNotes = useReviewNotes(owner ?? undefined);
+  const fileNotes = useMemo(() => savedNotes.filter((note) => owner !== null && note.owner === owner && note.target.kind === "source" && note.target.path === shownPath), [savedNotes, owner, shownPath]);
+  const [selectedLines, setSelectedLines] = useState<{ start: number; end: number } | null>(null);
+  const [noteLine, setNoteLine] = useState<number | null>(null);
+  const selectLines = useCallback((start: number, end: number): void => setSelectedLines({ start, end }), []);
+  useEffect(() => { setSelectedLines(null); setNoteLine(null); }, [path]);
+  const exactSource = useMemo(() => loaded ? shownSource(loaded.text, loaded.truncated) : "", [loaded]);
+  const commentLines = useCallback((start: number, end: number): void => {
+    if (owner === null || renderFailed || !settings.reviewComments || loaded === null || !reviewNotes.guard()) return;
+    const evidence = loaded.text.split("\n").slice(start - 1, end).join("\n");
+    const target: ReviewTarget = { kind: "source", path: shownPath, start, end, evidence };
+    if (reviewNotes.begin(owner, target, evidence)) { setNoteLine(start); setSelectedLines(null); }
+  }, [owner, renderFailed, settings.reviewComments, loaded, shownPath]);
+  const anchors = useMemo(() => new Map(fileNotes.map((note) => [note.key, note.target.kind === "source" && loaded ? sourceAnchor(note.target, exactSource, !loaded.truncated) : null])), [fileNotes, exactSource, loaded]);
+  const noteLines = useMemo(() => [...anchors.values()].flatMap((anchor) => anchor === null ? [] : [anchor.start]), [anchors]);
+  useEffect(() => {
+    for (const note of fileNotes) reviewNotes.mark(note.key, loaded === null || renderFailed ? "unavailable" : anchors.get(note.key) ? "current" : "outdated");
+    return () => { for (const note of fileNotes) reviewNotes.mark(note.key, "unavailable"); };
+  }, [fileNotes, anchors, loaded, renderFailed]);
+  const openPath = (next: string): void => { if (reviewNotes.close()) (onOpen ?? setPath)(next); };
   const body = (() => {
-    if (directory !== null) return <DirectoryBrowser key={directory} start={directory} onOpenFile={onOpen ?? setPath} />;
+    if (directory !== null) return <DirectoryBrowser key={directory} start={directory} onOpenFile={openPath} />;
     if (error !== null) return <p className="file-viewer-note" role="alert">{error === "missing" ? t("No readable file at this path.") : t("The file could not be opened.")}</p>;
     if (candidates !== null) return <div className="file-viewer-choices">
       <p className="file-viewer-note">Several files are named {target.path.split("/").pop()}:</p>
-      <ul>{candidates.map((candidate) => <li key={candidate}><button type="button" className="btn btn-ghost" onClick={() => setPath(candidate + path.slice(target.path.length))}>{candidate}</button></li>)}</ul>
+      <ul>{candidates.map((candidate) => <li key={candidate}><button type="button" className="btn btn-ghost" onClick={() => { if (reviewNotes.guard()) setPath(candidate + path.slice(target.path.length)); }}>{candidate}</button></li>)}</ul>
     </div>;
     if (info === null) return <p className="file-viewer-note">{t("Opening…")}</p>;
     switch (info.kind) {
@@ -307,13 +337,13 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
           ? <p className="file-viewer-note">{t("Opening…")}</p>
           // a text the renderer cannot draw fails here, not the app: the header (Show source, Open raw file,
           // Close) stays, and a Preview that fails offers its source
-          : <RenderBoundary key={view} resetKey={loaded} fallback={() => view === "markdown"
+          : <RenderBoundary key={view} resetKey={loaded} onFailure={() => setRenderFailed(true)} fallback={() => view === "markdown"
             ? <div className="file-viewer-note" role="alert">
               <p>{t("This preview can't be shown.")}</p>
-              <button type="button" className="btn btn-ghost" onClick={() => setChosen({ path, mode: "code" })}>{t("Show source")}</button>
+              <button type="button" className="btn btn-ghost" onClick={() => { if (reviewNotes.close()) setChosen({ path, mode: "code" }); }}>{t("Show source")}</button>
             </div>
             : <p className="file-viewer-note" role="alert">{t("The file could not be opened.")}</p>}>
-            <MarkdownImageContext.Provider value={imagePreview}><TextFileView path={info.path} blocks={view === "markdown" && preview.status === "ready" ? preview.blocks : null} lines={code.lines} virtual={virtual} selectable={selectable} onOpen={onOpen ?? setPath} sourceRef={sourceRef} markedLine={request?.kind === "shown" ? request.line : null} /></MarkdownImageContext.Provider>
+            <MarkdownImageContext.Provider value={imagePreview}><TextFileView path={info.path} blocks={view === "markdown" && preview.status === "ready" ? preview.blocks : null} lines={code.lines} virtual={virtual} selectable={selectable} onOpen={openPath} sourceRef={sourceRef} markedLine={noteLine ?? (request?.kind === "shown" ? request.line : null)} onCommentLine={owner !== null && settings.reviewComments ? commentLines : undefined} onSelectLines={owner !== null && settings.reviewComments ? selectLines : undefined} noteLines={noteLines} /></MarkdownImageContext.Provider>
           </RenderBoundary>}
         </>;
       default:
@@ -346,7 +376,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
       {/* how the text shows: Preview or source is one choice of two, so one toggle; wrapping is a
           setting (Settings → File viewer), not an action here */}
       {textFile && previewable && <div className="file-viewer-group">
-        <button type="button" className="icon-button file-viewer-action" aria-pressed={mode === "code"} aria-label={t("Show source")} title={t("Show source")} onClick={() => setChosen({ path, mode: mode === "code" ? "preview" : "code" })}><Braces aria-hidden="true" /></button>
+        <button type="button" className="icon-button file-viewer-action" aria-pressed={mode === "code"} aria-label={t("Show source")} title={t("Show source")} onClick={() => { if (reviewNotes.guard()) setChosen({ path, mode: mode === "code" ? "preview" : "code" }); }}><Braces aria-hidden="true" /></button>
       </div>}
       {/* the file itself: a Markdown tab is the reader; raw and download keep the original bytes */}
       <div className="file-viewer-group">
@@ -356,14 +386,22 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
         {copyable && <CopyFileButton text={loaded.text} sourceRef={sourceRef} onShowSource={showSourceToSelect} />}
       </div>
     </div>
-    {!page && <button type="button" className="icon-button file-viewer-action file-viewer-close" aria-label={t("Close file")} title={t("Close file")} onClick={onClose}><X aria-hidden="true" /></button>}
+    {!page && !embedded && <button type="button" className="icon-button file-viewer-action file-viewer-close" aria-label={t("Close file")} title={t("Close file")} onClick={onClose}><X aria-hidden="true" /></button>}
   </header>;
   // a virtualized source fills the viewer: its rows are a window the user scrolls, so the body
   // takes a definite height for the scroll root to fill, instead of growing with the text
+  const reviewBar = owner !== null && settings.reviewComments ? <div className="file-review-bar">
+    {selectedLines && codeShown && <button type="button" className="btn btn-ghost" onMouseDown={(event) => event.preventDefault()} onClick={() => commentLines(selectedLines.start, selectedLines.end)}>{t("Comment on selected lines")}</button>}
+    {fileNotes.map((note) => { const anchor = anchors.get(note.key) ?? null; return <button type="button" className="btn btn-ghost review-marker" key={note.key} title={note.text} onClick={() => { if (reviewNotes.edit(note)) { setNoteLine(anchor?.start ?? null); if (anchor) { setChosen({ path, mode: "code" }); setSource(true); } } }}>{anchor === null ? t("Outdated comment") : t("Comment on line {line}", { line: anchor.start })}</button>; })}
+    <ReviewNotesButton owner={owner} />
+  </div> : null;
   const bodyClass = virtual !== null && view === "code" ? "file-viewer-body file-viewer-body-virtual" : "file-viewer-body";
+  if (embedded) return <section ref={surface} className={`file-viewer file-viewer-embedded${virtual !== null && view === "code" ? " file-viewer-virtual" : ""}`} aria-label={info?.name ?? path}>
+    {header}{reviewBar}<div className={bodyClass}>{body}</div>
+  </section>;
   if (page) return (
     <main ref={surface} className="file-reader">
-      {header}
+      {header}{reviewBar}
       <div className={`${bodyClass} file-reader-body`}>{body}</div>
     </main>
   );
@@ -371,7 +409,7 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   return (
     <div className="modal-scrim file-viewer-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className={virtual !== null && view === "code" ? "modal file-viewer file-viewer-virtual" : "modal file-viewer"} role="dialog" aria-modal="true" aria-label={info?.name ?? path} ref={surface} tabIndex={-1}>
-        {header}
+        {header}{reviewBar}
         <div className={bodyClass}>{body}</div>
       </section>
     </div>

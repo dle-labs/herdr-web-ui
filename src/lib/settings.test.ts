@@ -248,6 +248,17 @@ describe("chat font size", () => {
   });
 });
 
+describe("device-local review settings", () => {
+  it("enables comments and the composer shortcut by default and keeps only booleans", () => {
+    for (const key of ["reviewComments", "composerFilesShortcut"] as const) {
+      expect(DEFAULT_SETTINGS[key]).toBe(true);
+      expect(sanitizeSettings({ [key]: false })[key]).toBe(false);
+      expect(sanitizeSettings({ [key]: "false" })[key]).toBe(true);
+      expect(SETTING_SCOPE[key]).toBe("device");
+    }
+  });
+});
+
 describe("chat width", () => {
   it("is the default lane until one is chosen, and accepts only the four steps", () => {
     expect(DEFAULT_SETTINGS.chatWidth).toBe("default");

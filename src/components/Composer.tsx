@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, Minimize2, Plus, Square, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, FileText, FolderOpen, Folder, FolderGit2, GitBranch, Minimize2, Plus, Square, TriangleAlert, X } from "lucide-react";
 
 import "./Composer.css";
 
@@ -56,6 +56,8 @@ import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
 import { cachedPaneCommands } from "../lib/paneCommandCache.ts";
 import { useT } from "../lib/i18n.ts";
 import { modalOpen } from "../lib/focus.ts";
+import { includeReviewNotes, reviewNotes } from "../lib/reviewNotes.ts";
+import { ReviewNotesButton, useReviewNotes } from "./ReviewNotes.tsx";
 
 export interface ComposerProps {
   connected: boolean;
@@ -95,6 +97,7 @@ export interface ComposerProps {
   onSend: (text: string, clearDraft?: string, sendAnyway?: boolean) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
   onAbort: () => void;
   onUploadImage: (file: File) => Promise<string>;
+  onBrowseFiles?: (() => void) | undefined;
 }
 
 const UPLOADS_AT_ONCE = 3;
@@ -256,6 +259,7 @@ export function Composer({
   onSend,
   onAbort,
   onUploadImage,
+  onBrowseFiles,
 }: ComposerProps) {
   const t = useT();
   const activeRef = useRef(active);
@@ -263,6 +267,8 @@ export function Composer({
   const machineId = useMachineId();
   const { fetchPaneCommands, fetchPaneFiles } = useMachineApi();
   const { settings } = useSettings();
+  const reviewOwner = paneStorageId(machineId, paneId);
+  const savedComments = useReviewNotes(reviewOwner);
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
   const usageEnabled = settings.showUsage && !mobile && machineId === "local" && providerForAgent(agent) !== null;
   const { report: usageReport } = useUsage(usageEnabled);
@@ -855,7 +861,8 @@ export function Composer({
    * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it */
   const send = useCallback((clearDraft?: string, sendAnyway = false) => {
     if (composingRef.current) return;
-    if (!connected || uploading || roomless || sending || text.trim().length === 0) return;
+    if (!connected || uploading || roomless || sending || (!text.trim() && !(settings.reviewComments && savedComments.length > 0 && includeReviewNotes(text, agent, answerHint !== null)))) return;
+    if (!reviewNotes.guard()) return;
     const sent = text;
     const sentAttachments = attachments;
     const settle = (result: boolean | string | DraftRefusal): void => {
@@ -884,7 +891,7 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [attachments, connected, dictation.forget, draftKey, onSend, roomless, sending, text, uploading]);
+  }, [attachments, connected, dictation.forget, draftKey, onSend, roomless, sending, text, uploading, settings.reviewComments, savedComments.length, agent, answerHint]);
 
   /** A quick reply follows the same delivery policy as Send, and leaves the box alone. */
   const sendQuick = useCallback((reply: string) => {
@@ -996,7 +1003,8 @@ export function Composer({
   // what the status line says; what may be sent, queued or stopped goes by the agent's own status
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
-  const sendShown = composerSendShown({ working: isWorking, text });
+  const commentsIncluded = settings.reviewComments && savedComments.length > 0 && includeReviewNotes(text, agent, answerHint !== null);
+  const sendShown = composerSendShown({ working: isWorking, text: text || (commentsIncluded ? "comments" : "") });
   const hint = composerStatusHint({ uploading, connected, text, noRoom: roomless !== undefined });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
@@ -1062,11 +1070,12 @@ export function Composer({
           <span className="composer-note-text">{typeof note === "string" ? note : note.note}</span>
           {/* the draft named above, never what has replaced it since: the server checks; a box it could
               not tell empty, sent over only in the same Claude terminal the refusal was for */}
-          {typeof note === "object" && <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
+          {typeof note === "object" && <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || (!text.trim() && !commentsIncluded)}
             onClick={() => "draft" in note ? send(note.draft) : send(undefined, true)}>{"draft" in note ? t("Clear it and send") : t("Send anyway")}</button>}
         </div>
       )}
 
+      <ReviewNotesButton owner={reviewOwner} held={!includeReviewNotes(text, agent, answerHint !== null)} />
       <div
         ref={surfaceRef}
         className={`composer-surface${dragging ? " is-dragging" : ""}`}
@@ -1231,6 +1240,7 @@ export function Composer({
           >
             <Plus aria-hidden="true" />
           </button>
+          {settings.composerFilesShortcut && onBrowseFiles && <button type="button" className="icon-button composer-files" aria-label={t("Browse files")} title={t("Browse files")} onClick={() => { if (reviewNotes.guard()) onBrowseFiles(); }}><FolderOpen aria-hidden="true" /></button>}
           {dictation.shown && <MicButton dictation={dictation} />}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} plan={plan} />
         </div>
@@ -1300,7 +1310,7 @@ export function Composer({
               className="composer-action composer-send"
               aria-label={t("Send message")}
               title={t("Send message")}
-              disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
+              disabled={!connected || uploading || roomless !== undefined || sending || (!text.trim() && !commentsIncluded)}
               // focus stays in the text box: leaving it closes the soft keyboard and moves the button
               // out from under the tap before the click lands
               onPointerDown={(event) => event.preventDefault()}

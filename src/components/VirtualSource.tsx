@@ -18,6 +18,8 @@ export interface VirtualSourceProps {
   theme: "dark" | "light";
   /** a requested line, within the source: marked, and brought to the middle of the view */
   markedLine: number | null;
+  onCommentLine?: (start: number, end: number) => void;
+  onSelectLines?: (start: number, end: number) => void;
 }
 
 type FileOptionsOf = FileOptions<undefined, undefined>;
@@ -44,7 +46,7 @@ function VirtualizerProbe({ onInstance }: { onInstance: (instance: VirtualizerIn
  * width change, which re-measure the rows, keeps the marked line in view when it was, else the
  * top line in place.
  */
-export default function VirtualSource({ name, text, colored, wrap, theme, markedLine }: VirtualSourceProps) {
+export default function VirtualSource({ name, text, colored, wrap, theme, markedLine, onCommentLine, onSelectLines }: VirtualSourceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<VirtualizedFile | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
@@ -213,10 +215,12 @@ export default function VirtualSource({ name, text, colored, wrap, theme, marked
     // plain rows never queue a highlight: the virtualizer treats a file past this as massive
     tokenizeMaxLength: colored ? VIRTUAL_HIGHLIGHT_LINES : 0,
     lineHoverHighlight: "disabled",
-    enableLineSelection: false,
+    enableLineSelection: onSelectLines !== undefined,
+    onLineNumberClick: onCommentLine ? ({ lineNumber }) => onCommentLine(lineNumber, lineNumber) : undefined,
+    onLineSelectionEnd: onSelectLines ? (range) => { if (range) onSelectLines(Math.min(range.start, range.end), Math.max(range.start, range.end)); } : undefined,
     unsafeCSS: SHADOW_CSS,
     onPostRender,
-  }), [wrap, theme, colored, onPostRender]);
+  }), [wrap, theme, colored, onPostRender, onCommentLine, onSelectLines]);
   const selected = useMemo(() => markedLine === null ? null : { start: markedLine, end: markedLine }, [markedLine]);
   const metrics = useMemo(() => lineHeight === null ? null : { ...DEFAULT_VIRTUAL_FILE_METRICS, lineHeight }, [lineHeight]);
 

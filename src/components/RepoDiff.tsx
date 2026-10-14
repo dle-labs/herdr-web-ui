@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_VIRTUAL_FILE_METRICS, parsePatchFiles, trimPatchContext, type FileDiffMetadata } from "@pierre/diffs";
+import { DEFAULT_VIRTUAL_FILE_METRICS, parsePatchFiles, trimPatchContext, type FileDiffMetadata, type SelectedLineRange } from "@pierre/diffs";
 import { FileDiff, Virtualizer, type FileDiffOptions } from "@pierre/diffs/react";
 
 import { DiffWorkerPool } from "./DiffWorkerPool.tsx";
@@ -19,6 +19,10 @@ export interface RepoDiffProps {
   theme: "dark" | "light";
   /** colored in the pool's worker; false draws plain rows, still windowed by the pool's manager (the setting off, or too long, which the host says) */
   colored: boolean;
+  onCommentLine?: (side: "old" | "new", start: number, end: number) => void;
+  onSelectLines?: (side: "old" | "new", start: number, end: number) => void;
+  selectedLines?: SelectedLineRange | null;
+  onClearSelection?: () => void;
 }
 
 /** The fewest context lines the package's trimmer keeps correct (at 0 it miscounts the lines it drops). */
@@ -56,7 +60,7 @@ function parseFile(text: string): FileDiffMetadata | null {
  * the virtualizer renders by identity, and its host fills the scroll root so it has a box before
  * the first anchor pass (the contracts VirtualSource measured).
  */
-export default function RepoDiff({ patch, style, folded, wrap, theme, colored }: RepoDiffProps) {
+export default function RepoDiff({ patch, style, folded, wrap, theme, colored, onCommentLine, onSelectLines, selectedLines, onClearSelection }: RepoDiffProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const [lineHeight, setLineHeight] = useState<number | null>(null);
@@ -82,10 +86,12 @@ export default function RepoDiff({ patch, style, folded, wrap, theme, colored }:
     themeType: theme,
     tokenizeMaxLength: colored ? VIRTUAL_HIGHLIGHT_LINES : 0,
     lineHoverHighlight: "disabled",
-    enableLineSelection: false,
+    enableLineSelection: onSelectLines !== undefined,
+    onLineNumberClick: onCommentLine ? ({ lineNumber, annotationSide }) => onCommentLine(annotationSide === "deletions" ? "old" : "new", lineNumber, lineNumber) : undefined,
+    onLineSelectionEnd: onSelectLines ? (range) => { if (range && (!range.endSide || range.endSide === range.side)) onSelectLines(range.side === "deletions" ? "old" : "new", Math.min(range.start, range.end), Math.max(range.start, range.end)); else onClearSelection?.(); } : undefined,
     unsafeCSS: DIFF_SHADOW_CSS,
     onPostRender,
-  }), [style, wrap, theme, colored, onPostRender]);
+  }), [style, wrap, theme, colored, onPostRender, onCommentLine, onSelectLines, onClearSelection]);
   const metrics = useMemo(() => (lineHeight === null ? null : { ...DEFAULT_VIRTUAL_FILE_METRICS, lineHeight }), [lineHeight]);
 
   if (fileDiff === null || fileDiff.hunks.length === 0) return <p className="repo-diff-note">{t("No lines changed.")}</p>;
@@ -97,7 +103,7 @@ export default function RepoDiff({ patch, style, folded, wrap, theme, colored }:
   return <div ref={hostRef} className="repo-diff" data-style={style} data-colored={colored ? "" : undefined} data-folded={folded ? "" : undefined}>
     <DiffWorkerPool>
       <Virtualizer className="repo-diff-scroll" contentClassName="repo-diff-column" config={SCROLL_CONFIG}>
-        {metrics !== null && <FileDiff className="repo-diff-file" fileDiff={fileDiff} options={options} metrics={metrics} />}
+        {metrics !== null && <FileDiff className="repo-diff-file" fileDiff={fileDiff} options={options} metrics={metrics} selectedLines={selectedLines} />}
       </Virtualizer>
     </DiffWorkerPool>
   </div>;

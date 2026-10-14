@@ -153,6 +153,9 @@ export interface Settings {
   markdownWidth: MarkdownWidth;
   /** a repository diff as one column of old and new lines, or the two side by side (a phone shows one column either way) */
   diffStyle: DiffStyle;
+  /** Device-local shortcuts and one-send review annotations. */
+  composerFilesShortcut: boolean;
+  reviewComments: boolean;
 }
 
 export const MARKDOWN_WIDTHS = ["readable", "full"] as const;
@@ -164,7 +167,7 @@ export type DiffStyle = (typeof DIFF_STYLES)[number];
  * Settings field in the projection makes a new field require an explicit collection decision. */
 type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "shortcutOverrides" | "terminalFontFamily" | "chatFontFamily"
-  | "quickReplies" | "usageOrder" | "usageHidden">;
+  | "quickReplies" | "usageOrder" | "usageHidden" | "composerFilesShortcut" | "reviewComments">;
 
 /** Compare structured custom settings by content against this app's built-in defaults. */
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
@@ -245,7 +248,7 @@ export const SETTING_SCOPE = {
   paletteLight: "device", paletteDark: "device",
   voiceInput: "device", voiceLanguage: "device", voicePolishChat: "device", voicePolishTerminal: "device",
   // Viewer layout follows this screen, as chatWidth does.
-  wrapCode: "device", markdownWidth: "device", diffStyle: "device",
+  wrapCode: "device", markdownWidth: "device", diffStyle: "device", composerFilesShortcut: "device", reviewComments: "device",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 /** The shared part of `settings`, by the names shared/preferences.ts lists. */
@@ -303,6 +306,8 @@ export const DEFAULT_SETTINGS: Settings = {
   wrapCode: false,
   markdownWidth: "readable",
   diffStyle: "unified",
+  composerFilesShortcut: true,
+  reviewComments: true,
 };
 
 export const QUICK_REPLIES_MAX = 12;
@@ -478,6 +483,8 @@ export function sanitizeSettings(raw: unknown): Settings {
     wrapCode: typeof record["wrapCode"] === "boolean" ? record["wrapCode"] : DEFAULT_SETTINGS.wrapCode,
     markdownWidth: MARKDOWN_WIDTHS.find((width) => width === record["markdownWidth"]) ?? DEFAULT_SETTINGS.markdownWidth,
     diffStyle: DIFF_STYLES.find((style) => style === record["diffStyle"]) ?? DEFAULT_SETTINGS.diffStyle,
+    composerFilesShortcut: typeof record["composerFilesShortcut"] === "boolean" ? record["composerFilesShortcut"] : DEFAULT_SETTINGS.composerFilesShortcut,
+    reviewComments: typeof record["reviewComments"] === "boolean" ? record["reviewComments"] : DEFAULT_SETTINGS.reviewComments,
   };
 }
 

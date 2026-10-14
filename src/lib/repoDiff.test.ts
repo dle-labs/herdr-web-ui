@@ -20,7 +20,9 @@ describe("repository diff words", () => {
   it("names every status and comparison", () => {
     expect(statusWord(t, "renamed")).toBe("Renamed");
     expect(statusWord(t, "unmerged")).toBe("Conflict");
-    expect(comparisonWord(t, { scope: "workspace", base: null, head: null })).toBe("Working tree");
+    expect(comparisonWord(t, { scope: "workspace", base: null, head: null })).toBe("Unstaged");
+    expect(comparisonWord(t, { scope: "all", base: null, head: null })).toBe("Current changes");
+    expect(comparisonWord(t, { scope: "all", base: "1234567890123456789012345678901234567890", head: null })).toBe("1234567 versus working tree");
     expect(comparisonWord(t, { scope: "staged", base: null, head: null })).toBe("Staged");
     expect(comparisonWord(t, { scope: "commit", base: "0123456789abcdef0123456789abcdef01234567", head: "HEAD" })).toBe("0123456..HEAD");
     expect(shortHash("v1.0")).toBe("v1.0");

@@ -46,6 +46,21 @@
   user-select: none;
 }
 
+/* An empty button overlays the counter: keyboard reachable, no extra text in a native copy. */
+.hl-line:has(.hl-comment-button) { position: relative; }
+.hl-comment-button {
+  position: absolute;
+  inset-inline-start: calc(-1 * var(--hl-gutter));
+  inset-block-start: 0;
+  width: var(--hl-gutter);
+  height: calc(1em * var(--lh-base));
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+.hl-comment-button:hover, .hl-comment-button:focus-visible { background: var(--accent-tint); }
+
 .hl-keyword { color: var(--syntax-keyword); }
 .hl-line.is-marked { background: var(--accent-tint); }
 .hl-code[data-line-numbers] .hl-line.is-marked::before { color: var(--accent); }

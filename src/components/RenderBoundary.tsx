@@ -12,6 +12,8 @@ interface Props {
   /** what to draw instead; `error` is what was thrown, for a fallback that offers to copy it */
   fallback: (retry: () => void, error: unknown) => ReactNode;
   children: ReactNode;
+  /** Readers can retain annotations while explicitly marking an unrenderable target. */
+  onFailure?: () => void;
 }
 
 interface State { failed: boolean; key: unknown; error?: unknown }
@@ -29,6 +31,7 @@ export class RenderBoundary extends Component<Props, State> {
 
   override componentDidCatch(error: unknown): void {
     console.error("render failed", error);
+    this.props.onFailure?.();
   }
 
   private retry = (): void => this.setState({ failed: false });

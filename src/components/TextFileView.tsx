@@ -32,10 +32,13 @@ export interface TextFileViewProps {
   /** set to the source element while the code shows (the `<pre>`, or the text box), for Copy to select */
   sourceRef: RefObject<HTMLElement | null>;
   markedLine: number | null;
+  onCommentLine?: (start: number, end: number) => void;
+  onSelectLines?: (start: number, end: number) => void;
+  noteLines?: readonly number[];
 }
 
 /** The text of a file: Markdown rendered, or its code with line numbers. */
-export function TextFileView({ path, blocks, lines, virtual, selectable, onOpen, sourceRef, markedLine }: TextFileViewProps) {
+export function TextFileView({ path, blocks, lines, virtual, selectable, onOpen, sourceRef, markedLine, onCommentLine, onSelectLines, noteLines }: TextFileViewProps) {
   const t = useT();
   const { settings, resolvedTheme } = useSettings();
   // the app hands a new onOpen on every render (each poll): read it from a ref, so the context
@@ -48,10 +51,10 @@ export function TextFileView({ path, blocks, lines, virtual, selectable, onOpen,
     if (blocks === null && virtual === null && markedLine !== null) sourceRef.current?.querySelector(".hl-line.is-marked")?.scrollIntoView({ block: "center", inline: "nearest" });
   }, [path, blocks, virtual, markedLine, sourceRef]);
   const code = (() => {
-    if (virtual === null) return <CodeLines ref={sourceRef as RefObject<HTMLPreElement | null>} className="file-viewer-text" lines={lines} open={null} lineNumbers wrap={settings.wrapCode} markedLine={markedLine} />;
+    if (virtual === null) return <CodeLines ref={sourceRef as RefObject<HTMLPreElement | null>} className="file-viewer-text" lines={lines} open={null} lineNumbers wrap={settings.wrapCode} markedLine={markedLine} onCommentLine={onCommentLine} onSelectLines={onSelectLines} noteLines={noteLines} />;
     if (selectable) return <textarea ref={sourceRef as RefObject<HTMLTextAreaElement | null>} className="file-viewer-select-source" readOnly value={virtual.text} aria-label={t("File source")} spellCheck={false} />;
     return <Suspense fallback={<p className="file-viewer-note">{t("Opening…")}</p>}>
-      <VirtualSource name={path} text={virtual.text} colored={virtual.colored} wrap={settings.wrapCode} theme={resolvedTheme} markedLine={markedLine} />
+      <VirtualSource name={path} text={virtual.text} colored={virtual.colored} wrap={settings.wrapCode} theme={resolvedTheme} markedLine={markedLine} onCommentLine={onCommentLine} onSelectLines={onSelectLines} />
     </Suspense>;
   })();
   return <div className={virtual !== null && blocks === null ? "file-viewer-content file-viewer-content-virtual" : "file-viewer-content"}>

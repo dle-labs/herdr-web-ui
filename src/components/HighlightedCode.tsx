@@ -60,6 +60,9 @@ interface CodeLinesProps {
   markedLine?: number | null;
   /** opens a file path the code names; null leaves every path as text */
   open: ((path: string) => void) | null;
+  onCommentLine?: (start: number, end: number) => void;
+  onSelectLines?: (start: number, end: number) => void;
+  noteLines?: readonly number[];
 }
 
 /**
@@ -74,7 +77,8 @@ interface CodeLinesProps {
  * Past `LINE_ELEMENT_LIMIT` lines it is one text, as drawing an element per line would hold the page.
  * The ref is that `<pre>`: the file viewer selects it when the clipboard is out of reach.
  */
-export const CodeLines = memo(forwardRef<HTMLPreElement, CodeLinesProps>(function CodeLines({ lines, open, lineNumbers = false, wrap = false, className, markedLine = null }, ref) {
+export const CodeLines = memo(forwardRef<HTMLPreElement, CodeLinesProps>(function CodeLines({ lines, open, lineNumbers = false, wrap = false, className, markedLine = null, onCommentLine, onSelectLines, noteLines }, ref) {
+  const t = useT();
   // one text past LINE_ELEMENT_LIMIT lines, with no numbers then: they are an element per line
   const plain = lines.length > LINE_ELEMENT_LIMIT;
   // index keys: the lines are a static list that is rebuilt as a whole
@@ -83,15 +87,23 @@ export const CodeLines = memo(forwardRef<HTMLPreElement, CodeLinesProps>(functio
     : lines.map((tokens, index) => (
       <Fragment key={index}>
         {index > 0 && "\n"}
-        <span className={index + 1 === markedLine ? "hl-line is-marked" : "hl-line"} data-line={index + 1}>
+        <span className={`hl-line${index + 1 === markedLine ? " is-marked" : ""}${noteLines?.includes(index + 1) ? " has-review-note" : ""}`} data-line={index + 1}>
+          {onCommentLine && <button type="button" className="hl-comment-button" aria-label={t("Comment on line {line}", { line: index + 1 })} title={t("Comment on line {line}", { line: index + 1 })} onClick={() => onCommentLine(index + 1, index + 1)} />}
           {tokens.map((token, n) => token.role === null ? <Fragment key={n}>{linkFilePaths(token.text, open)}</Fragment> : <span className={`hl-${token.role}`} key={n}>{linkFilePaths(token.text, open)}</span>)}
         </span>
       </Fragment>
-    )), [lines, plain, open, markedLine]);
+    )), [lines, plain, open, markedLine, onCommentLine, noteLines, t]);
   const numbered = lineNumbers && !plain;
   // the gutter is as wide as the last line's number, at least two digits
   const gutter = numbered ? { "--hl-digits": String(Math.max(2, String(lines.length).length)) } as CSSProperties : undefined;
-  return <pre ref={ref} className={className ? `hl-code ${className}` : "hl-code"} style={gutter} data-line-numbers={numbered ? "" : undefined} data-wrap={wrap ? "" : undefined}><code>{elements}</code></pre>;
+  return <pre ref={ref} className={className ? `hl-code ${className}` : "hl-code"} style={gutter} data-line-numbers={numbered ? "" : undefined} data-wrap={wrap ? "" : undefined} onPointerUp={onSelectLines ? (event) => {
+    const selection = window.getSelection();
+    if (!selection?.toString() || !selection.rangeCount) return;
+    const range = selection.getRangeAt(0);
+    const line = (node: Node): HTMLElement | null => (node instanceof Element ? node : node.parentElement)?.closest<HTMLElement>(".hl-line") ?? null;
+    const first = line(range.startContainer), last = line(range.endContainer);
+    if (first && last && event.currentTarget.contains(first) && event.currentTarget.contains(last)) onSelectLines(Number(first.dataset.line), Number(last.dataset.line));
+  } : undefined}><code>{elements}</code></pre>;
 }));
 
 interface HighlightedCodeProps {

@@ -60,6 +60,7 @@ import { modalOpen } from "../lib/focus.ts";
 import { pinchFontSize } from "../lib/pinchFontSize.ts";
 import { narrowPaneFontSize } from "../lib/narrowPaneFont.ts";
 import { finalStep, HERDR_MOUSE_SCROLL_LINES, wheelSteps } from "../lib/wheelSteps.ts";
+import { composeReviewMessage, includeReviewNotes, reviewNotes, reviewVersionId } from "../lib/reviewNotes.ts";
 
 /** How long a resize must rest before the grid refits and the pty follows it. */
 const RESIZE_SETTLE_MS = 120;
@@ -74,6 +75,7 @@ const inUse = (): boolean => document.visibilityState === "visible" && document.
 
 export interface PaneTerminalProps {
   onOpenDiff?: (target: import("../lib/repoDiff.ts").RepoDiffTarget) => void;
+  onBrowseFiles?: () => void;
   /** The pane this terminal attaches to; null renders the placeholder. */
   paneId: string | null;
   /**
@@ -170,6 +172,7 @@ export function PaneTerminal({
   onConnectionChange,
   onServerMessage,
   onOpenDiff,
+  onBrowseFiles,
 }: PaneTerminalProps) {
   const t = useT();
   const activeRef = useRef(active);
@@ -2210,17 +2213,18 @@ export function PaneTerminal({
   // must not turn a one-letter message into a control key. Offline it sends nothing and
   // keeps its text (never-queue); a message the server could not deliver keeps it too,
   // with the reason. Bracketed-paste wrapping follows the pane program's mode.
-  const submitComposerMessage = useCallback((text: string, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number): Promise<SubmitResult> | null => {
+  const submitComposerMessage = useCallback((text: string, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number, agentOnly = false): Promise<SubmitResult> | null => {
     const term = termRef.current;
     const socket = socketRef.current;
     const session = sessionRef.current;
     const pane = paneRef.current;
     if (!term || !socket || !session || pane === null || secretRef.current !== null || heldRef.current) return null;
+    if (agentOnly && !socket.canSubmitAgentOnly()) return Promise.resolve({ ok: false, code: "agent_only_unsupported", message: "agent-only submission is unavailable" });
     // its Enter would run the pty's line without the start a held draft keeps
     if (draftHeldForRef.current === pane) return Promise.resolve({ ok: false, code: "held_input", message: "send or discard the held input first" });
     // not the scope itself: a message sent right after a reconnect leaves before the snapshot that names it
     const epoch = session.epoch;
-    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), false, delivery, clearDraft, sendAnyway, resendId, generation);
+    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), false, delivery, clearDraft, sendAnyway, resendId, generation, agentOnly);
     if (sent === null) return null;
     const releaseSubmit = submitRetention?.retain(pane);
     const submission = delivery !== "immediate" ? { pane, socket, epoch } : null;
@@ -2270,6 +2274,7 @@ export function PaneTerminal({
   // the terminal's input line: the text typed like the keyboard would, into an agent's open
   // menu too, then Enter after the server's gap; several lines go as one paste
   const sendTerminalLine = useCallback((text: string): false | Promise<true | string> => {
+    if (!reviewNotes.close()) return false;
     const term = termRef.current;
     const socket = socketRef.current;
     const pane = paneRef.current;
@@ -2463,7 +2468,46 @@ export function PaneTerminal({
 
   const composerSend = useCallback(
     (text: string, clearDraft?: string, sendAnyway = false): boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal> => {
+      if (!reviewNotes.close()) return t("Save or discard this comment before navigating or sending.");
       const pane = paneRef.current;
+      const owner = pane === null ? null : paneStorageId(machineId, pane);
+      reviewNotes.refresh();
+      const captured = owner !== null && settings.reviewComments && includeReviewNotes(text, agent, answering !== null || heldByOpenQueue) ? reviewNotes.read(owner) : [];
+      if (captured.length > 0 && owner !== null) {
+        const socket = socketRef.current;
+        if (!socket?.canSubmitAgentOnly()) return t("This bridge cannot safely send comments to an agent. Comments and message were kept.");
+        pendingMessages.refresh(owner);
+        const message = composeReviewMessage(captured, text, MAX_COMPOSER_CHARS);
+        if (message === null) return t("Comments and message exceed the message limit. Shorten them before sending.");
+        const recoveries = pendingMessages.read(owner).filter((copy) => copy.agent_only && !copy.serverOwned && copy.state === "uncertain");
+        // The existing explicit override is only for a definitive no-input draft refusal,
+        // and only for the exact composed payload the user already saw refused.
+        const retryDraft = (clearDraft !== undefined || sendAnyway) && recoveries.every((copy) => copy.text === message && copy.error?.code === "input_draft");
+        if (recoveries.length > 0 && !retryDraft) return t("A comment message is unconfirmed. Review its held copy and check the terminal before another send.");
+        if (!socket.connected || heldRef.current || secretRef.current !== null || heldByOpenQueue) return false;
+        const queued = composerDelivery(agent, agentStatus);
+        const delivery: SubmitDelivery = queued === "queue" && !settings.autoSendQueued ? "hold" : queued;
+        if (sendAnyway && delivery !== "immediate") return t("Not sent: the agent started working since. Check the terminal, then send again.");
+        // Existing recovery store, not another queue. This copy never releases itself.
+        const recoveryId = `review-${reviewVersionId()}`;
+        pendingMessages.accept(owner, { id: recoveryId, request_id: 0, text: message, state: "uncertain", created_at: new Date().toISOString(), agent_only: true }, null);
+        if (retryDraft) for (const copy of recoveries) pendingMessages.removeCopy(owner, copy.id);
+        const result = submitComposerMessage(message, delivery, delivery === "immediate" ? clearDraft : undefined, sendAnyway, undefined, undefined, true);
+        if (result === null) { pendingMessages.fail(owner, recoveryId, { code: "not_attached", message: t("Not sent. Reconnect and try again.") }, true); return false; }
+        return result.then((answer) => {
+          if (answer.ok) {
+            // submitComposerMessage has already saved any accepted pending payload.
+            pendingMessages.removeCopy(owner, recoveryId);
+            reviewNotes.acknowledge(captured);
+            return true;
+          }
+          pendingMessages.fail(owner, recoveryId, { code: answer.code, message: answer.message }, true);
+          return submitRefusal(answer.code, answer.message, answer.draft, answer.box);
+        }, () => {
+          pendingMessages.fail(owner, recoveryId, { code: "disconnected", message: t("Not confirmed. Check the terminal before sending again.") }, true);
+          return t("Not confirmed. Check the terminal before sending again.");
+        });
+      }
       // Codex's queue open in the terminal holds the input: a message would become the answer
       if (pane !== null && heldByOpenQueue) {
         return t("Codex has a question open in the terminal: answer it above, or close it there (alt+↓) to message Codex.");
@@ -2496,11 +2540,12 @@ export function PaneTerminal({
       const result = submitComposerMessage(text, delivery, delivery === "immediate" ? clearDraft : undefined, sendAnyway);
       return result === null ? false : result.then((answer) => answer.ok ? true : submitRefusal(answer.code, answer.message, answer.draft, answer.box));
     },
-    [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, submitComposerMessage, queueStore, machineId, settings.autoSendQueued],
+    [agent, agentStatus, answerPanePrompt, answering, heldByOpenQueue, submitComposerMessage, queueStore, machineId, settings.autoSendQueued, settings.reviewComments],
   );
 
   const actOnPending = useCallback(async (id: string, action: "steer" | "discard"): Promise<void> => {
     const perform = async (): Promise<void> => {
+      if (action === "steer" && !reviewNotes.close()) return;
       const owner = queueOwner, pane = paneId;
       const socket = socketRef.current, scope = pendingScopeRef.current;
       if (owner === null || pane === null || paneRef.current !== pane) return;
@@ -2537,7 +2582,7 @@ export function PaneTerminal({
           if (!pendingMessages.unconfirm(owner, id)) {
             return;
           }
-          const result = submitComposerMessage(message.text, "immediate", undefined, false, id, message.resendGeneration ?? 0);
+          const result = submitComposerMessage(message.text, "immediate", undefined, false, id, message.resendGeneration ?? 0, message.agent_only === true);
           if (!result) {
             pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not sent. Reconnect and try again.") }, false);
             return;
@@ -2835,7 +2880,7 @@ export function PaneTerminal({
                 disabled={!connected || held || secretActive || queueSending !== null || queued.some((item) => queueStore.isSending(item.id)) || heldByOpenQueue || message.text.trim().length === 0}
                 title={heldByOpenQueue ? t("Codex has a question open in the terminal: answer it above first") : undefined}
                 onClick={() => {
-                  if (sendingRef.current || !queueStore.beginSend(queueOwner, message.id)) return;
+                  if (!reviewNotes.close() || sendingRef.current || !queueStore.beginSend(queueOwner, message.id)) return;
                   sendingRef.current = true;
                   const owner = queueOwner;
                   setQueueSending(message.id); setQueueError(null); heldRowNotes.delete(owner);
@@ -2906,6 +2951,7 @@ export function PaneTerminal({
               <p className="composer-greeting-where">{machineName && <bdi>{machineName}</bdi>}{machineName && cwd ? " · " : ""}{cwd && <bdi>{cwd}</bdi>}</p>
             </div>
           ) : null}
+          onBrowseFiles={onBrowseFiles}
           onSend={composerSend}
           onAbort={abortTurn}
           onUploadImage={uploadImage}

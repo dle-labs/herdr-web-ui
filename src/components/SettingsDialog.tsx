@@ -9,6 +9,8 @@ import { SHORTCUTS, formatKeys, isMacPlatform, modKeyLabel, setShortcutRecording
 import { SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
 import { isReservedShortcutKey } from "../lib/shortcutBindings.ts";
 import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, DEFAULT_SETTINGS, DIFF_STYLES, MARKDOWN_WIDTHS, QUICK_REPLIES_MAX, QUICK_REPLY_MAX_CHARS, TERMINAL_FONT_MAX, TERMINAL_FONT_MIN, TERMINAL_WHEEL_SPEED_MAX, TERMINAL_WHEEL_SPEED_MIN, DICTATION_LANGUAGES, VOICE_BUTTONS, useSettings, forgetPaneViews, uiFontSize, type DictationLanguage, type Palette as PaletteName, type VoiceButton } from "../lib/settings.ts";
+import { useReviewNotes } from "./ReviewNotes.tsx";
+import { draftDirty, reviewNotes } from "../lib/reviewNotes.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
@@ -302,8 +304,14 @@ function AppearancePage() {
 }
 
 function ChatPage() {
+  const savedComments = useReviewNotes();
   const { settings, update } = useSettings();
   const t = useT();
+  const toggleComments = (reviewComments: boolean): void => {
+    reviewNotes.refresh();
+    if (!reviewComments && (reviewNotes.read().length > 0 || draftDirty(reviewNotes.draft) || reviewNotes.composing)) { reviewNotes.disableConfirmation(true); return; }
+    update({ reviewComments });
+  };
   return (
     <>
       <SettingsGroup>
@@ -370,6 +378,13 @@ function ChatPage() {
       </SettingsGroup>
 
       <SettingsGroup title={t("File viewer")}>
+        <SettingsRow label={t("Composer file shortcut")} description={t("Hide this shortcut without removing Browse files from the menu.")}>
+          <Toggle label={t("Composer file shortcut")} checked={settings.composerFilesShortcut} onChange={(composerFilesShortcut) => update({ composerFilesShortcut })} />
+        </SettingsRow>
+        <SettingsRow label={t("Review comments")} description={t("Device-local notes sent once with an ordinary agent message.")}>
+          {savedComments.length > 0 && <button type="button" className="btn btn-ghost" onClick={() => reviewNotes.list("*")}>{t("Review comments")}</button>}
+          <Toggle label={t("Review comments")} checked={settings.reviewComments} onChange={toggleComments} />
+        </SettingsRow>
         <SettingsRow label={t("Wrap long lines")}>
           <Toggle label={t("Wrap long lines")} checked={settings.wrapCode} onChange={(wrapCode) => update({ wrapCode })} />
         </SettingsRow>

@@ -12,6 +12,7 @@ export interface RepoComparison {
   /** `commit` only: full hashes once a list answered, the names typed before */
   base: string | null;
   head: string | null;
+  fingerprint?: string;
 }
 
 /** One changed file of one comparison, on one PC's pane: what the diff viewer opens. */
@@ -24,7 +25,12 @@ export interface RepoDiffTarget extends RepoComparison {
   oldPath: string | null;
 }
 
-export const REPO_DIFF_SCOPES: readonly RepoDiffScope[] = ["workspace", "staged", "commit"];
+/** Canonical identity for history and keyed readers, independent of object property order. */
+export function repoDiffIdentity(target: RepoDiffTarget): string {
+  return JSON.stringify([target.machineId, target.paneId, target.directory, target.scope, target.base, target.head, target.path, target.oldPath, target.fingerprint ?? null]);
+}
+
+export const REPO_DIFF_SCOPES: readonly RepoDiffScope[] = ["all", "workspace", "staged", "commit"];
 
 /** git's own letter for a status, as `git status --short` prints it. */
 export const STATUS_MARK: Record<RepoDiffStatus, string> = {
@@ -51,7 +57,8 @@ export function shortHash(revision: string): string {
 
 export function comparisonWord(t: Translate, comparison: RepoComparison): string {
   switch (comparison.scope) {
-    case "workspace": return t("Working tree");
+    case "all": return comparison.base ? t("{commit} versus working tree", { commit: shortHash(comparison.base) }) : t("Current changes");
+    case "workspace": return t("Unstaged");
     case "staged": return t("Staged");
     case "commit": return `${shortHash(comparison.base ?? "")}..${shortHash(comparison.head ?? "HEAD")}`;
   }
@@ -60,7 +67,7 @@ export function comparisonWord(t: Translate, comparison: RepoComparison): string
 /** The empty state of a comparison that changed nothing. */
 export function nothingChangedWord(t: Translate, scope: RepoDiffScope): string {
   switch (scope) {
-    case "workspace": return t("No uncommitted changes");
+    case "all": case "workspace": return t("No uncommitted changes");
     case "staged": return t("Nothing staged");
     case "commit": return t("These commits are the same");
   }
@@ -75,6 +82,7 @@ export function diffErrorMessage(t: Translate, error: unknown): string {
     case "revision_not_found": return t("No commit by that name.");
     case "invalid_revision": return t("Name a commit, branch or tag.");
     case "git_unavailable": return t("git is not installed on that PC.");
+    case "stale_comparison": return t("The comparison changed. Refresh before reviewing it.");
     case "git_timeout": return t("git took too long to answer.");
     case "git_failed": return t("git could not compare these.");
     case "read_only": return t("This device can only watch.");
@@ -88,6 +96,7 @@ export function diffErrorMessage(t: Translate, error: unknown): string {
 export function unavailableMessage(t: Translate, answer: RepoDiffFilePatch): string | null {
   switch (answer.unavailable) {
     case null: return null;
+    case "stale": return t("The comparison changed. Refresh before reviewing it.");
     case "binary": return t("This is a binary file; there are no lines to compare.");
     case "too_large": return t("This change is larger than {limit} and is not shown here.", { limit: formatBytes(answer.limits.max_patch_bytes) });
     case "unmerged": return t("This file has a merge conflict; resolve it in the terminal first.");
@@ -126,7 +135,7 @@ export function diffTargetFromState(state: unknown): RepoDiffTarget | null {
   const machineId = text("machineId"), path = text("path"), scope = text("scope");
   if (machineId === null || path === null || scope === null || !REPO_DIFF_SCOPES.includes(scope as RepoDiffScope)) return null;
   if (!optional("paneId") || !optional("directory") || !optional("base") || !optional("head") || !optional("oldPath")) return null;
-  return { machineId, paneId: text("paneId"), directory: text("directory"), scope: scope as RepoDiffScope, base: text("base"), head: text("head"), path, oldPath: text("oldPath") };
+  return { machineId, paneId: text("paneId"), directory: text("directory"), scope: scope as RepoDiffScope, base: text("base"), head: text("head"), ...(text("fingerprint") ? { fingerprint: text("fingerprint")! } : {}), path, oldPath: text("oldPath") };
 }
 
 export function diffTargetState(state: unknown, target: RepoDiffTarget): Record<string, unknown> {

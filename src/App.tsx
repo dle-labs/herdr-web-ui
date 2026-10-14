@@ -58,6 +58,9 @@ import { UpdateNotice } from "./components/UpdateControls.tsx";
 import { LanExposureNotice } from "./components/LanExposureNotice.tsx";
 import { TelemetryNotice } from "./components/TelemetryControls.tsx";
 import { FilesDialog } from "./components/FilesDialog.tsx";
+import { ReviewNotes } from "./components/ReviewNotes.tsx";
+import { reviewNotes } from "./lib/reviewNotes.ts";
+import { repoDiffIdentity } from "./lib/repoDiff.ts";
 import { folderQueryFor } from "./lib/paletteFolders.ts";
 import { FileViewer } from "./components/FileViewer.tsx";
 import { RepoDiffViewer } from "./components/RepoDiffViewer.tsx";
@@ -353,7 +356,7 @@ export function App() {
   const tabDrag = useSyncExternalStore(paneDrag.subscribe, paneDrag.snapshot);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
-  const openPalette = useCallback((query?: unknown) => { setPaletteQuery(paletteOpenQuery(query)); setPaletteOpen(true); }, []);
+  const openPalette = useCallback((query?: unknown) => { if (!reviewNotes.close()) return; setPaletteQuery(paletteOpenQuery(query)); setPaletteOpen(true); }, []);
   const paneControls = useRef<PaneControls | null>(null);
   const [findRequest, setFindRequest] = useState<{ paneId: string | null; serial: number }>({ paneId: null, serial: 0 });
   // the header's More menu: its button
@@ -363,6 +366,14 @@ export function App() {
   const paneActionsRef = useRef<((target: HerdrPane) => RowMenuItem[]) | null>(null);
   // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
   const [filesOpen, setFilesOpen] = useState(false);
+  const [filesTarget, setFilesTarget] = useState<{ machineId: string; paneId: string; start: string } | null>(null);
+  const browseFiles = useCallback((machineId: string, paneId: string | null) => {
+    if (paneId === null || !reviewNotes.close()) return;
+    const pane = machinesRef.current.find((machine) => machine.id === machineId)?.snapshot?.panes.find((item) => item.pane_id === paneId);
+    if (!pane) return;
+    setFilesTarget({ machineId, paneId, start: pane.foreground_cwd ?? pane.cwd ?? "" });
+    setFilesOpen(true);
+  }, []);
   const { viewing, openFile, closeFile } = useFileViewer();
   const viewFile = useCallback((path: string) => {
     openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
@@ -711,6 +722,7 @@ export function App() {
   const selectedMachineRef = useRef(selectedMachineId);
   selectedMachineRef.current = selectedMachineId;
   const selectTarget = useCallback((machineId: string, paneId: string | null, view?: PaneView) => {
+    if (!reviewNotes.close()) return;
     // Only another PC mounts a new terminal (and socket), which reports its own state. A pane
     // on the same PC keeps the connected socket, which never reports again: resetting here
     // left the header on "reconnecting" after every pane switch.
@@ -807,6 +819,7 @@ export function App() {
   }, [selectedMachineId, selectedPaneId]);
 
   const selectPane = useCallback((paneId: string, focusInput = true) => {
+    if (!reviewNotes.close()) return;
     pendingLink.current = null; pendingFile.current = null; setLinkLanded(true);
     selectionHint.current = null;
     const open = splitRef.current;
@@ -894,6 +907,7 @@ export function App() {
   if (notificationView !== null && !(notificationView === "chat" && selectedPane !== null && selectedAgent === null)) view = notificationView;
 
   const pickView = useCallback((machineId: string, paneId: string, next: PaneView) => {
+    if (!reviewNotes.close()) return;
     const key = paneStorageId(machineId, paneId);
     setViewPicks((current) => current.get(key) === next ? current : new Map(current).set(key, next));
     try {
@@ -905,6 +919,7 @@ export function App() {
 
   const setView = useCallback(
     (next: PaneView) => {
+      if (!reviewNotes.close()) return;
       setNotificationViewTarget(null);
       setLens((current) => ({ ...current, view: next }));
       setAutoSelected(false);
@@ -974,6 +989,7 @@ export function App() {
     applySplit(null, split.other);
   };
   const selectInSlot = (slot: SplitSlot, machineId: string, paneId: string, focusInput = true): void => {
+    if (!reviewNotes.close()) return;
     const open = splitRef.current;
     if (!open || !splitOn || open.active === slot) { selectPane(paneId, focusInput); return; }
     if (selectedPaneId === null) return;
@@ -1236,6 +1252,7 @@ export function App() {
         setFindRequest((request) => ({ paneId: selectedPaneId, serial: request.serial + 1 }));
       },
       openSettings: () => {
+        if (!reviewNotes.close()) return;
         setDrawerOpen(false);
         setSettingsSection(null);
         setSettingsOpen(true);
@@ -1255,7 +1272,7 @@ export function App() {
       lock: canSignOut ? () => void lock() : null,
       enableNotifications: bellVisible && bell.run === enableNotifications ? () => void enableNotifications() : null,
       refresh: () => void load(),
-      openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); setFilesOpen(true); } : null,
+      openFiles: selectedPaneId !== null ? () => { if (reviewNotes.guard()) { setDrawerOpen(false); browseFiles(selectedMachineId, selectedPaneId); } } : null,
       // herdr's layout calls on the selected pane (components/TabStrip.tsx has the same for the
       // tab's own menu): the new layout reaches every client as session-changed, so only a
       // refusal is left to say, and that is logged as other background failures are
@@ -1325,7 +1342,7 @@ export function App() {
 
   const moreItems: RowMenuItem[] = [
     ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
-    ...(selectedPane ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
+    ...(selectedPane ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => browseFiles(selectedMachineId, selectedPaneId) }] : []),
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
     ...(bellVisible ? [{ id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
@@ -1584,6 +1601,7 @@ export function App() {
                     renderPane={(item, itemActive, herdrSplit) => <OpenFileContext.Provider value={item ? (path) => openFile({ path, paneId: item.pane_id, machineId }) : null}>
                       <PaneTerminal
                         onOpenDiff={openDiff}
+                        onBrowseFiles={item ? () => browseFiles(machineId, item.pane_id) : undefined}
                         title={item ? displayPaneTitle(item) : active ? selectedTitle : null}
                         // Wait for the roster before attaching: the loading placeholder is replaced
                         // by the keyed tile, and must never claim the pane on a throwaway connection.
@@ -1651,22 +1669,23 @@ export function App() {
         // an ended pane's card outlives the pane: the refetch has dropped it, and selecting it attaches nothing
         if (!machinesRef.current.find((m) => m.id === machineId)?.snapshot?.panes.some((p) => p.pane_id === paneId)) return;
         // Files lists the pane it was opened on, and would open its paths on the new one
+        if (!reviewNotes.guard()) return;
         setFilesOpen(false);
         selectTargetRef.current(machineId, paneId);
       }} />
-      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={viewing !== null || diffViewing !== null} />
-      {filesOpen && selectedPane && (
-        <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={selectedPane.pane_id} viewing={viewing !== null || diffViewing !== null} onOpenFile={viewFile}
-          onOpenDiff={(comparison, file) => openDiff({ machineId: selectedMachineId, paneId: selectedPane.pane_id, directory: selectedPane.foreground_cwd ?? selectedPane.cwd ?? null, ...comparison, path: file.path, oldPath: file.old_path })}
-          onBrowseFolders={(path) => actions.openPalette(folderQueryFor(path, null))}
-          onClose={() => setFilesOpen(false)} />
-      )}
+      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={filesOpen || viewing !== null || diffViewing !== null} />
+      {filesOpen && filesTarget && <MachineContext.Provider value={filesTarget.machineId}>
+        <FilesDialog key={`${filesTarget.machineId}:${filesTarget.paneId}`} start={filesTarget.start} paneId={filesTarget.paneId} viewing={viewing !== null || diffViewing !== null}
+          onBrowseFolders={(path) => { selectTarget(filesTarget.machineId, filesTarget.paneId); actions.openPalette(folderQueryFor(path, null)); }}
+          onClose={() => { if (reviewNotes.guard()) setFilesOpen(false); }} />
+      </MachineContext.Provider>}
       {diffViewing !== null && <MachineContext.Provider value={diffViewing.machineId}>
-        <RepoDiffViewer key={`${diffViewing.scope}:${diffViewing.path}`} target={diffViewing} onClose={closeDiff} onOpenFile={(path) => openFile({ path, paneId: diffViewing.paneId, machineId: diffViewing.machineId })} keyboardActive={!settingsOpen && viewing === null} />
+        <RepoDiffViewer key={repoDiffIdentity(diffViewing)} target={diffViewing} onClose={closeDiff} onOpenFile={(path) => openFile({ path, paneId: diffViewing.paneId, machineId: diffViewing.machineId })} keyboardActive={!settingsOpen && viewing === null} />
       </MachineContext.Provider>}
       {viewing !== null && <MachineContext.Provider value={viewing.machineId}>
-        <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path })} keyboardActive={!settingsOpen} />
+        <FileViewer key={JSON.stringify([viewing.machineId, viewing.paneId, viewing.path])} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path })} keyboardActive={!settingsOpen} />
       </MachineContext.Provider>}
+      <ReviewNotes />
       <CommandPalette key={selectedMachineId} machines={machines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId} view={view} actions={actions} />
     </div></MachineContext.Provider></MachineSessionsProvider>
   );

@@ -1,0 +1,55 @@
+.review-editor {
+  position: fixed;
+  z-index: var(--z-palette);
+  inset: var(--space-3) var(--space-3) var(--space-3) auto;
+  width: min(360px, calc(100vw - var(--space-6)));
+  max-height: calc(var(--app-height, 100dvh) - var(--space-6));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-4);
+  background: var(--bg-panel);
+  border: var(--hairline) solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-pop);
+}
+.review-editor .modal-header { padding: 0; }
+body:has(.review-editor) .modal-scrim:has(.confirm-dialog) { z-index: var(--z-droplet); }
+.review-disable { flex-shrink: 0; color: var(--text-dim); font-size: var(--fs-xs); }
+.review-note-hint { color: var(--text-dim); font-size: var(--fs-xs); }
+.review-reference { overflow-wrap: anywhere; font: var(--fs-xs)/var(--lh-base) var(--font-mono); }
+.review-quote { margin: 0; padding: var(--space-2); border-left: var(--rail-w) solid var(--border-strong); max-height: var(--pending-max-h); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-sm); flex-shrink: 0; }
+.review-note-text { resize: vertical; min-height: calc(var(--control-h) * 3); flex: 1; }
+.review-note-actions, .review-note-navigation, .reply-review-controls { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.review-note-actions { justify-content: flex-end; flex-shrink: 0; position: sticky; bottom: 0; background: var(--bg-panel); padding-block: var(--space-1); }
+.review-note-warning { color: var(--notice); font-size: var(--fs-xs); }
+.review-note-list { list-style: none; padding: 0; overflow: auto; }
+.review-note-list li { display: flex; gap: var(--space-1); border-bottom: var(--hairline) solid var(--border); padding-block: var(--space-2); }
+.review-note-open { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; height: auto; text-align: left; overflow-wrap: anywhere; white-space: pre-wrap; }
+.review-note-open small { color: var(--text-dim); }
+.review-marker { color: var(--accent); }
+/* The block's gutter is clickable; prose keeps native word selection and copying. */
+.reply-review-part { padding-left: var(--space-2); margin-left: calc(var(--space-2) * -1); border-left: var(--hairline) solid var(--border); }
+.composer-review-notes { height: auto; max-width: 100%; font-size: var(--fs-xs); }
+.composer-review-notes svg { width: var(--icon-size); height: var(--icon-size); }
+@media (min-width: 769px) {
+  /* Reserve only chat surfaces, not the xterm mount or the pane's PTY geometry. */
+  body:has(.review-editor[data-target-kind="reply"]) [data-review-docked] .chat-view { right: var(--review-reserve); }
+  body:has(.review-editor[data-target-kind="reply"]) [data-review-docked] .composer { width: calc(100% - var(--review-reserve)); }
+  body:has(.review-editor[data-target-kind="reply"]) [data-review-docked] :is(.pending-messages, .composer-queue, .prompt-dock) {
+    width: min(calc(100% - var(--review-reserve) - 2 * var(--space-4)), var(--chat-w));
+    transform: translateX(calc(var(--review-reserve) * -0.5));
+  }
+  body:has(.review-editor) .files-dialog,
+  body:has(.review-editor) .file-viewer:not(.file-viewer-embedded),
+  body:has(.review-editor) .repo-diff-viewer:not(.repo-diff-embedded) { max-width: calc(100vw - 400px); margin-right: 380px; }
+}
+@media (max-width: 768px) {
+  .review-editor-sheet { inset: auto 0 0; width: 100%; max-height: min(80dvh, calc(var(--app-height, 100dvh) - var(--space-4))); border-radius: var(--radius-xl) var(--radius-xl) 0 0; padding-bottom: max(var(--space-4), env(safe-area-inset-bottom)); }
+  .review-note-text { font-size: var(--fs-input); min-height: calc(var(--touch-target) * 2); }
+  .review-note-actions .btn, .review-note-actions .icon-button { min-height: var(--touch-target); }
+  [data-keyboard] .review-quote { max-height: calc(var(--touch-target) * 2); }
+  [data-keyboard] .review-editor-sheet { padding-bottom: var(--space-3); max-height: calc(var(--app-height) - var(--space-4)); }
+}

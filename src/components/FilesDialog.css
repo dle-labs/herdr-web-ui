@@ -1,9 +1,72 @@
-/* Browse | Changes in the Files dialog's header, between the title and Close */
-.files-dialog-tabs {
-  flex: none;
+.files-dialog { width: min(1200px, calc(100vw - var(--space-8))); height: min(90dvh, calc(var(--app-height, 100dvh) - var(--space-8))); max-height: calc(var(--app-height, 100dvh) - var(--space-8)); overflow: hidden; position: relative; }
+.files-header { gap: var(--space-2); flex-wrap: nowrap; flex-shrink: 0; }
+.files-header .modal-title { margin-right: auto; min-width: 0; }
+.files-git-actions, .files-nav-actions { display: flex; gap: var(--space-1); flex-shrink: 0; }
+.files-nav-actions { border-left: var(--hairline) solid var(--border); padding-left: var(--space-2); }
+.files-close { flex-shrink: 0; }
+.files-workspace { min-height: 0; flex: 1; display: grid; grid-template-columns: minmax(200px, 28%) minmax(0, 1fr); overflow: hidden; }
+.files-list { min-height: 0; overflow: auto; border-right: var(--hairline) solid var(--border); overscroll-behavior: contain; }
+.files-list [hidden], .files-workspace [hidden] { display: none; }
+.files-detail { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.files-detail-nav { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-2); border-bottom: var(--hairline) solid var(--border); flex-shrink: 0; }
+.files-detail-nav .btn { font-size: var(--fs-xs); }
+.files-empty { color: var(--text-dim); padding: var(--space-6); margin: auto; text-align: center; }
+.files-comparison-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: var(--hairline) solid var(--border); font-size: var(--fs-xs); }
+.files-comparison-bar > span { overflow-wrap: anywhere; }
+.files-comparison-bar .btn { font-size: var(--fs-xs); }
+.files-tree { padding: var(--space-2); }
+.files-tree-root { color: var(--text-dim); font: var(--fs-xs)/var(--lh-base) var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: var(--space-2); }
+.files-tree ul { margin: 0; padding: 0; list-style: none; }
+.files-tree-row { display: flex; gap: var(--space-2); align-items: center; width: 100%; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); min-height: var(--control-h); padding: var(--space-1) var(--space-2); padding-left: calc(var(--space-1) + var(--depth, 0) * var(--space-3)); text-align: left; font-size: var(--fs-sm); }
+.files-tree-row > span:not(.files-tree-caret):not(.files-tree-status):not(.files-tree-changed) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-tree-row.is-selected { background: var(--bg-hover); }
+.files-tree-row svg { flex-shrink: 0; width: var(--icon-size); height: var(--icon-size); }
+.files-tree-caret { width: var(--icon-size); flex-shrink: 0; display: flex; }
+.files-tree-status, .files-tree-changed { margin-left: auto; color: var(--notice); font: var(--fs-xs)/var(--lh-base) var(--font-mono); }
+.files-tree-note { color: var(--text-dim); padding: var(--space-2); font-size: var(--fs-xs); }
+.files-list .repo-changes { padding: var(--space-2); }
+.files-list .repo-changes-bar { flex-wrap: wrap; }
+.files-list .repo-changes-scopes { flex-wrap: wrap; max-width: 100%; }
+.files-list .repo-changes-scopes button { font-size: var(--fs-xs); }
+.files-list .repo-changes-commits { display: flex; flex-direction: column; }
+.files-list .repo-changes-commits .field { width: 100%; }
+.files-list .repo-change-counts { display: none; }
+.file-viewer-embedded, .repo-diff-embedded { width: 100%; max-width: 100%; height: 100%; min-height: 0; border: 0; border-radius: 0; box-shadow: none; display: flex; flex-direction: column; overflow: hidden; }
+.file-viewer-embedded .file-viewer-header, .repo-diff-embedded .repo-diff-header { position: relative; flex-shrink: 0; padding: var(--space-3); flex-wrap: wrap; }
+.file-viewer-embedded .file-viewer-title, .repo-diff-embedded .repo-diff-title { min-width: 0; }
+.file-viewer-embedded .file-viewer-body, .repo-diff-embedded .repo-diff-body { min-height: 0; flex: 1; }
+.file-viewer-embedded .file-viewer-actions { margin-left: auto; }
+.file-review-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); flex-shrink: 0; padding: var(--space-1) var(--space-3); font-size: var(--fs-xs); max-height: calc(var(--control-h) * 3); overflow: auto; }
+.file-review-bar:empty { display: none; }
+.hl-line.has-review-note { background: var(--accent-tint); text-decoration: underline; text-decoration-color: var(--accent); text-decoration-style: dotted; }
+.files-picker-scrim { position: absolute; inset: 0; z-index: 1; display: flex; justify-content: center; align-items: flex-start; background: var(--scrim); padding: var(--space-6); }
+.files-find { width: min(640px, 100%); max-height: 90%; overflow: hidden; }
+.files-find > .input { margin: var(--space-3); width: calc(100% - var(--space-6)); }
+.files-picker-results { margin: 0; padding: var(--space-2); list-style: none; overflow: auto; min-height: 0; }
+.files-picker-results button { display: flex; flex-direction: column; gap: var(--space-1); align-items: flex-start; text-align: left; width: 100%; min-height: var(--touch-target); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); padding: var(--space-2); overflow-wrap: anywhere; font-size: var(--fs-sm); }
+.files-picker-results button[aria-selected="true"] { background: var(--bg-hover); }
+.files-picker-results small, .files-picker-hint { color: var(--text-dim); font-size: var(--fs-xs); }
+.files-picker-hint, .files-incomplete { padding: var(--space-3); }
+.files-incomplete { color: var(--notice); font-size: var(--fs-xs); }
+@media (hover: hover) { .files-tree-row:hover, .files-picker-results button:hover { background: var(--bg-hover); } }
+@media (max-width: 768px) {
+  .files-dialog { width: 100%; max-width: 100%; height: calc(var(--app-height, 100dvh) - var(--space-3)); max-height: calc(var(--app-height, 100dvh) - var(--space-3)); border-radius: var(--radius-xl) var(--radius-xl) 0 0; }
+  .files-workspace { display: flex; flex-direction: column; }
+  .files-list, .files-detail { flex: 1; border-right: 0; }
+  .files-header { padding: var(--space-2); gap: var(--space-1); }
+  .files-header .icon-button, .files-tree-row { min-height: var(--touch-target); }
+  .files-header .icon-button { width: var(--touch-target); }
+  .files-nav-actions { padding-left: var(--space-1); gap: 0; }
+  .files-git-actions { gap: 0; }
+  .files-header .modal-title { font-size: var(--fs-md); }
+  .files-picker-scrim { padding: var(--space-2); align-items: flex-end; }
+  .files-find { max-height: 95%; border-radius: var(--radius-xl) var(--radius-xl) 0 0; }
+  .files-find > .input { font-size: var(--fs-input); }
+  .files-dialog .repo-diff-body { min-height: 0; }
 }
-
-/* the dialog keeps one height across its two tabs: a short list of changes does not shrink it */
-.files-dialog .modal-body {
-  min-height: calc(var(--control-h) * 8);
+@media (max-width: 359px) {
+  .files-header { gap: 0; padding-inline: var(--space-1); }
+  .files-nav-actions { padding-left: 0; border-left: 0; }
+  .files-header .icon-button { width: var(--touch-target); flex-shrink: 0; }
+  .files-header .modal-title { font-size: var(--fs-sm); }
 }

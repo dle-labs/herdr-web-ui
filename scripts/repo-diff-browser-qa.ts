@@ -27,6 +27,8 @@ import { runMoreItem } from "./header-more.ts";
 process.env["GIT_CONFIG_GLOBAL"] = "/dev/null";
 process.env["GIT_CONFIG_NOSYSTEM"] = "1";
 
+declare global { interface Window { reviewQA: { frames: Array<{ type: string; agent_only?: boolean; text?: string; delivery?: string }>; hold: boolean; refuse: boolean; releases: Array<() => void> } } }
+
 const BIG_LINES = 10_000;
 /** Rewritten whole, its patch passes the server's 1 MiB cap; the 10 000-line diff stays under it. */
 const LARGE_LINES = 8_000;
@@ -341,7 +343,7 @@ try {
     assert.deepEqual(numbers.context, ["1", "1"], `${label}: a context row carries its old and new numbers: ${JSON.stringify(numbers)}`);
     assert.ok(numbers.deletion === "4" && numbers.addition === "4", `${label}: the first change is line 4 on both sides: ${JSON.stringify(numbers)}`);
     const meta = await page.locator(".repo-diff-meta").first().textContent();
-    assert.ok(meta?.includes("Modified") && meta.includes("+2,000") && meta.includes("−2,000") && meta.includes("Working tree"), `${label}: the header's status, counts and comparison: ${meta}`);
+    assert.ok(meta?.includes("Modified") && meta.includes("+2,000") && meta.includes("−2,000") && meta.includes("Unstaged"), `${label}: the header's status, counts and comparison: ${meta}`);
     await shot(page, `top-${width}-${theme}`);
     await scrollDiff(page, "middle");
     await rowReached(page, Math.floor(BIG_LINES / 2) - 1000, `${label} middle`);
@@ -583,7 +585,24 @@ try {
     const app = join(root, "demo");
     await buildDemoApp(app);
     const index = join(app, "index.html");
-    writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n    <script type="module"`));
+    const recorder = `<script>(() => {
+      const Demo = window.WebSocket;
+      window.reviewQA = { frames: [], hold: false, refuse: false, releases: [] };
+      const Recorded = function(url, protocols) {
+        const socket = new Demo(url, protocols), send = socket.send.bind(socket);
+        socket.send = (raw) => {
+          const frame = JSON.parse(String(raw)); window.reviewQA.frames.push(frame);
+          if (frame.type === 'submit' && window.reviewQA.hold) { window.reviewQA.releases.push(() => send(raw)); return; }
+          if (frame.type === 'submit' && window.reviewQA.refuse) {
+            queueMicrotask(() => socket.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'submit-result', id: frame.id, pane_id: frame.pane_id, ok: false, code: 'submit_failed', message: 'fixture refusal' }) }))); return;
+          }
+          send(raw);
+        }; return socket;
+      };
+      for (const name of ['CONNECTING','OPEN','CLOSING','CLOSED']) Object.defineProperty(Recorded, name, { value: Demo[name] });
+      window.WebSocket = Recorded;
+    })();</script>`;
+    writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>\n${recorder}\n<script type="module"`));
     demoServer = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
       const path = new URL(request.url).pathname;
       const prefix = "/herdr-web-ui/demo/app/";
@@ -593,31 +612,132 @@ try {
       const body = Bun.file(join(app, file));
       return await body.exists() ? new Response(body) : new Response("not found", { status: 404 });
     } });
-    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme: "dark" })));
-    const page = await context.newPage();
-    page.setDefaultTimeout(20_000);
-    const missing: string[] = [];
-    page.on("response", (response) => { if (response.status() === 404) missing.push(response.url()); });
-    await page.goto(`http://127.0.0.1:${demoServer.port}/herdr-web-ui/demo/app/`);
-    await page.locator(".header-more-button").waitFor();
-    await runMoreItem(page, "Browse files");
-    await page.getByRole("dialog", { name: "Files", exact: true }).waitFor();
-    await page.getByRole("button", { name: "Changes", exact: true }).click();
-    const demoRows = await changeRows(page);
-    assert.deepEqual(demoRows, ["M docs/checkout-flow.png Binary", "R src/idempotency.ts → src/lib/idempotency.ts +0−0", "? src/money.test.ts", "M src/money.ts +4−1"], `the demo's changes: ${JSON.stringify(demoRows)}`);
-    await openChange(page, "src/money.ts");
-    await waitRows(page);
-    const demoDiff = await mounted(page);
-    assert.ok(demoDiff.rows >= 8 && demoDiff.rows < 40, `the demo's diff rows: ${JSON.stringify(demoDiff)}`);
-    await shot(page, "demo-1440-dark");
-    await closeDiff(page);
-    await openChange(page, "src/lib/idempotency.ts");
-    assert.equal(await note(page), "No lines changed.", "a pure rename has no lines");
-    await closeDiff(page);
-    assert.deepEqual(missing, [], `no missing route in the demo: ${missing.join(", ")}`);
-    await context.close();
-    console.log("PASS the static demo lists its fixture's changes and draws a diff with no missing route");
+    for (const width of [1280, 390] as const) {
+      const phone = width === 390;
+      const context = await browser.newContext({ viewport: { width, height: phone ? 844 : 800 }, isMobile: phone, hasTouch: phone });
+      await context.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en", theme: "dark", autoSendQueued: false })));
+      const page = await context.newPage(); page.setDefaultTimeout(20_000);
+      const missing: string[] = [], errors: string[] = [];
+      page.on("response", (response) => { if (response.status() === 404) missing.push(response.url()); });
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(`http://127.0.0.1:${demoServer.port}/herdr-web-ui/demo/app/`);
+      await page.locator(".header-more-button").waitFor();
+      const ownedPane = page.locator('.agent-select[title*="Ship the retry flag"]').first();
+      await ownedPane.waitFor({ state: "attached" }).catch(async (cause: unknown) => { throw new Error(`fictional pane was not listed: ${JSON.stringify(await page.locator('.pane-select,.agent-select').evaluateAll((nodes) => nodes.map((node) => node.getAttribute('title'))))}`, { cause }); });
+      await ownedPane.evaluate((node: HTMLElement) => node.click());
+      await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+      await runMoreItem(page, "Browse files");
+      const files = page.locator(".files-dialog"); await files.waitFor();
+      await page.locator(".files-tree").waitFor();
+      assert.equal(await page.locator(".files-detail .file-viewer").count(), 0, "Files never opens an arbitrary file");
+      await files.getByRole("button", { name: "Find files…", exact: true }).click();
+      const picker = page.locator(".files-find"); await picker.waitFor();
+      const query = picker.getByRole("searchbox");
+      await query.fill("src/money.ts");
+      await picker.getByRole("option", { name: "src/money.ts", exact: true }).waitFor();
+      await query.dispatchEvent("keydown", { key: "Escape", isComposing: true, keyCode: 229 });
+      assert.equal(await picker.count(), 1, "IME Escape keeps the picker");
+      await query.press("Enter"); await picker.waitFor({ state: "detached" });
+      await page.locator(".files-detail .hl-line[data-line='4']").waitFor();
+      await page.evaluate(() => {
+        const line = document.querySelector(".files-detail .hl-line[data-line='4']")!, range = document.createRange();
+        range.selectNodeContents(line); const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+        line.closest("pre")!.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+      });
+      assert.equal(await page.locator(".review-editor").count(), 0, "selection alone never opens an editor or prevents copying");
+      await files.getByRole("button", { name: "Comment on selected lines", exact: true }).click();
+      const editor = page.locator(".review-editor"), comment = editor.getByRole("textbox", { name: "Comment", exact: true });
+      await comment.fill("Review this source line");
+      await files.getByRole("button", { name: "Find files…", exact: true }).click();
+      assert.equal(await picker.count(), 0, "dirty editor blocks search");
+      assert.equal(await comment.inputValue(), "Review this source line");
+      assert.equal(await comment.evaluate((node) => document.activeElement === node), true, "blocked navigation focuses the draft");
+      await comment.evaluate((node: HTMLTextAreaElement) => { node.dataset.stable = 'draft'; node.setSelectionRange(5, 5); });
+      await page.setViewportSize({ width: phone ? 320 : 390, height: 844 });
+      assert.equal(await comment.evaluate((node: HTMLTextAreaElement) => node.dataset.stable === 'draft' && node.selectionStart === 5 && document.activeElement === node), true, "resize preserves textarea identity, focus and caret");
+      await page.setViewportSize({ width, height: phone ? 844 : 800 });
+      await comment.dispatchEvent('compositionstart');
+      assert.equal(await editor.getByRole("button", { name: "Save", exact: true }).isDisabled(), true, "composition is not saved or navigated away mid-candidate");
+      await files.getByRole("button", { name: "Find files…", exact: true }).click(); assert.equal(await picker.count(), 0);
+      await comment.dispatchEvent('compositionend');
+      await editor.getByRole("button", { name: "Save", exact: true }).click();
+      await files.locator(".review-marker").first().click();
+      await comment.fill("");
+      await files.getByRole("button", { name: "Refresh files and changes", exact: true }).click();
+      assert.equal(await editor.count(), 1, "blank saved edit is dirty");
+      await editor.getByRole("button", { name: "Save", exact: true }).click();
+      assert.equal(await files.locator(".review-marker").count(), 0, "saving a blank edit deletes the note");
+      if (phone) await files.getByRole("button", { name: "Back to files", exact: true }).click();
+      await files.getByRole("button", { name: "Compare", exact: true }).click();
+      await changeRows(page, "all");
+      await files.getByRole("button", { name: "Choose a historical base", exact: true }).click();
+      await picker.getByRole("searchbox").fill("money");
+      await picker.getByRole("option").first().waitFor();
+      await picker.getByRole("searchbox").press("ArrowDown"); await picker.getByRole("searchbox").press("Enter");
+      await picker.waitFor({ state: "detached" });
+      await files.getByRole("button", { name: "Reset to current changes", exact: true }).waitFor();
+      await openChange(page, "src/money.ts"); await waitRows(page);
+      const demoDiff = await mounted(page); assert.ok(demoDiff.rows >= 8 && demoDiff.rows < 40, `bounded demo rows: ${JSON.stringify(demoDiff)}`);
+      assert.ok((await page.locator(".repo-diff-meta").textContent())?.includes("versus working tree"), "historical direction is explicit");
+      // Public renderer gutter callbacks, not persistent shadow-DOM anchors.
+      await page.evaluate(() => { const gutter = document.querySelector(".repo-diff diffs-container")?.shadowRoot?.querySelector<HTMLElement>("[data-column-number][data-line-type='change-addition']"); gutter?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); gutter?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true })); gutter?.click(); });
+      await comment.waitFor(); await comment.fill("Review this added diff line"); await editor.getByRole("button", { name: "Save", exact: true }).click();
+      if (phone) await files.getByRole("button", { name: "Back to files", exact: true }).click();
+      await files.getByRole("button", { name: "Reset to current changes", exact: true }).click();
+      await changeRows(page, "all"); await openChange(page, "src/money.ts"); await waitRows(page);
+      await files.getByRole("button", { name: "Outdated comment", exact: true }).waitFor();
+      if (!phone) { await files.getByRole("button", { name: "Diff layout", exact: true }).click(); await page.waitForFunction(() => document.querySelector(".repo-diff")?.getAttribute("data-style") === "split"); }
+      else { assert.equal(await files.getByRole("button", { name: "Diff layout", exact: true }).isDisabled(), true); await page.setViewportSize({ width: 320, height: 844 }); }
+      const geometry = await files.evaluate((node) => ({ scroll: node.scrollWidth, width: node.clientWidth, header: node.querySelector(".files-header")!.scrollWidth }));
+      assert.ok(geometry.scroll <= geometry.width && geometry.header <= geometry.width, `bounded Files header at ${phone ? 320 : width}px: ${JSON.stringify(geometry)}`);
+      await files.getByRole("button", { name: "Close files", exact: true }).click(); await files.waitFor({ state: "detached" });
+      await page.getByTitle("Chat transcript (⌘⇧J)", { exact: true }).click();
+      await page.locator(".composer-review-notes").waitFor();
+      await page.locator(".reply-review-controls button").filter({ hasText: "Comment" }).first().click();
+      await comment.fill("Review this settled reply"); await editor.getByRole("button", { name: "Save", exact: true }).click();
+      const composer = page.locator(".composer-text"), send = page.getByRole("button", { name: "Send message", exact: true });
+      await composer.fill("Ordinary message after comments");
+      await page.evaluate(() => { window.reviewQA.hold = true; });
+      await send.click(); await page.waitForFunction(() => window.reviewQA.releases.length === 1);
+      await page.locator(".composer-review-notes button").click();
+      await page.locator(".review-note-open").filter({ hasText: "Review this settled reply" }).click();
+      await comment.fill("Late edit survives acknowledgment"); await editor.getByRole("button", { name: "Save", exact: true }).click();
+      await page.evaluate(() => { window.reviewQA.hold = false; window.reviewQA.releases.shift()!(); });
+      await page.waitForFunction(() => { const notes = JSON.parse(localStorage.getItem('herdr-web-ui:review-notes') ?? '[]'); return notes.length === 1 && notes[0].text === 'Late edit survives acknowledgment'; });
+      const sentFrame = await page.evaluate(() => window.reviewQA.frames.find((frame) => frame.type === "submit")!);
+      assert.equal(sentFrame.agent_only, true, "comment text carries agent-only intent");
+      assert.ok(sentFrame.text?.includes("Review this settled reply") && sentFrame.text.includes("Review this added diff line") && sentFrame.text.endsWith("Ordinary message after comments"), "all original captured notes precede prose, including outdated diff notes");
+      assert.ok(sentFrame.text!.indexOf("Agent reply") < sentFrame.text!.indexOf("src/money.ts"), "reply notes precede file notes");
+      await page.locator('.pane-frame.is-current .composer-status[data-status="working"]').waitFor();
+      await composer.fill("Queue acceptance owns this complete payload"); await send.click();
+      await page.waitForFunction(() => JSON.parse(localStorage.getItem('herdr-web-ui:review-notes') ?? '[]').length === 0 && Object.keys(localStorage).filter((key) => key.startsWith('herdr-web-ui:pending:')).flatMap((key) => JSON.parse(localStorage.getItem(key)!).messages).some((message: { state: string; agent_only?: boolean; text: string }) => message.state === 'held' && message.agent_only && message.text.endsWith('Queue acceptance owns this complete payload')));
+      const queuedFrame = await page.evaluate(() => window.reviewQA.frames.filter((frame) => frame.type === "submit").at(-1)!);
+      assert.equal(queuedFrame.delivery, "hold", "accepted pending text owns all captured note versions");
+      assert.ok(queuedFrame.text?.includes("Late edit survives acknowledgment"));
+      await page.locator(".reply-review-controls button").filter({ hasText: "Comment" }).first().click();
+      await comment.fill("Keep this failed comment"); await editor.getByRole("button", { name: "Save", exact: true }).click();
+      await page.evaluate(() => { window.reviewQA.refuse = true; });
+      await composer.fill("Keep this draft after refusal"); await send.click();
+      await page.locator(".composer-note").filter({ hasText: "fixture refusal" }).waitFor();
+      assert.equal(await composer.inputValue(), "Keep this draft after refusal", "failed delivery preserves the composer draft");
+      const recovery = await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("herdr-web-ui:pending:")).flatMap((key) => JSON.parse(localStorage.getItem(key)!).messages).find((message: { state: string; agent_only?: boolean }) => message.state === "uncertain" && message.agent_only));
+      assert.ok(recovery.text.includes("Keep this failed comment") && recovery.text.endsWith("Keep this draft after refusal"), "uncertainty preserves the exact composed payload");
+      await page.locator(".composer-review-notes button").click(); await page.locator(".review-note-open").click();
+      await comment.fill("Dirty note must require destructive confirmation");
+      await editor.getByRole("button", { name: "Turn off review comments?", exact: true }).click();
+      await page.locator(".confirm-dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+      assert.equal(await comment.inputValue(), "Dirty note must require destructive confirmation", "cancel preserves the dirty draft");
+      await editor.getByRole("button", { name: "Turn off review comments?", exact: true }).click();
+      await page.locator(".confirm-dialog").getByRole("button", { name: "Turn off and delete", exact: true }).click();
+      await editor.waitFor({ state: "detached" });
+      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:review-notes") ?? "[]").length), 0);
+      assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("herdr-web-ui:settings")!).reviewComments), false);
+      const keptPayloads = await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("herdr-web-ui:pending:")).flatMap((key) => JSON.parse(localStorage.getItem(key)!).messages).map((message: { text: string }) => message.text));
+      assert.ok(keptPayloads.some((text: string) => text.endsWith("Keep this draft after refusal")) && keptPayloads.some((text: string) => text.endsWith("Queue acceptance owns this complete payload")), "turning comments off never rewrites or cancels accepted or uncertain payloads");
+      assert.deepEqual(errors, [], `no page errors: ${errors.join(", ")}`);
+      assert.deepEqual(missing, [], `no missing demo routes: ${missing.join(", ")}`);
+      await context.close(); console.log(`PASS integrated Files ${width}px: search/IME, source notes, dirty guard, historical diff notes, outdated snapshot, Back, layout and header`);
+    }
   }
   console.log("repository diff: browser OK (list, bounded rows, unified/split, fold, copy, open file, Back/Close/focus, unavailable kinds, staged/commits/errors, remote, demo)");
 } finally {
