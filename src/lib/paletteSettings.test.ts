@@ -38,6 +38,14 @@ describe("settings entries", () => {
     expect(rankByTitle("font", pages)).toEqual(["chat", "terminal"]);
   });
 
+  it("names the voice page Dictation and keeps microphone search working", () => {
+    const entries = settingsPageEntries(identity);
+    expect(entries.find((entry) => entry.id === "voice")?.label).toBe("Dictation");
+    const pages = entries.map((entry) => ({ item: entry.id, title: entry.label, aliases: entry.aliases }));
+    expect(rankByTitle("dictation", pages)).toEqual(["voice"]);
+    expect(rankByTitle("microphone", pages)).toEqual(["voice"]);
+  });
+
   it("has an alias for every action the palette can offer", () => {
     expect(Object.keys(actionAliases(identity))).toContain("theme");
   });

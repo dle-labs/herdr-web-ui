@@ -532,8 +532,9 @@ The snapshot is the last one a browser reported to this server, not a list of de
 **Record** on a row, then the new Mod+Shift chord (Escape cancels); a reserved, unbindable or
 already-assigned chord is refused on the row. A search field filters the list. Settings
 are saved in this browser, not on the remote PC. The command palette shows the current bindings
-and omits disabled ones. Reset shortcuts restores the defaults. Toggle dictation
-(`Mod+Shift+Space`) remains fixed, and so does the chat's `Mod+F`: while an agent's native chat
+and omits disabled ones. Reset shortcuts restores the defaults. Dictation's hold-or-tap shortcut
+(`Mod+Shift+Space`) remains fixed: holding records until release; a short tap toggles recording.
+The chat's `Mod+F` is also fixed: while an agent's native chat
 shows in the active pane, it opens [Find in chat](#features) instead of the browser's own find
 (`Ctrl+F` keeps moving the caret on macOS).
 

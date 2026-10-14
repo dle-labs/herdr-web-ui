@@ -252,9 +252,7 @@ try {
     }
     return new Response("unexpected speech request", { status: 404, headers });
   } });
-  const fixtureOrigin = `https://127.0.0.1:${speech.port}`;
-  // Production rejects loopback destinations; only the injected test transport maps this fictional host.
-  const speechOrigin = "https://speech.example.com";
+  const speechOrigin = `https://127.0.0.1:${speech.port}`;
   const baseUrl = `${speechOrigin}/v1`;
   const owned = await workspaceCreate({ cwd: root, label: "herdr-web-ui-test-dictation", focus: false });
   workspace = owned.workspace.workspace_id;
@@ -262,8 +260,8 @@ try {
   writeFileSync(join(root, "dictation.txt"), "A fictional file line for a draft comment.\nSecond line.\n");
   const dictationFetch: typeof fetch = (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
-    assert.equal(url.origin, speechOrigin, "the injected transport accepts only the fictional speech destination");
-    return Bun.fetch(`${fixtureOrigin}${url.pathname}${url.search}`, { ...init, tls: { ca: readFileSync(join(root, "cert.pem")) } });
+    assert.equal(url.origin, speechOrigin, "the injected CA applies only to the disposable fixture");
+    return Bun.fetch(input, { ...init, tls: { ca: readFileSync(join(root, "cert.pem")) } });
   };
   const openAiCalls: string[] = [];
   let failOpenAI = false;
