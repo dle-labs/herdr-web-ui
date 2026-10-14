@@ -143,11 +143,32 @@ try {
     await page.goto(`http://127.0.0.1:${server.port}/`);
     await page.getByText("REVISION-0", { exact: true }).waitFor();
     await settleBottom(page);
+    const bounds = await page.locator(".chat-view").evaluate((node) => ({
+      height: node.clientHeight,
+      paneHeight: node.closest(".terminal-stack")!.clientHeight,
+      scrollHeight: node.scrollHeight,
+    }));
+    assert.ok(bounds.height > 0 && bounds.height <= bounds.paneHeight + 1, `chat stays within its pane: ${JSON.stringify(bounds)}`);
+    assert.ok(bounds.scrollHeight > bounds.height, "long conversations overflow the chat, not its pane");
     const initial = await metrics(page);
     assert.ok(initial.mounted > 0 && initial.mounted < 80, JSON.stringify(initial));
     assert.equal(new Set(initial.keys).size, initial.keys.length, "duplicate/null timestamps do not collide");
     await shot(page, `latest-${width}-${theme}`);
     console.log(`PASS ${width} ${theme}: 1000 logical rows initially mount ${initial.mounted}, at latest`);
+
+    // Real wheel input must move the transcript in both directions, not just imperative paging.
+    await page.locator(".chat-view").hover();
+    await page.mouse.wheel(0, -600);
+    await page.waitForFunction(() => {
+      const node = document.querySelector(".chat-view");
+      return node && node.scrollHeight - node.clientHeight - node.scrollTop > 100;
+    });
+    const wheelUp = await page.locator(".chat-view").evaluate((node) => node.scrollTop);
+    await page.mouse.wheel(0, 300);
+    await page.waitForFunction((before) => (document.querySelector(".chat-view")?.scrollTop ?? 0) > before, wheelUp);
+    await page.getByRole("button", { name: "Jump to latest", exact: true }).click();
+    await settleBottom(page);
+    console.log(`PASS ${width} ${theme}: pane-bounded chat scrolls up and down with wheel input`);
 
     for (revision = 1; revision <= 100; revision++) {
       await update(page);

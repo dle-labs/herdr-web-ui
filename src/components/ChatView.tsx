@@ -5,11 +5,6 @@ import {
   type LucideProps,
 } from "lucide-react";
 
-import "./ChatView.css";
-// the timeline's styles stay in the entry: its chunk loads apart (chatTimelineLoader.ts), but
-// .chat-frame and the loading state are drawn before it arrives
-import "./ChatTimeline.css";
-
 import { AgentMark } from "./AgentMark.tsx";
 import { AnimatedHeight } from "./AnimatedHeight.tsx";
 import { ChatDiffContext, TurnChangedFiles } from "./TurnChangedFiles.tsx";
@@ -87,6 +82,12 @@ import { chatIsBlank, type ChatRead } from "../lib/greeting.ts";
 import { TurnTime } from "./TurnTime.tsx";
 import { isMacPlatform } from "../lib/shortcuts.ts";
 import { useT } from "../lib/i18n.ts";
+
+// Load after component dependencies: the chat's absolute surface overrides CommentSurfaceLayout.
+import "./ChatView.css";
+// The timeline's styles stay in the entry: its chunk loads apart (chatTimelineLoader.ts), but
+// .chat-frame and the loading state are drawn before it arrives.
+import "./ChatTimeline.css";
 
 const TRANSCRIPT_LINES = 400;
 const PROMPT_POLL_MS = 2000;
