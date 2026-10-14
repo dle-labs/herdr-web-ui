@@ -4,7 +4,7 @@ import type { RepoDiffScope } from "../../shared/protocol.ts";
 export type ReviewTarget =
   | { kind: "reply"; turn: string; order: number; part: number; block: string; blockStart: number; start: number; end: number; evidence: string }
   | { kind: "source"; path: string; start: number; end: number; evidence: string }
-  | { kind: "diff"; repository: string; path: string; scope: RepoDiffScope; base: string | null; fingerprint: string; side: "old" | "new"; start: number; end: number; evidence: string };
+  | { kind: "diff"; repository: string; path: string; scope: RepoDiffScope; base: string | null; head?: string | null; fingerprint: string; side: "old" | "new"; start: number; end: number; evidence: string };
 export interface ReviewNote {
   /** Stable editor identity; id changes on every saved edit. */
   key: string;
@@ -23,22 +23,54 @@ export const REVIEW_QUOTE_LIMIT = 2000;
 export const reviewVersionId = (): string => globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 export const draftDirty = (draft: ReviewDraft | null): boolean => draft !== null && draft.text !== draft.original;
 
-/** Exact coordinates first, then a unique exact occurrence, but only in a complete source. */
-export function sourceAnchor(target: Extract<ReviewTarget, { kind: "source" }>, source: string, complete: boolean): { start: number; end: number } | null {
+type SourceRange = { start: number; end: number };
+export const REVIEW_MARKER_LIMIT = 100;
+/** One source split/index for all notes, with bounded comparison work. Undefined is unchecked,
+ * never evidence of an outdated target. Exact coordinates still win over ambiguous relocation. */
+export function sourceAnchorReader(source: string, complete: boolean, work = 8 * 1024 * 1024): (target: Extract<ReviewTarget, { kind: "source" }>) => SourceRange | null | undefined {
   const lines = source.split("\n");
-  const count = target.end - target.start + 1;
-  if (lines.slice(target.start - 1, target.end).join("\n") === target.evidence && target.end <= lines.length) return { start: target.start, end: target.end };
-  if (!complete || !target.evidence.trim()) return null;
-  // Newline sentinels enforce whole-line matches and keep relocation linear in source size.
-  const haystack = `\n${source}\n`, needle = `\n${target.evidence}\n`;
-  const at = haystack.indexOf(needle);
-  if (at === -1 || haystack.indexOf(needle, at + 1) !== -1) return null;
-  let start = 1;
-  for (let index = 1; index <= at; index++) if (haystack[index] === "\n") start++;
-  return { start, end: start + count - 1 };
+  let positions: Map<string, number[]> | undefined;
+  const relocated = new Map<string, SourceRange | null | undefined>();
+  return (target) => {
+    const needle = target.evidence.split("\n"), count = target.end - target.start + 1;
+    if (count !== needle.length || target.start < 1) return null;
+    if ((work -= target.evidence.length + 1) < 0) return undefined;
+    if (target.end <= lines.length && needle.every((line, index) => lines[target.start - 1 + index] === line)) return { start: target.start, end: target.end };
+    if (!complete || !target.evidence.trim()) return null;
+    if (relocated.has(target.evidence)) return relocated.get(target.evidence);
+    positions ??= new Map();
+    if (positions.size === 0) for (let index = 0; index < lines.length; index++) {
+      const line = lines[index]!;
+      const found = positions.get(line);
+      if (found) found.push(index); else positions.set(line, [index]);
+    }
+    let pivot = 0;
+    for (let index = 0; index < needle.length; index++) {
+      if (!positions.has(needle[index]!)) { relocated.set(target.evidence, null); return null; }
+      if (positions.get(needle[index]!)!.length < positions.get(needle[pivot]!)!.length) pivot = index;
+    }
+    let match: SourceRange | null = null;
+    for (const position of positions.get(needle[pivot]!)!) {
+      const start = position - pivot;
+      if (start < 0 || start + count > lines.length) continue;
+      let same = true;
+      for (let index = 0; index < count; index++) {
+        if ((work -= needle[index]!.length + 1) < 0) { relocated.set(target.evidence, undefined); return undefined; }
+        if (lines[start + index] !== needle[index]) { same = false; break; }
+      }
+      if (same) {
+        if (match) { relocated.set(target.evidence, null); return null; }
+        match = { start: start + 1, end: start + count };
+      }
+    }
+    relocated.set(target.evidence, match); return match;
+  };
+}
+export function sourceAnchor(target: Extract<ReviewTarget, { kind: "source" }>, source: string, complete: boolean): SourceRange | null {
+  return sourceAnchorReader(source, complete)(target) ?? null;
 }
 export function sameDiff(target: Extract<ReviewTarget, { kind: "diff" }>, shown: Omit<Extract<ReviewTarget, { kind: "diff" }>, "start" | "end" | "evidence" | "kind">): boolean {
-  return target.repository === shown.repository && target.path === shown.path && target.scope === shown.scope && target.base === shown.base && target.fingerprint === shown.fingerprint && target.side === shown.side;
+  return target.repository === shown.repository && target.path === shown.path && target.scope === shown.scope && target.base === shown.base && (target.head ?? null) === (shown.head ?? null) && target.fingerprint === shown.fingerprint && target.side === shown.side;
 }
 export function replyAnchor(target: Extract<ReviewTarget, { kind: "reply" }>, turn: string, part: number, text: string): boolean {
   // Selection coordinates live inside this exact source block, checked when records are read.
@@ -58,12 +90,15 @@ export function reviewReference(target: ReviewTarget): string {
   if (target.kind === "reply") return `Agent reply (${target.turn}, part ${target.part + 1})`;
   const range = target.start === target.end ? String(target.start) : `${target.start}–${target.end}`;
   if (target.kind === "source") return `${target.path}, lines ${range}`;
-  const comparison = target.scope === "all" ? `${target.base ?? "HEAD / empty tree"} versus working tree` : target.scope === "workspace" ? "index versus working tree" : target.scope === "staged" ? "HEAD / empty tree versus index" : `${target.base ?? ""} versus commit`;
-  return `${target.path}, ${target.side} side, lines ${range} (${comparison}; snapshot ${target.fingerprint})`;
+  const comparison = target.scope === "all" ? `${target.base ?? "HEAD / empty tree"} versus working tree` : target.scope === "workspace" ? "index versus working tree" : target.scope === "staged" ? `${target.base ?? "HEAD / empty tree"} versus index` : `${target.base ?? "unknown base"} versus ${target.head ?? "unknown commit"}`;
+  return `${target.repository.replace(/[\\/]+$/, "")}/${target.path}, ${target.side} side, lines ${range} (${comparison}; snapshot ${target.fingerprint})`;
 }
-export function composeReviewMessage(notes: readonly ReviewNote[], text: string, limit: number): string | null {
+export function composeReviewMessage(notes: readonly ReviewNote[], text: string, limit: number, status?: (key: string) => "current" | "outdated" | "unavailable"): string | null {
   const quoted = (value: string): string => value.replace(/\r\n?/g, "\n").split("\n").map((line) => `> ${line}`).join("\n");
-  const blocks = orderedNotes(notes).map((note) => `Review comment: ${reviewReference(note.target)}\n${quoted(note.quote)}\n\n${note.text}`);
+  const blocks = orderedNotes(notes).map((note) => {
+    const state = status?.(note.key);
+    return `Review comment: ${reviewReference(note.target)}${state && state !== "current" ? ` (${state} target; last known location)` : ""}\n${quoted(note.quote)}\n\n${note.text}`;
+  });
   if (text.trim()) blocks.push(text);
   const message = blocks.join("\n\n");
   return message.length <= limit ? message : null;
@@ -77,9 +112,9 @@ function validNote(value: unknown): value is ReviewNote {
   const n = value as ReviewNote, target = n.target;
   if (typeof n.key !== "string" || typeof n.id !== "string" || typeof n.owner !== "string" || !Number.isFinite(n.created) || typeof n.text !== "string" || !n.text.trim() || n.text.length > REVIEW_TEXT_LIMIT || typeof n.quote !== "string" || n.quote.length > REVIEW_QUOTE_LIMIT || !target || typeof target.evidence !== "string" || target.evidence.length > REVIEW_CONTEXT_LIMIT || !Number.isInteger(target.start) || !Number.isInteger(target.end) || target.end < target.start) return false;
   if (target.kind === "reply") return typeof target.turn === "string" && typeof target.block === "string" && Number.isFinite(target.order) && Number.isInteger(target.part) && target.part >= 0 && Number.isInteger(target.blockStart) && target.blockStart >= 0 && target.start >= target.blockStart && target.end <= target.blockStart + target.evidence.length;
-  if (target.start < 1 || typeof target.path !== "string") return false;
+  if (target.start < 1 || typeof target.path !== "string" || target.end - target.start + 1 !== target.evidence.split("\n").length) return false;
   if (target.kind === "source") return true;
-  return target.kind === "diff" && typeof target.repository === "string" && typeof target.fingerprint === "string" && target.fingerprint.length > 0 && (target.side === "old" || target.side === "new") && ["all", "workspace", "staged", "commit"].includes(target.scope) && (target.base === null || typeof target.base === "string");
+  return target.kind === "diff" && typeof target.repository === "string" && typeof target.fingerprint === "string" && target.fingerprint.length > 0 && (target.side === "old" || target.side === "new") && ["all", "workspace", "staged", "commit"].includes(target.scope) && (target.base === null || typeof target.base === "string") && (target.head === undefined || target.head === null || typeof target.head === "string");
 }
 
 /** Refresh-before-write is deliberately not a cross-tab transaction. Failed writes remain in memory. */
@@ -135,11 +170,15 @@ export class ReviewNotesStore {
     return notes;
   }
   status(key: string): "current" | "outdated" | "unavailable" { return this.availability.get(key) ?? "unavailable"; }
-  mark(key: string, status: "current" | "outdated" | "unavailable"): void {
-    if (this.availability.get(key) === status) return;
-    if (status === "unavailable" && !this.notes.some((note) => note.key === key)) { this.availability.delete(key); return; }
-    this.availability.set(key, status);
-    this.emit();
+  mark(key: string, status: "current" | "outdated" | "unavailable"): void { this.markAll([[key, status]]); }
+  markAll(entries: Iterable<readonly [string, "current" | "outdated" | "unavailable"]>): void {
+    const keys = new Set(this.notes.map((note) => note.key));
+    let changed = false;
+    for (const [key, status] of entries) {
+      if (status === "unavailable" && !keys.has(key)) { changed = this.availability.delete(key) || changed; continue; }
+      if (this.availability.get(key) !== status) { this.availability.set(key, status); changed = true; }
+    }
+    if (changed) this.emit();
   }
   guard = (): boolean => {
     if (!draftDirty(this.draft) && !this.composing) return true;
@@ -171,6 +210,20 @@ export class ReviewNotesStore {
     this.notes = this.notes.filter((note) => note.key !== key);
     if (draft.text.trim()) this.notes.push({ key, id: reviewVersionId(), owner: draft.owner, created: old?.created ?? Date.now(), target: draft.target, quote: draft.quote, text: draft.text });
     this.draft = null; this.persist([key]); return true;
+  }
+  /** Verified relocation changes location metadata, not the saved text version. A concurrent
+   * edit still wins, and an acknowledgment of the same text version still settles the note. */
+  reanchor(captured: readonly ReviewNote[], anchors: ReadonlyMap<string, SourceRange | null | undefined>): void {
+    this.refresh();
+    const versions = new Map(captured.map((note) => [note.key, note.id]));
+    const changed: string[] = [];
+    const next = this.notes.map((note) => {
+      const anchor = anchors.get(note.key);
+      if (!anchor || note.target.kind !== "source" || versions.get(note.key) !== note.id || note.target.start === anchor.start && note.target.end === anchor.end) return note;
+      changed.push(note.key);
+      return { ...note, target: { ...note.target, ...anchor } };
+    });
+    if (changed.length) { this.notes = next; this.persist(changed); }
   }
   remove(key: string): void { this.refresh(); this.notes = this.notes.filter((note) => note.key !== key); if (this.draft?.key === key) { this.draft = null; this.composing = false; } this.persist([key]); }
   acknowledge(captured: readonly ReviewNote[]): void {

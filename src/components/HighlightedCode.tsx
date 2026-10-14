@@ -81,18 +81,19 @@ export const CodeLines = memo(forwardRef<HTMLPreElement, CodeLinesProps>(functio
   const t = useT();
   // one text past LINE_ELEMENT_LIMIT lines, with no numbers then: they are an element per line
   const plain = lines.length > LINE_ELEMENT_LIMIT;
+  const noted = useMemo(() => new Set(noteLines), [noteLines]);
   // index keys: the lines are a static list that is rebuilt as a whole
   const elements = useMemo(() => plain
     ? linkFilePaths(lines.map((tokens) => tokens.map((token) => token.text).join("")).join("\n"), open)
     : lines.map((tokens, index) => (
       <Fragment key={index}>
         {index > 0 && "\n"}
-        <span className={`hl-line${index + 1 === markedLine ? " is-marked" : ""}${noteLines?.includes(index + 1) ? " has-review-note" : ""}`} data-line={index + 1}>
+        <span className={`hl-line${index + 1 === markedLine ? " is-marked" : ""}${noted.has(index + 1) ? " has-review-note" : ""}`} data-line={index + 1}>
           {onCommentLine && <button type="button" className="hl-comment-button" aria-label={t("Comment on line {line}", { line: index + 1 })} title={t("Comment on line {line}", { line: index + 1 })} onClick={() => onCommentLine(index + 1, index + 1)} />}
           {tokens.map((token, n) => token.role === null ? <Fragment key={n}>{linkFilePaths(token.text, open)}</Fragment> : <span className={`hl-${token.role}`} key={n}>{linkFilePaths(token.text, open)}</span>)}
         </span>
       </Fragment>
-    )), [lines, plain, open, markedLine, onCommentLine, noteLines, t]);
+    )), [lines, plain, open, markedLine, onCommentLine, noted, t]);
   const numbered = lineNumbers && !plain;
   // the gutter is as wide as the last line's number, at least two digits
   const gutter = numbered ? { "--hl-digits": String(Math.max(2, String(lines.length).length)) } as CSSProperties : undefined;

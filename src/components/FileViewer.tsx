@@ -27,7 +27,7 @@ import { hasPreview, type TextViewMode } from "../lib/textPreview.ts";
 import { useSheetSwipe } from "../lib/sheets.ts";
 import { readFilePreviewText, SOURCE_PREVIEW_LINES, type FilePreviewText } from "../lib/filePreviewText.ts";
 import { readerHref } from "../lib/fileReader.ts";
-import { reviewNotes, sourceAnchor, type ReviewTarget } from "../lib/reviewNotes.ts";
+import { reviewNotes, sourceAnchorReader, REVIEW_MARKER_LIMIT, type ReviewTarget } from "../lib/reviewNotes.ts";
 import { ReviewNotesButton, useReviewNotes } from "./ReviewNotes.tsx";
 import { useSettings } from "../lib/settings.ts";
 
@@ -300,11 +300,15 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
     const target: ReviewTarget = { kind: "source", path: shownPath, start, end, evidence };
     if (reviewNotes.begin(owner, target, evidence)) { setNoteLine(start); setSelectedLines(null); }
   }, [owner, renderFailed, settings.reviewComments, loaded, shownPath]);
-  const anchors = useMemo(() => new Map(fileNotes.map((note) => [note.key, note.target.kind === "source" && loaded ? sourceAnchor(note.target, exactSource, !loaded.truncated) : null])), [fileNotes, exactSource, loaded]);
-  const noteLines = useMemo(() => [...anchors.values()].flatMap((anchor) => anchor === null ? [] : [anchor.start]), [anchors]);
+  const anchors = useMemo(() => {
+    const locate = sourceAnchorReader(exactSource, loaded !== null && !loaded.truncated);
+    return new Map(fileNotes.map((note) => [note.key, note.target.kind === "source" && loaded ? locate(note.target) : undefined]));
+  }, [fileNotes, exactSource, loaded]);
+  const noteLines = useMemo(() => [...anchors.values()].flatMap((anchor) => anchor ? [anchor.start] : []), [anchors]);
   useEffect(() => {
-    for (const note of fileNotes) reviewNotes.mark(note.key, loaded === null || renderFailed ? "unavailable" : anchors.get(note.key) ? "current" : "outdated");
-    return () => { for (const note of fileNotes) reviewNotes.mark(note.key, "unavailable"); };
+    if (loaded !== null && !renderFailed) reviewNotes.reanchor(fileNotes, anchors);
+    reviewNotes.markAll(fileNotes.map((note) => [note.key, loaded === null || renderFailed || anchors.get(note.key) === undefined ? "unavailable" : anchors.get(note.key) ? "current" : "outdated"] as const));
+    return () => reviewNotes.markAll(fileNotes.map((note) => [note.key, "unavailable"] as const));
   }, [fileNotes, anchors, loaded, renderFailed]);
   const openPath = (next: string): void => { if (reviewNotes.close()) (onOpen ?? setPath)(next); };
   const body = (() => {
@@ -392,7 +396,8 @@ export function FileViewer({ path: asked, paneId, onClose, onOpen, keyboardActiv
   // takes a definite height for the scroll root to fill, instead of growing with the text
   const reviewBar = owner !== null && settings.reviewComments ? <div className="file-review-bar">
     {selectedLines && codeShown && <button type="button" className="btn btn-ghost" onMouseDown={(event) => event.preventDefault()} onClick={() => commentLines(selectedLines.start, selectedLines.end)}>{t("Comment on selected lines")}</button>}
-    {fileNotes.map((note) => { const anchor = anchors.get(note.key) ?? null; return <button type="button" className="btn btn-ghost review-marker" key={note.key} title={note.text} onClick={() => { if (reviewNotes.edit(note)) { setNoteLine(anchor?.start ?? null); if (anchor) { setChosen({ path, mode: "code" }); setSource(true); } } }}>{anchor === null ? t("Outdated comment") : t("Comment on line {line}", { line: anchor.start })}</button>; })}
+    {fileNotes.slice(0, REVIEW_MARKER_LIMIT).map((note) => { const anchor = anchors.get(note.key); return <button type="button" className="btn btn-ghost review-marker" key={note.key} title={note.text} onClick={() => { if (reviewNotes.edit(note)) { setNoteLine(anchor?.start ?? null); if (anchor) { setChosen({ path, mode: "code" }); setSource(true); } } }}>{anchor === undefined ? t("Unavailable comment") : anchor === null ? t("Outdated comment") : t("Comment on line {line}", { line: anchor.start })}</button>; })}
+    {fileNotes.length > REVIEW_MARKER_LIMIT && <small>{t("Only the first {count} markers are shown. All comments remain in the comments list.", { count: REVIEW_MARKER_LIMIT })}</small>}
     <ReviewNotesButton owner={owner} />
   </div> : null;
   const bodyClass = virtual !== null && view === "code" ? "file-viewer-body file-viewer-body-virtual" : "file-viewer-body";

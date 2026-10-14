@@ -68,14 +68,23 @@ function FilesPicker({ kind, paneId, directory, onFile, onCommit, onClose }: {
       event.stopPropagation();
       if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || composing.current) return;
       if (event.key === "Escape") { event.preventDefault(); onClose(); }
-      else if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); if (count) setSelected((current) => (current + (event.key === "ArrowDown" ? 1 : count - 1)) % count); }
+      else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        const choice = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-choice]") : null;
+        if (!(event.target instanceof HTMLInputElement) && !choice) return;
+        event.preventDefault();
+        if (count) {
+          const next = ((choice ? Number(choice.dataset.choice) : selected) + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
+          setSelected(next);
+          if (choice) surface.current?.querySelector<HTMLElement>(`[data-choice="${next}"]`)?.focus();
+        }
+      }
       else if (event.key === "Enter" && event.target instanceof HTMLInputElement) { event.preventDefault(); choose(selected); }
     }}>
       <header className="modal-header"><h2 className="modal-title">{t(kind === "files" ? "Find files…" : "Choose a historical base")}</h2><button type="button" className="icon-button" aria-label={t("Close picker")} onClick={onClose}><X aria-hidden="true" /></button></header>
       <input className="input" type="search" aria-label={t(kind === "files" ? "Filename or path" : "Commit message or hexadecimal ID")} value={query} autoFocus autoComplete="off" spellCheck={false} onChange={(event) => setQuery(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} />
       {error !== null ? <p role="alert">{kind === "commits" ? diffErrorMessage(t, error) : t("Files could not be searched.")}</p> : load === null ? <p role="status">{t("Loading…")}</p> : <ul className="files-picker-results" role="listbox">
-        {files?.files.map((path, index) => <li key={path}><button type="button" role="option" aria-selected={index === selected} data-choice={index} onClick={() => choose(index)}>{path}</button></li>)}
-        {history?.commits.map((commit, index) => <li key={commit.id}><button type="button" role="option" aria-selected={index === selected} data-choice={index} onClick={() => choose(index)}><strong>{commit.subject}</strong><small>{commit.id.slice(0, 8)} · {commit.author} · {commit.date}</small></button></li>)}
+        {files?.files.map((path, index) => <li key={path}><button type="button" role="option" aria-selected={index === selected} data-choice={index} onFocus={() => setSelected(index)} onClick={() => choose(index)}>{path}</button></li>)}
+        {history?.commits.map((commit, index) => <li key={commit.id}><button type="button" role="option" aria-selected={index === selected} data-choice={index} onFocus={() => setSelected(index)} onClick={() => choose(index)}><strong>{commit.subject}</strong><small>{commit.id.slice(0, 8)} · {commit.author} · {commit.date}</small></button></li>)}
         {count === 0 && <li>{t("No matches")}</li>}
       </ul>}
       {load?.truncated && <p className="files-incomplete" role="status">{t("Results are incomplete. Narrow the search or refresh.")}{files?.incomplete.length ? ` (${files.incomplete.join(", ")})` : ""}</p>}
@@ -105,6 +114,7 @@ export function FilesDialog({ start, paneId, viewing, onBrowseFolders, onClose }
   const [refresh, setRefresh] = useState(0);
   const [reveal, setReveal] = useState<string | null>(null);
   const [fileScoped, setFileScoped] = useState(false);
+  const [scopedPath, setScopedPath] = useState<string | null>(null);
   const guarded = (action: () => void): void => { if (reviewNotes.close()) action(); };
   const close = useCallback((): boolean => { if (!reviewNotes.close()) return false; onClose(); return true; }, [onClose]);
   const back = useCallback((): boolean => {
@@ -129,7 +139,7 @@ export function FilesDialog({ start, paneId, viewing, onBrowseFolders, onClose }
     return () => { live = false; abort.abort(); };
   }, [paneId, start, searchPaneFiles, fetchDirectories]);
   useEffect(() => {
-    const nextFolder = (): void => { const path = takeFilesFolder(); if (path !== null) guarded(() => { setRoot(path); setDetail(null); setDetailShown(false); }); };
+    const nextFolder = (): void => { const path = takeFilesFolder(); if (path !== null) guarded(() => { setRoot(path); setDetail(null); setDetailShown(false); setReveal(null); setFileScoped(false); setScopedPath(null); }); };
     nextFolder(); return subscribeFilesFolder(nextFolder);
   }, []);
   useEffect(() => {
@@ -146,7 +156,7 @@ export function FilesDialog({ start, paneId, viewing, onBrowseFolders, onClose }
   const openFile = (path: string, relativePath: string | null = null): void => guarded(() => {
     const plain = fileLineTarget(path).path.replaceAll("\\", "/"), prefix = root === null ? null : `${root.replaceAll("\\", "/").replace(/\/+$/, "")}/`;
     const relative = relativePath ?? (prefix && plain.startsWith(prefix) ? plain.slice(prefix.length) : null);
-    setDetail({ kind: "file", path, relative }); setDetailShown(true); if (relative) setReveal(relative);
+    setDetail({ kind: "file", path, relative }); setDetailShown(true); if (relative) { setReveal(relative); if (fileScoped) setScopedPath(relative); }
   });
   const openDiff = (answered: RepoComparison, file: RepoDiffFile): void => guarded(() => {
     setDetail({ kind: "diff", target: { machineId, paneId, directory: start || null, ...answered, path: file.path, oldPath: file.old_path } }); setDetailShown(true);
@@ -168,7 +178,7 @@ export function FilesDialog({ start, paneId, viewing, onBrowseFolders, onClose }
         </div>
         <button type="button" className="icon-button files-close" aria-label={t("Close files")} title={t("Close files")} onClick={close}><X aria-hidden="true" /></button>
       </header>
-      {comparing && <div className="files-comparison-bar"><span>{title}</span><button className="btn btn-ghost" type="button" onClick={() => guarded(() => setPicker("commits"))}>{t("Choose a historical base")}</button>{comparison.base && <button className="btn btn-ghost" type="button" onClick={() => guarded(() => { setComparison({ scope: "all", base: null, head: null }); setDetail(null); })}>{t("Reset to current changes")}</button>}{relative && <label><input type="checkbox" checked={fileScoped} onChange={(event) => guarded(() => setFileScoped(event.target.checked))} />{t("This file only")}</label>}</div>}
+      {comparing && <div className="files-comparison-bar"><span>{title}</span><button className="btn btn-ghost" type="button" onClick={() => guarded(() => setPicker("commits"))}>{t("Choose a historical base")}</button>{comparison.base && <button className="btn btn-ghost" type="button" onClick={() => guarded(() => { setComparison({ scope: "all", base: null, head: null }); setDetail(null); })}>{t("Reset to current changes")}</button>}{(relative || scopedPath) && <label title={scopedPath ?? relative ?? undefined}><input type="checkbox" checked={fileScoped} onChange={(event) => guarded(() => { setFileScoped(event.target.checked); if (event.target.checked) setScopedPath(relative ?? scopedPath); })} />{t("This file only")}</label>}</div>}
       <div className="files-workspace">
         <div className="files-list" hidden={phone && detailShown}>
           <div hidden={comparing}>{root ? <FilesTree root={root} paneId={paneId} changes={root === changes?.repository.root ? changes.files : []} selected={relative} reveal={reveal} refresh={refresh} onOpen={(path) => {
@@ -176,7 +186,7 @@ export function FilesDialog({ start, paneId, viewing, onBrowseFolders, onClose }
             if (deleted && changes) openDiff({ scope: changes.scope, base: changes.base, head: changes.head, fingerprint: changes.fingerprint }, deleted);
             else openFile(repositoryFilePath(root, path), path);
           }} /> : <p role={rootError ? "alert" : "status"}>{t(rootError ? "The pane's folder could not be read." : "Loading…")}</p>}</div>
-          <div hidden={!comparing}><RepoChanges paneId={paneId} directory={start} comparison={comparison} onComparisonChange={(next) => { setComparison(next); setDetail(null); setDetailShown(false); }} onListing={updateListing} refresh={refresh} filePath={fileScoped ? relative : null} onOpenDiff={openDiff} /></div>
+          <div hidden={!comparing}><RepoChanges paneId={paneId} directory={start} comparison={comparison} onComparisonChange={(next) => { setComparison(next); setDetail(null); setDetailShown(false); }} onListing={updateListing} refresh={refresh} filePath={fileScoped ? scopedPath : null} onOpenDiff={openDiff} /></div>
         </div>
         <div className="files-detail" hidden={phone && !detailShown}>
           {detail !== null && <div className="files-detail-nav">{phone && <button className="btn btn-ghost" type="button" onClick={() => guarded(() => setDetailShown(false))}><ArrowLeft aria-hidden="true" />{t("Back to files")}</button>}{relative && <button className="btn btn-ghost" type="button" onClick={() => guarded(() => { setReveal(relative); setComparing(false); setDetailShown(false); })}>{t("Reveal in file tree")}</button>}<ReviewNotesButton owner={paneStorageId(machineId, paneId)} /></div>}

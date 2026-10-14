@@ -7,7 +7,7 @@ import { useSettings } from "../lib/settings.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
 import { usePhoneSheetBack } from "../lib/sheetHistory.ts";
-import { draftDirty, orderedNotes, replyAnchor, reviewNotes, reviewReference, REVIEW_TEXT_LIMIT, type ReviewDraft, type ReviewTarget } from "../lib/reviewNotes.ts";
+import { draftDirty, orderedNotes, replyAnchor, reviewNotes, reviewReference, REVIEW_MARKER_LIMIT, REVIEW_TEXT_LIMIT, type ReviewDraft, type ReviewTarget } from "../lib/reviewNotes.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { MicButton, VoiceRecordingPill, useDictation } from "./VoiceInput.tsx";
 import "./ReviewNotes.css";
@@ -62,6 +62,8 @@ export function ReviewNotes() {
   const draft = reviewNotes.draft;
   const owner = draft?.owner ?? reviewNotes.listOwner;
   const open = owner !== null;
+  const [listPage, setListPage] = useState(0);
+  useEffect(() => setListPage(0), [owner]);
   const box = useRef<HTMLTextAreaElement>(null);
   const surface = useFocusTrap<HTMLElement>(open, { initialFocus: box });
   const phone = useMediaQuery("(max-width: 768px)");
@@ -110,6 +112,7 @@ export function ReviewNotes() {
   const deviceList = owner === "*";
   const notes = orderedNotes(reviewNotes.read(deviceList ? undefined : owner));
   const at = draft?.key ? notes.findIndex((note) => note.key === draft.key) : -1;
+  const page = Math.min(listPage, Math.max(0, Math.ceil(notes.length / REVIEW_MARKER_LIMIT) - 1));
   return <><aside ref={surface} className={`review-editor${phone ? " review-editor-sheet" : ""}`} style={phone ? undefined : { width: dockWidth }} data-target-kind={draft?.target.kind} role="dialog" aria-modal="true" aria-label={t("Review comments")} tabIndex={-1}>
     <header className="modal-header"><h2 className="modal-title">{t("Review comments")}</h2><button type="button" className="icon-button" aria-label={t("Close comments")} onClick={close}><X aria-hidden="true" /></button></header>
     <p className="review-note-hint">{deviceList ? t("Comments stay with their original machine and pane. This list does not change what a pane sends.") : t("Saved locally. All comments for this pane accompany the next ordinary agent message; unavailable targets are included too.")}</p>
@@ -120,10 +123,10 @@ export function ReviewNotes() {
       <blockquote className="review-quote">{draft.quote}</blockquote>
       <ReviewDraftEditor key={draft.id} draft={draft} box={box} cancel={cancelVoice} />
       {at !== -1 && notes.length > 1 && <div className="review-note-navigation"><button className="btn btn-ghost" type="button" onClick={() => reviewNotes.edit(notes[(at + notes.length - 1) % notes.length]!)}><ChevronLeft aria-hidden="true" />{t("Previous comment")}</button><button className="btn btn-ghost" type="button" onClick={() => reviewNotes.edit(notes[(at + 1) % notes.length]!)}>{t("Next comment")}<ChevronRight aria-hidden="true" /></button></div>}
-    </> : <ul className="review-note-list">{notes.map((note) => <li key={note.key}>
+    </> : <><ul className="review-note-list">{notes.slice(page * REVIEW_MARKER_LIMIT, (page + 1) * REVIEW_MARKER_LIMIT).map((note) => <li key={note.key}>
       <button type="button" className="btn btn-ghost review-note-open" onClick={() => reviewNotes.edit(note)}><strong>{deviceList ? `${note.owner} · ` : ""}{reviewReference(note.target)}</strong><span>{note.text}</span><small>{reviewNotes.status(note.key) === "current" ? t("Saved comment") : t(reviewNotes.status(note.key) === "outdated" ? "Outdated comment" : "Unavailable comment")}</small></button>
       <button type="button" className="icon-button" aria-label={t("Delete comment")} onClick={() => reviewNotes.remove(note.key)}><Trash2 aria-hidden="true" /></button>
-    </li>)}</ul>}
+    </li>)}</ul>{notes.length > REVIEW_MARKER_LIMIT && <div className="review-note-navigation"><button type="button" className="btn btn-ghost" disabled={page === 0} onClick={() => setListPage(page - 1)}>{t("Previous comments")}</button><span>{page * REVIEW_MARKER_LIMIT + 1}–{Math.min(notes.length, (page + 1) * REVIEW_MARKER_LIMIT)} / {notes.length}</span><button type="button" className="btn btn-ghost" disabled={(page + 1) * REVIEW_MARKER_LIMIT >= notes.length} onClick={() => setListPage(page + 1)}>{t("Next comments")}</button></div>}</>}
     <button type="button" className="btn btn-ghost review-disable" onClick={() => reviewNotes.disableConfirmation(true)}>{t("Turn off review comments?")}</button>
   </aside>{confirmation}</>;
 }
@@ -139,8 +142,8 @@ export function ReplyComment({ paneId, turn, order, part, text, children }: { pa
   const candidates = useMemo(() => savedNotes.filter((note) => note.target.kind === "reply" && note.target.turn === turn && note.target.part === part), [savedNotes, turn, part]);
   const notes = candidates.filter((note) => note.target.kind === "reply" && replyAnchor(note.target, turn, part, text));
   useEffect(() => {
-    for (const note of candidates) reviewNotes.mark(note.key, note.target.kind === "reply" && replyAnchor(note.target, turn, part, text) ? "current" : "outdated");
-    return () => { for (const note of candidates) reviewNotes.mark(note.key, "unavailable"); };
+    reviewNotes.markAll(candidates.map((note) => [note.key, note.target.kind === "reply" && replyAnchor(note.target, turn, part, text) ? "current" : "outdated"] as const));
+    return () => reviewNotes.markAll(candidates.map((note) => [note.key, "unavailable"] as const));
   }, [candidates, text]);
   const comment = (): void => {
     const selection = window.getSelection();
@@ -157,5 +160,5 @@ export function ReplyComment({ paneId, turn, order, part, text, children }: { pa
     const target: ReviewTarget = { kind: "reply", turn, order, part, block: `part:${part}/source:${blockStart}`, blockStart, start, end, evidence };
     reviewNotes.begin(owner, target, honest ? selected : evidence);
   };
-  return <div ref={block} className={settings.reviewComments ? "reply-review-part" : undefined} onClick={settings.reviewComments ? (event) => { if (event.target !== event.currentTarget || window.getSelection()?.toString()) return; comment(); } : undefined}>{children}{settings.reviewComments && <span className="reply-review-controls"><button type="button" className="btn btn-ghost chat-meta-btn" onMouseDown={(event) => event.preventDefault()} onClick={comment}><MessageSquarePlus aria-hidden="true" />{t("Comment")}</button>{notes.map((note) => <button className="btn btn-ghost review-marker" type="button" key={note.key} onClick={() => reviewNotes.edit(note)} title={note.text}>{t("Saved comment")}</button>)}</span>}</div>;
+  return <div ref={block} className={settings.reviewComments ? "reply-review-part" : undefined} onClick={settings.reviewComments ? (event) => { if (event.target !== event.currentTarget || window.getSelection()?.toString()) return; comment(); } : undefined}>{children}{settings.reviewComments && <span className="reply-review-controls"><button type="button" className="btn btn-ghost chat-meta-btn" onMouseDown={(event) => event.preventDefault()} onClick={comment}><MessageSquarePlus aria-hidden="true" />{t("Comment")}</button>{notes.slice(0, REVIEW_MARKER_LIMIT).map((note) => <button className="btn btn-ghost review-marker" type="button" key={note.key} onClick={() => reviewNotes.edit(note)} title={note.text}>{t("Saved comment")}</button>)}{notes.length > REVIEW_MARKER_LIMIT && <small>{t("Only the first {count} markers are shown. All comments remain in the comments list.", { count: REVIEW_MARKER_LIMIT })}</small>}</span>}</div>;
 }

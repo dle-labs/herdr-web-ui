@@ -19,7 +19,7 @@ import { skeletonRows } from "../lib/skeleton.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
 import { useMediaQuery } from "../lib/useMediaQuery.ts";
 import { paneStorageId } from "../../shared/machines.ts";
-import { reviewNotes, sameDiff, type ReviewTarget } from "../lib/reviewNotes.ts";
+import { reviewNotes, sameDiff, REVIEW_MARKER_LIMIT, type ReviewTarget } from "../lib/reviewNotes.ts";
 import { ReviewNotesButton, useReviewNotes } from "./ReviewNotes.tsx";
 
 const RepoDiff = lazy(() => import("./RepoDiff.tsx"));
@@ -135,27 +135,28 @@ export function RepoDiffViewer({ target, onClose, onOpenFile, keyboardActive = t
   const owner = paneId === null ? null : paneStorageId(target.machineId, paneId);
   const savedNotes = useReviewNotes(owner ?? undefined);
   const diffNotes = useMemo(() => savedNotes.filter((note) => owner !== null && note.owner === owner && note.target.kind === "diff" && note.target.path === path), [savedNotes, owner, path]);
+  const sideLines = useMemo(() => ({ old: answer?.old_content?.split("\n"), new: answer?.new_content?.split("\n") }), [answer]);
   const currentNotes = useMemo(() => new Set(diffNotes.filter((note) => {
     const anchor = note.target;
-    if (renderFailed || anchor.kind !== "diff" || answer === null || answer.unavailable !== null || !sameDiff(anchor, { repository: answer.repository.root, path, scope, base: answer.base, fingerprint: answer.fingerprint ?? "", side: anchor.side })) return false;
-    const content = anchor.side === "old" ? answer.old_content : answer.new_content;
-    return typeof content === "string" && content.split("\n").slice(anchor.start - 1, anchor.end).join("\n") === anchor.evidence;
-  }).map((note) => note.key)), [diffNotes, answer, path, scope, renderFailed]);
+    if (renderFailed || anchor.kind !== "diff" || answer === null || answer.unavailable !== null || !sameDiff(anchor, { repository: answer.repository.root, path, scope, base: answer.base, head: answer.head, fingerprint: answer.fingerprint ?? "", side: anchor.side })) return false;
+    const lines = sideLines[anchor.side];
+    return lines !== undefined && anchor.end <= lines.length && lines.slice(anchor.start - 1, anchor.end).join("\n") === anchor.evidence;
+  }).map((note) => note.key)), [diffNotes, answer, sideLines, path, scope, renderFailed]);
   useEffect(() => {
-    for (const note of diffNotes) reviewNotes.mark(note.key, answer === null || renderFailed ? "unavailable" : currentNotes.has(note.key) ? "current" : "outdated");
-    return () => { for (const note of diffNotes) reviewNotes.mark(note.key, "unavailable"); };
+    reviewNotes.markAll(diffNotes.map((note) => [note.key, answer === null || renderFailed ? "unavailable" : currentNotes.has(note.key) ? "current" : "outdated"] as const));
+    return () => reviewNotes.markAll(diffNotes.map((note) => [note.key, "unavailable"] as const));
   }, [diffNotes, answer, currentNotes, renderFailed]);
   const annotatable = !renderFailed && settings.reviewComments && owner !== null && answer !== null && !!fingerprint && answer.fingerprint === fingerprint && answer.unavailable === null && answer.old_content !== undefined && answer.new_content !== undefined;
   const [selection, setSelection] = useState<{ side: "old" | "new"; start: number; end: number } | null>(null);
   useEffect(() => setSelection(null), [path, fingerprint, scope, base, head]);
   const commentLine = useCallback((side: "old" | "new", start: number, end: number): void => {
     if (!annotatable || !answer || owner === null || !fingerprint) return;
-    const content = side === "old" ? answer.old_content : answer.new_content;
-    if (content === null || content === undefined) return;
-    const evidence = content.split("\n").slice(start - 1, end).join("\n");
-    const noteTarget: ReviewTarget = { kind: "diff", repository: answer.repository.root, path, scope, base: answer.base, fingerprint, side, start, end, evidence };
+    const lines = sideLines[side];
+    if (!lines) return;
+    const evidence = lines.slice(start - 1, end).join("\n");
+    const noteTarget: ReviewTarget = { kind: "diff", repository: answer.repository.root, path, scope, base: answer.base, head: answer.head, fingerprint, side, start, end, evidence };
     if (reviewNotes.begin(owner, noteTarget, evidence)) setSelection({ side, start, end });
-  }, [annotatable, answer, owner, fingerprint, path, scope]);
+  }, [annotatable, answer, sideLines, owner, fingerprint, path, scope]);
   const selectLines = useCallback((side: "old" | "new", start: number, end: number): void => setSelection({ side, start, end }), []);
   const clearSelection = useCallback(() => setSelection(null), []);
   const body = (() => {
@@ -176,7 +177,8 @@ export function RepoDiffViewer({ target, onClose, onOpenFile, keyboardActive = t
 
   const reviewBar = owner !== null && settings.reviewComments ? <div className="file-review-bar">
     {selection && annotatable && <button type="button" className="btn btn-ghost" onMouseDown={(event) => event.preventDefault()} onClick={() => commentLine(selection.side, selection.start, selection.end)}>{t("Comment on selected lines")}</button>}
-    {diffNotes.map((note) => { const current = currentNotes.has(note.key); return <button type="button" className="btn btn-ghost review-marker" key={note.key} onClick={() => { if (reviewNotes.edit(note) && current && note.target.kind === "diff") setSelection({ side: note.target.side, start: note.target.start, end: note.target.end }); }}>{current ? t("Saved comment") : t("Outdated comment")}</button>; })}
+    {diffNotes.slice(0, REVIEW_MARKER_LIMIT).map((note) => { const current = currentNotes.has(note.key); return <button type="button" className="btn btn-ghost review-marker" key={note.key} onClick={() => { if (reviewNotes.edit(note) && current && note.target.kind === "diff") setSelection({ side: note.target.side, start: note.target.start, end: note.target.end }); }}>{current ? t("Saved comment") : t("Outdated comment")}</button>; })}
+    {diffNotes.length > REVIEW_MARKER_LIMIT && <small>{t("Only the first {count} markers are shown. All comments remain in the comments list.", { count: REVIEW_MARKER_LIMIT })}</small>}
     <ReviewNotesButton owner={owner} />
     {!annotatable && answer !== null && answer.unavailable === null && <small>{t("This bridge does not provide a consistent snapshot for diff comments.")}</small>}
   </div> : null;
