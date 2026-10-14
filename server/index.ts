@@ -37,7 +37,7 @@ import { launchedAgents } from "./launched-agents.ts";
 import { SHELL_AGENTS, isShellAgentKind, shellAgentExecutable, startShellAgent } from "./shell-agent.ts";
 import { listDirectories } from "./directories.ts";
 import { fileResponse, locateFile, crossSiteFileRead } from "./file-view.ts";
-import { repoDiffResponse } from "./repo-diff.ts";
+import { REPO_DIFF_DEADLINE_MS, repoDiffResponse } from "./repo-diff.ts";
 import {
   agentManifests,
   agentPrompt,
@@ -2011,6 +2011,7 @@ export function createServer(
       }
 
       if (pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file" || pathname === "/api/workspace/diff/commits") {
+        const started = performance.now();
         if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
         // file contents, like /api/fs/file: this app reads them, another site's page does not
         if (request.headers.get("sec-fetch-site") === "cross-site") return jsonResponse({ error: { code: "cross_site", message: "A repository's changes are read from this app" } }, 403);
@@ -2028,10 +2029,13 @@ export function createServer(
         if (directory !== "") {
           const relative = directory !== "~" && !directory.startsWith("~/") && !isAbsolute(directory);
           if (relative && base === undefined) return badRequest("invalid_cwd", "a relative directory needs the pane it belongs to");
-          cwd = expandedDirectory(relative ? resolve(base!, directory) : directory) ?? undefined;
+          // Filesystem validation belongs inside bounded repository inspection, not this event loop.
+          cwd = relative ? resolve(base!, directory) : directory === "~" ? homedir()
+            : directory.startsWith("~/") ? resolve(homedir(), directory.slice(2)) : directory;
         }
         if (cwd === undefined) return badRequest("invalid_cwd", "directory must be a directory this user can read");
-        return repoDiffResponse(pathname.endsWith("/files") ? "files" : pathname.endsWith("/commits") ? "commits" : "file", cwd, url.searchParams, { signal: request.signal });
+        return repoDiffResponse(pathname.endsWith("/files") ? "files" : pathname.endsWith("/commits") ? "commits" : "file", cwd, url.searchParams,
+          { signal: request.signal, deadlineMs: Math.max(0, REPO_DIFF_DEADLINE_MS - (performance.now() - started)) });
       }
 
       // A tab is made the way a workspace is: herdr opens it with a shell in its root pane, and
