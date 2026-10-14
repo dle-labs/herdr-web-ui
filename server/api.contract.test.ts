@@ -1061,11 +1061,12 @@ describe("workspace and discovery endpoints", () => {
   let paneId: string | null = null;
   const label = `herdr-web-ui-test-${Math.random().toString(36).slice(2)}`;
   const fileName = `${label}-mention.txt`;
-  const filePath = join(tmpdir(), fileName);
+  const filesRoot = mkdtempSync(join(tmpdir(), "herdr-web-ui-discovery-"));
+  const filePath = join(filesRoot, fileName);
 
   afterAll(async () => {
     if (workspaceId) await herdrRpc("workspace.close", { workspace_id: workspaceId }).catch(() => undefined);
-    rmSync(filePath, { force: true });
+    rmSync(filesRoot, { recursive: true, force: true });
   });
 
   it("lists agent kinds with required fallbacks sorted by display label", async () => {
@@ -1126,7 +1127,7 @@ describe("workspace and discovery endpoints", () => {
     const create = await fetch(`${base()}/api/workspace/create`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cwd: tmpdir(), label, agent: null }),
+      body: JSON.stringify({ cwd: filesRoot, label, agent: null }),
     });
     expect(create.status).toBe(200);
     const created = (await create.json()) as WorkspaceCreated;

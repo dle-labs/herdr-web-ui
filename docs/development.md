@@ -143,6 +143,33 @@ bun scripts/narrow-pane-demo-regression.ts    # a split pane under 80 columns: t
 
 `FILE_VIEWER_CASE=landscape-notch` selects a viewer case; `FILE_VIEWER_CSS=/path/to/before.css` compares another stylesheet. These checks use Chromium mobile emulation and synthetic safe-area/keyboard geometry; they cannot verify actual iOS Safari keyboard dismissal or notch insets. The existing `bun scripts/file-viewer-regression.ts` separately checks history with an owned herdr pane. The original `scripts/mobile-viewport-regression.ts` exports `checkMobileViewport` for the real-app `bun run test:ui` suite; it also checks the command palette and xterm focus transitions. The demo runners build the real client into a temporary directory, inject the committed fictional-session transport and serve it only on loopback; they do not use a live herdr session or download website media. Run on its own, each builds the client itself (`scripts/demo-build.ts`); the browser lane builds it once and names the directory in `HERDR_DEMO_BUILD`, and each runner copies that instead. They exercise real-app viewport and alert geometry, but not live herdr connectivity.
 
+## Files and review comments
+
+Files reuses the existing source/media readers, diff renderer and highlighting workers. Its tree
+uses the directory API; filename search adds `detail=1` to `/api/pane/files` without changing the
+composer's legacy `{ files }` response. Search is rooted at the pane's canonical repository root,
+or its own directory outside Git. Results disclose incomplete traversal, output and match limits;
+they are not an assertion that omitted files do not exist.
+
+The existing `/api/workspace/diff/*` family also serves commit search. `workspace` still means
+unstaged index-to-working changes; `all` compares HEAD (or the empty tree) with working files,
+including untracked files. A selected historical base is an immutable reachable commit ID.
+`staged` and the existing arbitrary two-commit `commit` comparison retain their own meanings.
+Per-file reads round-trip the inventory fingerprint and return exact nullable source sides;
+stale, incomplete, binary, oversized and unsupported comparisons are not complete previews.
+This is change detection around reads, not an atomic filesystem snapshot or a general-preview
+sandbox. The legacy general file viewer retains its separate access policy.
+
+Review comments use device-local, machine/pane-owned storage, not a new server queue. Delivery
+reuses the existing pending-message recovery lifecycle and requires agent-only support; see
+[Terminal input](terminal-input.md#review-comment-submissions) for refusal guarantees and the
+remaining upstream recipient-binding limitations. No navigation, reload or reconnect submits a
+saved comment by itself.
+
+The focused backend suites are `server/files.test.ts` and `server/repo-diff.test.ts`; API, submit
+and pending contract tests must run through `bun run check run` on an isolated session. Existing
+file-viewer and repository-diff browser scripts retain the preserved-reader coverage.
+
 ## Codex Send now
 
 Codex's `Enter` steers the current turn, but can leave the message pending until the next
@@ -399,7 +426,10 @@ socket from `site/demo/fixtures/`: the chats and the Codex approval are the READ
 `agents.json`, `commands.json` and the shell pane's `terminal.json` are captured from that staged
 session by `bun scripts/demo-fixtures.ts` (needs herdr; it uses the `herdr-web-ui-demo` session and
 scrubs the hostname and login). Recapture them after a herdr upgrade changes the snapshot shapes, or
-after changing the staged session. Files, images, push and remote PCs are not part of the demo.
+after changing the staged session. The transport also supplies fictional file previews, directory
+listings, changes and searchable commit history. Its two commits intentionally contain identical
+files, so staged and two-commit comparisons are empty. Push and real remote PCs are not part of the
+demo.
 
 ## Releasing
 

@@ -2031,7 +2031,7 @@ export function createServer(
           cwd = expandedDirectory(relative ? resolve(base!, directory) : directory) ?? undefined;
         }
         if (cwd === undefined) return badRequest("invalid_cwd", "directory must be a directory this user can read");
-        return repoDiffResponse(pathname.endsWith("/files") ? "files" : pathname.endsWith("/commits") ? "commits" : "file", cwd, url.searchParams);
+        return repoDiffResponse(pathname.endsWith("/files") ? "files" : pathname.endsWith("/commits") ? "commits" : "file", cwd, url.searchParams, { signal: request.signal });
       }
 
       // A tab is made the way a workspace is: herdr opens it with a shell in its root pane, and
@@ -2403,7 +2403,7 @@ export function createServer(
           if (!Number.isInteger(limit) || limit < 1) return badRequest("invalid_limit", "limit must be a positive integer");
           const query = url.searchParams.get("q") ?? "";
           return jsonResponse(url.searchParams.get("detail") === "1"
-            ? await paneFileSearch(context.cwd, query, Math.min(limitRaw === null ? 100 : limit, 100))
+            ? await paneFileSearch(context.cwd, query, Math.min(limitRaw === null ? 100 : limit, 100), { signal: request.signal })
             : { files: await paneFiles(context.cwd, query, Math.min(limit, 100)) });
         } catch (error) {
           return errorResponse(error);
