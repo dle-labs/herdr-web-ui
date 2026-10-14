@@ -160,6 +160,15 @@ stale, incomplete, binary, oversized and unsupported comparisons are not complet
 This is change detection around reads, not an atomic filesystem snapshot or a general-preview
 sandbox. The legacy general file viewer retains its separate access policy.
 
+Git inspection and filesystem-worker replies share a 10-second deadline and 8 MiB output budget.
+The filesystem worker keeps blocking reads off the bridge's terminal event loop. Filename inventory
+retains the stricter 3-second, 5,000-entry and non-Git depth-6 bounds, returning at most 100 matches.
+Diff lists retain the 2,000-file display and 2 MiB command-output limits; patches are at most 1 MiB
+and complete source sides at most 2 MiB each. Regular-file/symlink type transitions are explicitly
+unsupported rather than presented as an endlessly stale comparison. Remote runtime bundles copy
+the worker with the server source; a separately designed single-file executable must package its
+worker entry too.
+
 Review comments use device-local, machine/pane-owned storage, not a new server queue. Delivery
 reuses the existing pending-message recovery lifecycle and requires agent-only support; see
 [Terminal input](terminal-input.md#review-comment-submissions) for refusal guarantees and the
