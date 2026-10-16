@@ -1,7 +1,7 @@
-import { createContext, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, forwardRef, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { BookOpen, Check, Copy, ImageOff, Maximize2 } from "lucide-react";
 
-import { foldCode, mathNestsTooDeep, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock } from "../lib/markdown.ts";
+import { foldCode, mathNestsTooDeep, parseMarkdown, type InlineNode, type ListBlock, type MarkdownBlock, type SourceLines } from "../lib/markdown.ts";
 import { codeIsFilePath, OpenFileContext, splitFilePaths } from "../lib/filePaths.ts";
 import { FilePathLink } from "./FilePathLink.tsx";
 import { fileUriPath } from "../lib/terminalFileLinks.ts";
@@ -19,6 +19,13 @@ import { previewChunks } from "../lib/textPreview.ts";
 
 /** The pane's skill names: a name in an answer's plain text, in its trigger form, reads as a chip. */
 const SkillMatcherContext = createContext<SkillMatcher | null>(null);
+
+/**
+ * True inside a quoted block (the comment editor's, `MarkdownBlocks quoted`): the block is shown
+ * as context, not used. A code block has no header, copy or fold, and a link reads as its text.
+ * They are not rendered, so they are neither in the tab order nor in the accessibility tree.
+ */
+const QuotedContext = createContext(false);
 
 type Katex = typeof import("katex").default;
 /** KaTeX is a fifth of the app's script: the first expression loads it (lib/katex.ts), and every later one has it at once. */
@@ -77,7 +84,7 @@ function useDarkTheme(): boolean {
 }
 
 /** A ```mermaid fence drawn as a diagram. Until it parses (a reply still streaming, a syntax error) it shows as the code block it is. */
-function MermaidDiagram({ value }: { value: string }) {
+function MermaidDiagram({ value, source }: { value: string; source?: SourceLines }) {
   const t = useT();
   const [svg, setSvg] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
@@ -93,10 +100,10 @@ function MermaidDiagram({ value }: { value: string }) {
     }, 300);
     return () => { live = false; window.clearTimeout(timer); };
   }, [value, dark]);
-  if (svg === null) return <CodeBlock language="mermaid" value={value} />;
+  if (svg === null) return <CodeBlock language="mermaid" value={value} firstLine={source === undefined ? undefined : source[0] + 1} />;
   return (
     <div className="markdown-mermaid-frame">
-      <div className="markdown-mermaid" onClick={() => setZoomed(true)} dangerouslySetInnerHTML={{ __html: svg }} />
+      <div className="markdown-mermaid" {...sourceAttributes(source)} onClick={(event) => { event.stopPropagation(); setZoomed(true); }} dangerouslySetInnerHTML={{ __html: svg }} />
       <button type="button" className="icon-button markdown-mermaid-zoom" onClick={() => setZoomed(true)} aria-label={t("Enlarge diagram")} title={t("Enlarge diagram")}>
         <Maximize2 aria-hidden="true" />
       </button>
@@ -172,6 +179,7 @@ function MarkdownImage({ src, alt, width, fallback, resolve, interactive, standa
 function Inline({ nodes, interactive = true, standalone = false }: { nodes: InlineNode[]; interactive?: boolean; standalone?: boolean }) {
   const context = useContext(OpenFileContext);
   const open = interactive ? context : null;
+  const quoted = useContext(QuotedContext);
   const t = useT();
   const imageResolver = useContext(MarkdownImageContext);
   const skillMatcher = useContext(SkillMatcherContext);
@@ -189,19 +197,21 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
         const file = fileUriPath(node.value);
         if (open !== null && file !== null) return <FilePathLink key={key} path={file} code open={open} />;
         // agents often put an address in backticks: it stays code to the eye, and opens
-        if (interactive && /^https?:\/\/\S+$/i.test(node.value)) return <a key={key} className="markdown-code-link" href={node.value} target="_blank" rel="noopener noreferrer"><code>{node.value}</code></a>;
+        if (interactive && !quoted && /^https?:\/\/\S+$/i.test(node.value)) return <a key={key} className="markdown-code-link" href={node.value} target="_blank" rel="noopener noreferrer"><code>{node.value}</code></a>;
         return open !== null && codeIsFilePath(node.value) ? <FilePathLink key={key} path={node.value} code open={open} /> : <code key={key}>{node.value}</code>;
       }
       case "math": return <MathExpression key={key} value={node.value} />;
       case "image": {
-        return <span key={key} data-markdown-copy={`![${node.alt}](${node.src})`}>{imageResolver === null
+        return <span key={key} data-markdown-copy={`![${node.alt}](${node.src})`}>{quoted || imageResolver === null
           ? <Inline key={key} nodes={node.fallback} interactive={interactive} />
           : <MarkdownImage src={node.src} alt={node.alt} width={node.width} resolve={imageResolver} interactive={interactive} standalone={standalone} fallback={<Inline nodes={node.fallback} interactive={interactive} />} />}</span>;
       }
       case "strong": return <strong key={key}><Inline nodes={node.children} interactive={interactive} /></strong>;
       case "em": return <em key={key}><Inline nodes={node.children} interactive={interactive} /></em>;
       case "del": return <del key={key}><Inline nodes={node.children} interactive={interactive} /></del>;
-      case "link": return <a key={key} href={node.href} target="_blank" rel="noopener noreferrer"><Inline nodes={node.children} interactive={false} standalone={standalone} /></a>;
+      case "link": return quoted
+        ? <span key={key}><Inline nodes={node.children} interactive={false} standalone={standalone} /></span>
+        : <a key={key} href={node.href} target="_blank" rel="noopener noreferrer"><Inline nodes={node.children} interactive={false} standalone={standalone} /></a>;
       // the label opens the file; where nothing can open one, the path shows after it, as Codex's terminal does
       case "file": {
         const label = <Inline nodes={node.children} interactive={false} />;
@@ -213,24 +223,18 @@ function Inline({ nodes, interactive = true, standalone = false }: { nodes: Inli
   })}</>;
 }
 
-/** A list, nested lists and tables in its items; a task item's box stands in for its bullet. */
+/** The source lines an element was drawn from, for the file viewer's comments (lib/fileCommentDom.ts); none for the chat's blocks, which carry no `source`. */
+function sourceAttributes(source: SourceLines | undefined): { "data-source-line"?: number; "data-source-end"?: number } {
+  if (source === undefined) return {};
+  return source[1] > source[0] ? { "data-source-line": source[0], "data-source-end": source[1] } : { "data-source-line": source[0] };
+}
+
+/** A task item's box stands in for its bullet. */
 function List({ block }: { block: ListBlock }) {
   const Tag = block.ordered ? "ol" : "ul";
-  const t = useT();
-  const id = useId();
   return (
     <Tag className="markdown-list" start={block.ordered ? block.start : undefined}>
-      {block.items.map((item, index) => (
-        <li key={index} className={item.checked === undefined ? undefined : "markdown-task"}>
-          {/* a task's box shows its state; the agent's text owns it, so it cannot be ticked here. Drawn,
-              not an <input>: a disabled checkbox is greyed by the browser and ignores the accent. It is
-              named by the item's text, or, with none (`- [ ]`), as an empty task */}
-          {item.checked !== undefined && <span className="markdown-task-box" role="checkbox" aria-checked={item.checked} aria-disabled="true"
-            aria-labelledby={item.content.length === 0 ? undefined : `${id}-${index}`} aria-label={item.content.length === 0 ? t("Empty task") : undefined}>{item.checked && <Check aria-hidden="true" />}</span>}
-          {item.checked === undefined ? <Inline nodes={item.content} /> : <span id={`${id}-${index}`}><Inline nodes={item.content} /></span>}
-          {item.blocks !== undefined && <Blocks blocks={item.blocks} />}
-        </li>
-      ))}
+      {block.items.map((_, index) => <ItemView key={index} list={block} index={index} />)}
     </Tag>
   );
 }
@@ -238,11 +242,37 @@ function List({ block }: { block: ListBlock }) {
 /** A fence in no language, or in one that says plain output (a log, a command's answer): the files it names open. */
 const PLAIN_FENCE = /^(?:|text|txt|plain|plaintext|log|console|output|shell-session)$/i;
 
-function CodeBlock({ language, value }: { language: string; value: string }) {
+/** One list item, with its own source lines separate from any nested blocks. */
+function ItemView({ list, index }: { list: ListBlock; index: number }) {
+  const item = list.items[index]!;
+  const id = useId();
   const t = useT();
+  // `list-style` only works on the <li>, so the task class stays there.
+  return (
+    <li className={item.checked === undefined ? undefined : "markdown-task"}>
+      <div className="markdown-item" {...sourceAttributes(item.source)}>
+        {/* a task's box shows its state; the agent's text owns it, so it cannot be ticked here. Drawn,
+            not an <input>: a disabled checkbox is greyed by the browser and ignores the accent.
+            An item without text is named as an empty task instead of referencing an empty label */}
+        {item.checked !== undefined && <span className="markdown-task-box" role="checkbox" aria-checked={item.checked} aria-disabled="true" aria-labelledby={item.content.length === 0 ? undefined : id} aria-label={item.content.length === 0 ? t("Empty task") : undefined}>{item.checked && <Check aria-hidden="true" />}</span>}
+        {item.checked === undefined ? <Inline nodes={item.content} /> : <span id={id}><Inline nodes={item.content} /></span>}
+      </div>
+      {item.blocks !== undefined && <Blocks blocks={item.blocks} />}
+    </li>
+  );
+}
+
+/**
+ * `firstLine`: the file line of the block's first line, in the file viewer's preview (its `.hl-line`s carry their
+ * lines). There a folded block's "Show all" names the block's last line (`data-fold-end`), so the viewer's walk can
+ * unfold the block that hides a comment's lines (`unfoldAt`); not as `data-source-line`, which would make the button a
+ * line element of its own.
+ */
+function CodeBlock({ language, value, firstLine }: { language: string; value: string; firstLine?: number }) {
+  const t = useT();
+  const quoted = useContext(QuotedContext);
   const open = useContext(OpenFileContext);
   const grammar = languageForFence(language);
-  // the tag decides, not the grammar: code in a language with no grammar here is still code
   const plain = PLAIN_FENCE.test(language.trim().split(/\s+/)[0] ?? "");
   const [copied, setCopied] = useState(false);
   const [copyFailed, setCopyFailed] = useState(false);
@@ -250,6 +280,7 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
   const block = useRef<HTMLDivElement>(null);
   // no inner scroll: a long block folds, with a visible "Show all" row
   const fold = useMemo(() => foldCode(value), [value]);
+  /** Copies the whole block, folded lines included, and flips the button to "copied" for a moment. */
   const copy = async (): Promise<void> => {
     const ok = await copyText(value);
     setCopied(ok);
@@ -257,6 +288,7 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
     if (ok) window.setTimeout(() => setCopied(false), 1500);
   };
   const folding = useRef(false);
+  /** Shows all lines or folds them again; after folding, the block's top is brought back into view. */
   const toggle = (): void => {
     folding.current = expanded;
     setExpanded(!expanded);
@@ -270,6 +302,8 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
     const view = node?.closest(".chat-view");
     if (node && view && node.getBoundingClientRect().top < view.getBoundingClientRect().top) node.scrollIntoView({ block: "start" });
   }, [expanded]);
+  // quoted: the whole block, without header, copy or fold
+  if (quoted) return <div className="markdown-code"><pre><code>{value}</code></pre></div>;
   return (
     <div className="markdown-code" ref={block} data-language={language}>
       <div className="markdown-code-header">
@@ -279,10 +313,9 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
         </button>
       </div>
       {copyFailed && <p className="markdown-code-error" role="alert">{t("Couldn't copy. Select the text and copy it manually.")}</p>}
-      {/* a block in no language is output (a log, a command's answer): the files it names open */}
-      <HighlightedCode code={fold !== null && !expanded ? fold.head : value} language={grammar} limit={CHAT_HIGHLIGHT_LIMIT} open={plain ? open : null} />
+      <HighlightedCode code={fold !== null && !expanded ? fold.head : value} language={grammar} limit={CHAT_HIGHLIGHT_LIMIT} firstLine={firstLine} open={plain ? open : null} />
       {fold !== null && (
-        <button type="button" className="markdown-code-more" aria-expanded={expanded} onClick={toggle}>
+        <button type="button" className="markdown-code-more" aria-expanded={expanded} data-fold-end={firstLine === undefined ? undefined : firstLine + fold.lines - 1} onClick={toggle}>
           {expanded ? t("Show less") : t("Show all {n} lines", { n: fold.lines })}
         </button>
       )}
@@ -291,37 +324,70 @@ function CodeBlock({ language, value }: { language: string; value: string }) {
 }
 
 function Blocks({ blocks }: { blocks: MarkdownBlock[] }) {
-  return <>{blocks.map((block, index): ReactNode => {
-    const key = `${block.type}-${index}`;
-    switch (block.type) {
-      case "heading":
-        // agent headings are h3 whatever the agent wrote: the app's own h1/h2 (Brand, the dialog
-        // titles) stay the outline above them. The level rides on a class, so the stylesheet
-        // keeps drawing each level as it did (ChatView.css `.markdown h1`...`.markdown h6`).
-        return <h3 key={key} data-markdown-heading={block.level} className={`markdown-h${block.level}${block.align ? " markdown-center" : ""}`}><Inline nodes={block.content} /></h3>;
-      case "paragraph":
-        return <p key={key} className={block.align ? "markdown-center" : undefined}>{block.lines.map((line, lineIndex) => <span key={lineIndex}><Inline nodes={line} standalone={standaloneImage(line)} />{lineIndex < block.lines.length - 1 && <br />}</span>)}</p>;
-      case "list": return <List key={key} block={block} />;
-      case "blockquote": return <blockquote key={key}><Blocks blocks={block.blocks} /></blockquote>;
-      case "code": return block.language === "mermaid"
-        ? <MermaidDiagram key={key} value={block.value} />
-        : <CodeBlock key={key} language={block.language} value={block.value} />;
-      case "math": return <MathExpression key={key} value={block.value} displayMode />;
-      case "hr": return <hr key={key} />;
-      case "table": return (
-        <div className="markdown-table-wrap" key={key}>
-          <table><thead><tr>{block.header.map((cell, cellIndex) => <th key={cellIndex}><Inline nodes={cell} /></th>)}</tr></thead>
-            <tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => <td key={cellIndex}><Inline nodes={cell} /></td>)}</tr>)}</tbody>
-          </table>
-        </div>
-      );
-    }
-  })}</>;
+  return <>{blocks.map((block, index) => <BlockView key={`${block.type}-${index}`} block={block} />)}</>;
 }
 
 /**
- * Markdown rendered. Its props are primitive values, so `memo` skips a parent's re-render: a long plan in
- * the file viewer is not rendered again every time the app polls.
+ * Preview blocks retain source-line metadata for navigation and selection comments.
+ */
+function BlockView({ block }: { block: MarkdownBlock }): ReactNode {
+  const quoted = useContext(QuotedContext);
+  switch (block.type) {
+    case "heading": {
+      // agent headings are h3 whatever the agent wrote: the app's own h1/h2 (Brand, the dialog
+      // titles) stay the outline above them. The level rides on a class, so the stylesheet
+      // keeps drawing each level as it did (ChatView.css `.markdown-h1`...`.markdown-h6`).
+      const level = `markdown-h${block.level}${block.align ? " markdown-center" : ""}`;
+      return <h3 data-markdown-heading={block.level} className={level} {...sourceAttributes(block.source)}><Inline nodes={block.content} /></h3>;
+    }
+    case "paragraph": {
+      const lineNumbers = block.lineNumbers;
+      const paragraphClass = block.align ? "markdown-center" : undefined;
+      // Exact Markdown lines live on their spans; annotating the paragraph too would
+      // make a selection on one line also intersect the whole paragraph's range.
+      return <p className={paragraphClass} {...sourceAttributes(lineNumbers === undefined ? block.source : undefined)}>{block.lines.map((line, lineIndex) => {
+        const fileLine = lineNumbers?.[lineIndex];
+        return <span key={lineIndex} {...sourceAttributes(fileLine === undefined ? undefined : [fileLine, fileLine])}><Inline nodes={line} standalone={standaloneImage(line)} />{lineIndex < block.lines.length - 1 && <br />}</span>;
+      })}</p>;
+    }
+    case "list": return <List block={block} />;
+    case "blockquote": return <blockquote><Blocks blocks={block.blocks} /></blockquote>;
+    case "hr": return <hr />;
+    default: {
+      const rowLine = (row: number): { "data-source-line"?: number } => {
+        const line = block.type === "table" ? block.rowLines?.[row] : undefined;
+        return line === undefined ? {} : { "data-source-line": line };
+      };
+      const body = block.type === "code" ? (block.language === "mermaid" && !quoted
+        ? <MermaidDiagram value={block.value} source={block.source} />
+        : <CodeBlock language={block.language} value={block.value} firstLine={block.source === undefined ? undefined : block.source[0] + 1} />)
+        : block.type === "math" ? <MathExpression value={block.value} displayMode />
+        : <div className="markdown-table-wrap">
+          <table><thead><tr {...rowLine(0)}>{block.header.map((cell, cellIndex) => <th key={cellIndex}><Inline nodes={cell} /></th>)}</tr></thead>
+            <tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex} {...rowLine(rowIndex + 1)}>{row.map((cell, cellIndex) => <td key={cellIndex}><Inline nodes={cell} /></td>)}</tr>)}</tbody>
+          </table>
+        </div>;
+      // Keep a stable host so a code block the reader unfolded stays unfolded.
+      // A formula's host carries its range. Diagrams carry theirs only once rendered;
+      // fallback code and tables instead expose their individual source lines.
+      return <div className="markdown-block" {...(block.type === "math" ? sourceAttributes(block.source) : {})}>{body}</div>;
+    }
+  }
+}
+
+/**
+ * Blocks already parsed, as the chat shows them: a comment's block in the comment editor. With
+ * `quoted` they show as a quote, without anything to press: no code header, copy or fold, links
+ * as their text, file paths as plain text or code.
+ */
+export function MarkdownBlocks({ blocks, quoted = false }: { blocks: MarkdownBlock[]; quoted?: boolean }) {
+  const content = <div className="markdown"><Blocks blocks={blocks} /></div>;
+  return quoted ? <QuotedContext.Provider value><OpenFileContext.Provider value={null}>{content}</OpenFileContext.Provider></QuotedContext.Provider> : content;
+}
+
+/**
+ * Markdown rendered. Every prop is a string, so `memo` skips a parent's re-render: a reply's other
+ * parts are not rendered again while one grows.
  */
 export const Markdown = memo(function Markdown({ children, className, html = false, skills = null }: { children: string; className?: string; html?: boolean; skills?: SkillMatcher | null }) {
   const blocks = useMemo(() => parseMarkdown(children, 0, html), [children, html]);
@@ -331,12 +397,11 @@ export const Markdown = memo(function Markdown({ children, className, html = fal
 
 /**
  * Markdown parsed elsewhere, rendered as `Markdown` renders its text: the file viewer parses a file
- * in a worker, so a file the parser is slow on cannot hold the page.
+ * in a worker, so a file the parser is slow on cannot hold the page. Blocks with their `source`
+ * (`parseMarkdownWithLines`, as the file viewer's are) write the lines they come from on their
+ * elements, where a file comment finds the lines it is on; the chat's blocks carry none, so its DOM stays as it was. The ref is the `.markdown` root: the file viewer's
+ * comments measure selections in it.
  */
-export const ParsedMarkdown = memo(function ParsedMarkdown({ blocks, className }: { blocks: MarkdownBlock[]; className?: string }) {
-  return <div className={className === undefined ? "markdown" : `markdown ${className}`}><Blocks blocks={blocks} /></div>;
-});
-
 const BlockChunk = memo(function BlockChunk({ blocks }: { blocks: MarkdownBlock[] }) {
   return <Blocks blocks={blocks} />;
 });
@@ -347,7 +412,7 @@ const BlockChunk = memo(function BlockChunk({ blocks }: { blocks: MarkdownBlock[
  * The first chunk shows at once and each later one is added in a task of its own; a drawn chunk is
  * never drawn again, and new blocks start over from the first chunk.
  */
-export const ProgressiveMarkdown = memo(function ProgressiveMarkdown({ blocks, className }: { blocks: MarkdownBlock[]; className?: string }) {
+export const ProgressiveMarkdown = memo(forwardRef<HTMLDivElement, { blocks: MarkdownBlock[]; className?: string }>(function ProgressiveMarkdown({ blocks, className }, ref) {
   const chunks = useMemo(() => previewChunks(blocks), [blocks]);
   const [drawn, setDrawn] = useState<{ blocks: MarkdownBlock[]; count: number }>({ blocks, count: 1 });
   const count = drawn.blocks === blocks ? drawn.count : 1;
@@ -356,7 +421,10 @@ export const ProgressiveMarkdown = memo(function ProgressiveMarkdown({ blocks, c
     const timer = setTimeout(() => setDrawn({ blocks, count: count + 1 }), 0);
     return () => clearTimeout(timer);
   }, [blocks, chunks.length, count]);
-  return <div className={className === undefined ? "markdown" : `markdown ${className}`}>
+  return <div ref={ref} className={className === undefined ? "markdown" : `markdown ${className}`}>
     {chunks.slice(0, count).map((chunk, index) => <BlockChunk key={index} blocks={chunk} />)}
   </div>;
-});
+}));
+export const ParsedMarkdown = memo(forwardRef<HTMLDivElement, { blocks: MarkdownBlock[]; className?: string }>(function ParsedMarkdown({ blocks, className }, ref) {
+  return <div ref={ref} className={className === undefined ? "markdown" : `markdown ${className}`}><Blocks blocks={blocks} /></div>;
+}));

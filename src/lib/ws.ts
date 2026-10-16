@@ -3,12 +3,14 @@ import { OUTPUT_STALLED_CLOSE_CODE } from "../../shared/terminal-flow.ts";
 
 type Handler = (message: ServerMessage) => void;
 
-/** A submit was delivered, accepted into the bridge's pending queue, or refused. */
-/** `draft`: an input_draft refusal's one-row Claude draft, which a send with clearDraft may clear;
- * `box`: a refusal naming no draft, what the server read in the box, after which a send with sendAnyway may go */
-/** immediate: typed now; queue: waits for the next turn; hold: waits for the user's Send now */
-export type SubmitDelivery = "immediate" | "queue" | "hold";
-export type SubmitResult = { ok: true; pending?: PendingMessage } | { ok: false; code: string; message: string; draft?: string; box?: string };
+/**
+ * A submit was delivered, accepted into the bridge's pending queue, or refused. `typed: false`:
+ * nothing of the message reached the pane, as the bridge (or this socket, refusing before it
+ * sent anything) knows; absent, an older bridge did not say (compose.ts submitNotTyped).
+ * `draft`: an input_draft refusal's one-row Claude draft, which clearDraft may clear.
+ * `box`: a refusal naming no draft, shown before an explicit sendAnyway.
+ */
+export type SubmitResult = { ok: true; pending?: PendingMessage } | { ok: false; code: string; message: string; typed?: false; draft?: string; box?: string };
 
 /** Right after a reconnect the snapshot that says what the server supports may still be on its way. */
 const SNAPSHOT_WAIT_MS = 2000;
@@ -84,6 +86,24 @@ interface AttachState {
 function defaultUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/ws`;
+}
+
+/** immediate: typed now; queue: waits for the next turn; hold: waits for Send now */
+export type SubmitDelivery = "immediate" | "queue" | "hold";
+
+/** How a composer message is sent (HerdrSocket.submit); every field may be left out. */
+export interface SubmitOptions {
+  /** "queue": kept by the bridge until the agent's next turn (needs "pending-input"); "immediate" by default */
+  delivery?: SubmitDelivery;
+  /** only an agent may get it (it quotes the agent's reply); a server that cannot promise that gets nothing */
+  agentOnly?: boolean;
+  /** an immediate send may clear only the terminal draft explicitly named by the user */
+  clearDraft?: string;
+  /** an immediate send after the user reviewed the box shown by an input_draft refusal */
+  sendAnyway?: boolean;
+  /** Stable held-copy ID shared across connections, with explicit no-input retry generations. */
+  resendId?: string;
+  generation?: number;
 }
 
 /**
@@ -354,7 +374,7 @@ export class HerdrSocket {
       if (message.type === "submit-result" && this.matchesRequest(message.id, "submit", message.pane_id)) {
         this.resolveRequest(message.id, message.ok ? { ok: true, ...(message.pending ? { pending: message.pending } : {}) }
           : { ok: false, code: message.code ?? "submit_failed", message: message.message ?? "the pane did not take the message", ...(message.draft ? { draft: message.draft } : {}),
-            ...(!message.draft && typeof message.box === "string" ? { box: message.box } : {}) });
+            ...(!message.draft && typeof message.box === "string" ? { box: message.box } : {}), ...(message.typed === false ? { typed: false as const } : {}) });
       }
       if (message.type === "pending-messages") {
         // The owner-only live queue is also an acceptance receipt if its submit ACK
@@ -366,7 +386,8 @@ export class HerdrSocket {
         }
       }
       if (message.type === "pending-result" && this.matchesRequest(message.id, "pending-action", message.pane_id, message.pending_id)) {
-        this.resolveRequest(message.id, message.ok ? { ok: true } : { ok: false, code: message.code ?? "pending_failed", message: message.message ?? "the pending message was not changed" });
+        this.resolveRequest(message.id, message.ok ? { ok: true }
+          : { ok: false, code: message.code ?? "pending_failed", message: message.message ?? "the pending message was not changed", ...(message.typed === false ? { typed: false as const } : {}) });
       }
       if (message.type === "secret-result" && this.matchesRequest(message.id, "secret", message.pane_id)) {
         this.resolveRequest(message.id, message.ok ? { ok: true } : { ok: false, code: message.code ?? "secret_failed", message: "Secret was not sent. Check the prompt and enter it again." });
@@ -810,29 +831,44 @@ export class HerdrSocket {
    * as written, `payload` the same shaped for the pane's paste mode. null, sending
    * nothing, when offline.
    */
-  /** `typed`: from the terminal's input line, typed into the pane like the keyboard (see ClientMessage).
-   * `clearDraft`: an immediate send over the draft an input_draft refusal named (ClientMessage `clear_draft`)
-   * `sendAnyway`: an immediate send after a refusal that showed the box (ClientMessage `send_anyway`) */
-  submit(paneId: string, text: string, payload: string, typed = false, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number): Promise<SubmitResult> | null {
+  submit(paneId: string, text: string, payload: string, options: SubmitOptions = {}): Promise<SubmitResult> | null {
+    return this.sendMessage(paneId, text, payload, false, options);
+  }
+
+  /**
+   * The terminal's input line: `payload` typed like the keyboard would, into an agent's open
+   * menu too, then the server's Enter (`typed` in ClientMessage). Always immediate and never
+   * agent-only, which a server would refuse or ignore for a typed line.
+   */
+  typeLine(paneId: string, text: string, payload: string): Promise<SubmitResult> | null {
+    return this.sendMessage(paneId, text, payload, true);
+  }
+
+  private sendMessage(paneId: string, text: string, payload: string, typed: boolean, { delivery = "immediate", agentOnly = false, clearDraft, sendAnyway = false, resendId, generation }: SubmitOptions = {}): Promise<SubmitResult> | null {
     const socket = this.socket;
     if (!this.connected || socket === null || this.mode === "observe") return null;
-    if (resendId !== undefined && sendAnyway) return Promise.resolve({ ok: false, code: "invalid_delivery", message: "Use a held-copy resend id only for an immediate chat message" });
+    if (resendId !== undefined && sendAnyway) return Promise.resolve({ ok: false, code: "invalid_delivery", message: "Use a held-copy resend id only for an immediate chat message", typed: false });
     return (async (): Promise<SubmitResult> => {
       await Promise.race([this.snapshotSeen, new Promise((resolve) => window.setTimeout(resolve, SNAPSHOT_WAIT_MS))]);
       // a liveness probe in flight is waited out: nothing is sent on a socket that may be dead
       if (!(await this.probeSettled(socket))) return DISCONNECTED;
-      if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot submit messages." };
+      // refused here, before any frame left: nothing was typed
+      if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot submit messages.", typed: false };
+      // an older bridge would type it into whatever runs in the pane, a shell included
+      if (agentOnly && !this.features.has("submit-agent-only")) return { ok: false, code: "agent_only_unsupported", message: "this PC's bridge cannot keep the message from a shell", typed: false };
       // hold is decided once the snapshot said what the bridge supports: one too old to hold queues it as before
       if (delivery === "hold" && !this.canHoldMessages()) delivery = "queue";
-      if (delivery === "queue" && !this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to queue messages." };
+      if (delivery === "queue" && !this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to queue messages.", typed: false };
       if (!this.features.has("submit")) {
-        if (clearDraft !== undefined || sendAnyway) return { ok: false, code: "unsupported", message: "Update this PC to clear a terminal draft before sending. Nothing was sent." };
+        if (clearDraft !== undefined || sendAnyway) return { ok: false, code: "unsupported", message: "Update this PC to clear a terminal draft before sending. Nothing was sent.", typed: false };
         this.rawSend({ type: "input", pane_id: paneId, text: `${payload}\r` });
         return { ok: true };
       }
       const id = this.nextSubmit++;
-      return this.submitRequest({ type: "submit", id, pane_id: paneId, text, payload, ...(typed ? { typed: true } : {}), ...(delivery !== "immediate" ? { delivery } : {}),
-        ...(clearDraft !== undefined ? { clear_draft: clearDraft } : {}), ...(sendAnyway ? { send_anyway: true as const } : {}), ...(resendId !== undefined ? { resend_id: resendId, resend_generation: generation ?? 0 } : {}) });
+      return this.submitRequest({ type: "submit", id, pane_id: paneId, text, payload, ...(typed ? { typed: true } : {}),
+        ...(delivery !== "immediate" ? { delivery } : {}), ...(agentOnly ? { agent_only: true } : {}),
+        ...(clearDraft !== undefined ? { clear_draft: clearDraft } : {}), ...(sendAnyway ? { send_anyway: true as const } : {}),
+        ...(resendId !== undefined ? { resend_id: resendId, resend_generation: generation ?? 0 } : {}) });
     })();
   }
 
@@ -843,8 +879,8 @@ export class HerdrSocket {
     return (async (): Promise<SubmitResult> => {
       await Promise.race([this.snapshotSeen, new Promise((resolve) => window.setTimeout(resolve, SNAPSHOT_WAIT_MS))]);
       if (!(await this.probeSettled(socket))) return DISCONNECTED;
-      if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot change pending messages." };
-      if (!this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to manage pending messages." };
+      if (this.mode === "observe") return { ok: false, code: "read_only", message: "Observe connections cannot change pending messages.", typed: false };
+      if (!this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to manage pending messages.", typed: false };
       return this.submitRequest({ type: "pending-action", id: this.nextSubmit++, pane_id: paneId, pending_id: pendingId, action,
         ...(generation !== undefined ? { resend_generation: generation } : {}) });
     })();

@@ -1,6 +1,7 @@
 /**
- * The repository diff viewer (Files → Changes → RepoDiffViewer) in the built app, against real git
- * repositories answered by the server's own repo-diff module: the changed files of the working
+ * Retained RepoChanges and standalone RepoDiffViewer components in a built, test-only legacy
+ * comparison shell (repo-diff-fixture.tsx), not App's unified Files wiring. Real git repositories
+ * are answered by the server's own repo-diff module: the changed files of the working
  * tree, the index and two commits with their statuses; a 10 000-line diff as a bounded window of
  * rows, unified and split, at the top, the middle and the end; the layout setting kept across a
  * reload and declined on a phone; the context folded and shown again with the line numbers kept;
@@ -8,7 +9,8 @@
  * too-large, conflicted, deleted, untracked and renamed files and their notes; a folder that is no
  * repository and a commit that does not exist; the file itself opened on the owning PC; Escape,
  * Back and Close with the focus returned; a remote PC's routes; the rows in the app's palette; and
- * the static demo's fixture.
+ * the static demo's unified file tree and diff fixture. The unified browser's full interaction
+ * suite remains git-diff-demo-regression.ts.
  *
  * The browser is Playwright's headless shell, whose clipboard is its own: a real Cmd+C here never
  * touches the clipboard of the PC running the check.
@@ -22,6 +24,7 @@ import { build as viteBuild } from "vite";
 import { repoDiffResponse } from "../server/repo-diff.ts";
 import { serveStatic } from "../server/static.ts";
 import { buildDemoApp } from "./demo-build.ts";
+import { demoGitChanges, demoGitDiff } from "../site/demo/gitDiff.ts";
 
 process.env["GIT_CONFIG_GLOBAL"] = "/dev/null";
 process.env["GIT_CONFIG_NOSYSTEM"] = "1";
@@ -66,6 +69,7 @@ function fixtures(): { main: string; detached: string; plain: string } {
   writeFileSync(join(main, "src/staged.ts"), "export const staged = 1;\n");
   writeFileSync(join(main, "src/large.txt"), `${"x".repeat(80)}\n`.repeat(LARGE_LINES));
   writeFileSync(join(main, "docs/old-name.md"), "# Notes\n\nthe first paragraph\n\nthe second paragraph\n");
+  writeFileSync(join(main, "docs/untouched.md"), "# Unchanged contents\n\nA pure rename has no changed lines.\n");
   writeFileSync(join(main, "assets/pic.bin"), new Uint8Array([137, 80, 78, 71, 0, 1, 2, 3]));
   writeFileSync(join(main, "notes/dir with space/ünï 文件.txt"), "eins\nzwei\n");
   git(main, "add", ".");
@@ -76,6 +80,7 @@ function fixtures(): { main: string; detached: string; plain: string } {
   git(main, "commit", "-q", "-m", "second");
   // staged: a rename with an edit, and an edit that is edited again below
   git(main, "mv", "docs/old-name.md", "docs/new-name.md");
+  git(main, "mv", "docs/untouched.md", "docs/renamed.md");
   writeFileSync(join(main, "docs/new-name.md"), "# Notes\n\nthe first paragraph, revised\n\nthe second paragraph\n");
   writeFileSync(join(main, "src/staged.ts"), "export const staged = 2;\n");
   git(main, "add", "docs/new-name.md", "src/staged.ts");
@@ -154,12 +159,13 @@ const diffRows = () => Array.from(document.querySelector(".repo-diff diffs-conta
 
 async function openFiles(page: Page, paneId: string, machine = "local"): Promise<void> {
   await page.evaluate(([paneId, machine, directory]) => window.repoDiffQA.openFiles(machine, paneId, directory), [paneId, machine, panes.get(paneId) ?? "/nowhere"] as const);
-  await page.getByRole("dialog", { name: "Files", exact: true }).waitFor();
-  await page.getByRole("button", { name: "Changes", exact: true }).click();
+  const comparisons = page.getByRole("dialog", { name: "Legacy repository comparisons", exact: true });
+  await comparisons.waitFor();
+  await comparisons.getByRole("button", { name: "Changes", exact: true }).click();
 }
 async function closeFiles(page: Page): Promise<void> {
   await page.evaluate(() => window.repoDiffQA.closeFiles());
-  await page.getByRole("dialog", { name: "Files", exact: true }).waitFor({ state: "detached" });
+  await page.getByRole("dialog", { name: "Legacy repository comparisons", exact: true }).waitFor({ state: "detached" });
 }
 /** The Changes list once it has answered for `scope`: its rows as `mark path counts`. */
 async function changeRows(page: Page, scope = "workspace"): Promise<string[]> {
@@ -460,9 +466,17 @@ try {
       console.log(`PASS ${label}: native selection and a real copy keep blank lines and leave the gutters out`);
     }
 
-    // the file itself opens on the owning PC, above the diff; Escape closes one surface at a time
+    await page.getByRole("button", { name: "Copy patch", exact: true }).click();
+    await page.getByRole("button", { name: "Patch copied", exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), moneyPatch.patch, `${label}: Copy patch keeps git's patch verbatim`);
+    await page.getByRole("button", { name: "Copy path", exact: true }).click();
+    await page.getByRole("button", { name: "Path copied", exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "src/money.ts", `${label}: Copy path keeps the repository-relative path`);
+
+    // the file itself opens in the real unified Files browser above this test's diff;
+    // Escape closes one surface at a time
     await page.getByRole("button", { name: "Open file", exact: true }).click();
-    const file = page.getByRole("dialog", { name: "money.ts", exact: true });
+    const file = page.getByRole("dialog", { name: "Files", exact: true }).getByRole("region", { name: "money.ts", exact: true });
     await file.waitFor();
     assert.ok(requests.some((path) => path === "/api/fs/stat"), `${label}: the file is read through the file routes`);
     await file.locator(".file-viewer-text .hl-line").first().waitFor();
@@ -471,7 +485,7 @@ try {
     await page.locator(".repo-diff-viewer").waitFor();
     await page.keyboard.press("Escape");
     await page.locator(".repo-diff-viewer").waitFor({ state: "detached" });
-    await page.getByRole("dialog", { name: "Files", exact: true }).waitFor();
+    await page.getByRole("dialog", { name: "Legacy repository comparisons", exact: true }).waitFor();
     console.log(`PASS ${label}: Open file shows the file above the diff; Escape closes the file, then the diff, and the list stays`);
 
     // Back and Close return the focus to the row that opened the diff
@@ -519,7 +533,11 @@ try {
     // the index against HEAD: a rename with its old path; two commits by name; a commit that is not there
     await page.getByRole("button", { name: "Staged", exact: true }).click();
     const staged = await changeRows(page, "staged");
-    assert.deepEqual(staged, ["R docs/old-name.md → docs/new-name.md +1−1", "M src/staged.ts +1−1"], `${label}: the staged changes: ${JSON.stringify(staged)}`);
+    assert.deepEqual(staged, ["R docs/old-name.md → docs/new-name.md +1−1", "R docs/untouched.md → docs/renamed.md +0−0", "M src/staged.ts +1−1"], `${label}: the staged changes: ${JSON.stringify(staged)}`);
+    // The unified demo uses different fixtures; keep the standalone pure-rename case here.
+    await openChange(page, "docs/renamed.md");
+    assert.equal(await note(page), "No lines changed.", `${label}: a pure rename has no lines`);
+    await closeDiff(page);
     await openChange(page, "docs/new-name.md");
     await waitRows(page);
     const renamed = await page.locator(".repo-diff-meta").first().textContent();
@@ -570,14 +588,15 @@ try {
     await openChange(page, "src/money.ts");
     await waitRows(page);
     await page.getByRole("button", { name: "Open file", exact: true }).click();
-    await page.getByRole("dialog", { name: "money.ts", exact: true }).waitFor();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("region", { name: "money.ts", exact: true }).waitFor();
     assert.deepEqual(requests.filter((path) => path.includes("/workspace/diff/")), ["/api/machines/remote-fixture/workspace/diff/files", "/api/machines/remote-fixture/workspace/diff/file"], `remote diff requests: ${requests.join(", ")}`);
     assert.ok(requests.some((path) => path === "/api/machines/remote-fixture/fs/stat"), `remote file requests: ${requests.join(", ")}`);
     await context.close();
     console.log("PASS a remote PC's changes and files read through its bridge");
   }
 
-  // the static demo answers the routes from its fixture: the list, a diff and no missing route
+  // App's actual unified browser uses site/demo/gitDiff.ts, not the legacy comparison shell.
+  // This smoke check keeps route coverage; git-diff-demo-regression.ts owns its full UI suite.
   {
     const app = join(root, "demo");
     await buildDemoApp(app);
@@ -599,25 +618,41 @@ try {
     const missing: string[] = [];
     page.on("response", (response) => { if (response.status() === 404) missing.push(response.url()); });
     await page.goto(`http://127.0.0.1:${demoServer.port}/herdr-web-ui/demo/app/`);
-    // a computer's header opens Files from its own button (the More menu keeps it on a phone)
+    await page.locator(".header-more-button").waitFor();
     await page.locator(".header-files-button").click();
-    await page.getByRole("dialog", { name: "Files", exact: true }).waitFor();
-    await page.getByRole("button", { name: "Changes", exact: true }).click();
-    const demoRows = await changeRows(page);
-    assert.deepEqual(demoRows, ["M docs/checkout-flow.png Binary", "R src/idempotency.ts → src/lib/idempotency.ts +0−0", "? src/money.test.ts", "M src/money.ts +4−1"], `the demo's changes: ${JSON.stringify(demoRows)}`);
-    await openChange(page, "src/money.ts");
-    await waitRows(page);
-    const demoDiff = await mounted(page);
-    assert.ok(demoDiff.rows >= 8 && demoDiff.rows < 40, `the demo's diff rows: ${JSON.stringify(demoDiff)}`);
+    const files = page.getByRole("dialog", { name: "Files", exact: true });
+    await files.locator(".workspace-file-tree").waitFor();
+    const sourceFolder = files.locator('.workspace-tree-row[title="src"]');
+    await sourceFolder.waitFor();
+    if (await sourceFolder.getAttribute("aria-expanded") !== "true") await sourceFolder.click();
+    const changed = demoGitChanges("/fixture", "all").files;
+    for (const entry of changed) {
+      const row = files.locator(`.workspace-tree-row[title="${entry.path}"]`);
+      await row.waitFor();
+      assert.equal(await row.getAttribute("data-status"), entry.status, `the demo tree marks ${entry.path}`);
+      await row.click();
+      const section = files.locator(`[data-diff-path="${entry.path}"]`);
+      await section.waitFor();
+      await page.waitForFunction((path) => {
+        const section = [...document.querySelectorAll<HTMLElement>("[data-diff-path]")].find((node) => node.dataset.diffPath === path);
+        return (section?.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0;
+      }, entry.path);
+      const drawn = await section.locator("diffs-container").evaluate((host) => {
+        const rows = [...host.shadowRoot!.querySelectorAll("[data-line]")];
+        return { count: rows.length, text: rows.map((line) => line.textContent ?? "").join("\n") };
+      });
+      const expected = demoGitDiff("/fixture", "all", entry.path)!;
+      assert.ok(drawn.count > 0 && drawn.count < 40, `the demo's ${entry.path} diff rows: ${drawn.count}`);
+      for (const line of expected.new_file!.contents.trimEnd().split("\n")) {
+        assert.ok(drawn.text.includes(line), `the demo's ${entry.path} draws ${JSON.stringify(line)}`);
+      }
+    }
     await shot(page, "demo-1440-dark");
-    await closeDiff(page);
-    await openChange(page, "src/lib/idempotency.ts");
-    assert.equal(await note(page), "No lines changed.", "a pure rename has no lines");
-    await closeDiff(page);
-
+    await files.getByRole("button", { name: "Close files", exact: true }).click();
+    await files.waitFor({ state: "detached" });
     assert.deepEqual(missing, [], `no missing route in the demo: ${missing.join(", ")}`);
     await context.close();
-    console.log("PASS the static demo lists its fixture's changes and draws a diff with no missing route");
+    console.log("PASS the static demo's unified tree marks its fixture's changes and draws both diffs with no missing route");
   }
   console.log("repository diff: browser OK (list, bounded rows, unified/split, fold, copy, open file, Back/Close/focus, unavailable kinds, staged/commits/errors, remote, demo)");
 } finally {

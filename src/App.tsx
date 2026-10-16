@@ -24,12 +24,12 @@ import { copyText } from "./lib/clipboard.ts";
 import { CommandPalette } from "./components/CommandPalette.tsx";
 import { paletteOpenQuery } from "./lib/paletteSeed.ts";
 import { MachineContext } from "./lib/machineContext.tsx";
+import { useWorkspaceChangesSnapshot } from "./lib/useWorkspaceChanges.ts";
+import { paneStatus } from "./lib/status.ts";
+import { BrowseFilesMenuIcon } from "./components/BrowseFilesIcon.tsx";
 import { MachineActionBanner, MachineSidebar } from "./components/MachineSidebar.tsx";
 import { SidebarResizer } from "./components/SidebarResizer.tsx";
 import { storedSidebarWidth } from "./lib/sidebarWidth.ts";
-import { FilePanelResizer } from "./components/FilePanelResizer.tsx";
-import { FILE_PANEL_DOCK_QUERY, storedFilePanelWidth } from "./lib/filePanelWidth.ts";
-import { filePresentation, type FilePresentation } from "./lib/filePresentation.ts";
 import { MachineDialog } from "./components/MachineDialog.tsx";
 import { RowMenu, type RowMenuItem } from "./components/RowMenu.tsx";
 import { focusWorkspaceListToggle } from "./lib/focus.ts";
@@ -63,12 +63,15 @@ import { LanExposureNotice } from "./components/LanExposureNotice.tsx";
 import { TelemetryNotice } from "./components/TelemetryControls.tsx";
 import { FilesDialog } from "./components/FilesDialog.tsx";
 import { folderQueryFor } from "./lib/paletteFolders.ts";
-import { FileViewer } from "./components/FileViewer.tsx";
 import { RepoDiffViewer } from "./components/RepoDiffViewer.tsx";
+import { WorkspaceFilesContext } from "./lib/workspaceFiles.ts";
+import type { WorkspaceFileIntent } from "./lib/workspaceBrowser.ts";
 import { OpenFileContext } from "./lib/filePaths.ts";
+import { FileCommentNavContext } from "./lib/fileCommentNav.ts";
+import type { FileComment } from "./lib/fileComments.ts";
 import { useFileViewer } from "./lib/useFileViewer.ts";
-import { useFocusReturn } from "./lib/useFocusTrap.ts";
 import { useRepoDiffViewer } from "./lib/useRepoDiffViewer.ts";
+import { changedField, revealField } from "./lib/commentDom.ts";
 import { useT } from "./lib/i18n.ts";
 import { markSelection, selectionStill, type SelectionMark } from "./lib/selectionMark.ts";
 import { useScreenWakeLock } from "./lib/wakeLock.ts";
@@ -325,8 +328,6 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => initialLink?.sidebar === "hidden");
   // the width the sidebar's edge was dragged to on this device; null is the density's own
   const [sidebarWidth, setSidebarWidth] = useState(storedSidebarWidth);
-  const filePanelAvailable = useMediaQuery(FILE_PANEL_DOCK_QUERY);
-  const [filePanelWidth, setFilePanelWidth] = useState(storedFilePanelWidth);
   const [lens, setLens] = useState<{ key: string; view: PaneView }>({ key: "", view: "terminal" });
   // Explicit lens choices stay authoritative in this page even when storage cannot be written.
   const [viewPicks, setViewPicks] = useState<ReadonlyMap<string, PaneView>>(() => new Map());
@@ -380,50 +381,43 @@ export function App() {
   const closeMore = useCallback(() => setMore(null), []);
   // the pane canvas's actions, for the phone's tab menu (TabStrip)
   const paneActionsRef = useRef<((target: HerdrPane) => RowMenuItem[]) | null>(null);
-  // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
+
+  // One Files browser, whether opened from its button, a path link or a comment.
   const [filesOpen, setFilesOpen] = useState(false);
-  const { viewing, openFile, closeFile, setPresentation, releaseFile } = useFileViewer();
-  // a repository diff from the Files dialog's Changes tab, an entry of its own like a file
-  const { viewing: diffViewing, openDiff, closeDiff, releaseDiff } = useRepoDiffViewer();
-  const presentation = viewing?.presentation ?? filePresentation(viewing?.path ?? "");
-  const fileDocked = filePanelAvailable && presentation === "panel";
-  useEffect(() => {
-    if (viewing !== null && fileDocked) setFilesOpen(false);
-  }, [viewing, fileDocked]);
-  // the panel is no dialog, so no trap gives the focus back when it closes: what opened the file
-  // (a link in the chat, a row of Files) gets it, as it does from the popup
-  useFocusReturn(viewing !== null && fileDocked);
-  // a collapse (below) whose two steps back have not landed: a second click on Show beside the
-  // pane, or the kind correction in the same moment, must not queue two steps more and the file twice
-  const collapsing = useRef(false);
-  // a collapse whose step back never lands must not lock the toggle once the file and diff are gone
-  useEffect(() => { if (viewing === null && diffViewing === null) collapsing.current = false; }, [viewing, diffViewing]);
-  const presentFile = useCallback((next: FilePresentation) => {
-    if (collapsing.current) return;
-    if (next === "panel" && filePanelAvailable && diffViewing !== null && viewing !== null) {
-      // Collapse the stacked diff and popup to one panel entry. Pushing from their opener
-      // also discards the old forward entries, so Forward cannot resurrect the popup or diff.
-      const preview = { ...viewing, presentation: next };
-      collapsing.current = true;
-      window.addEventListener("popstate", () => {
-        collapsing.current = false;
-        releaseDiff();
-        openFile(preview);
-      }, { once: true });
-      window.history.go(-2);
-    } else setPresentation(next);
-  }, [filePanelAvailable, diffViewing, viewing, releaseDiff, openFile, setPresentation]);
-  const reportFileKind = useCallback((presentation: FilePresentation) => {
-    if (viewing !== null && viewing.presentation === undefined && presentation !== filePresentation(viewing.path)) presentFile(presentation);
-  }, [viewing, presentFile]);
-  const toggleFilePresentation = filePanelAvailable && viewing !== null
-    ? () => presentFile(fileDocked ? "popup" : "panel")
-    : undefined;
+  const [filesTarget, setFilesTarget] = useState<{ machineId: string; paneId: string; start: string } | null>(null);
+  const canLeaveFiles = useCallback(() => {
+    const field = changedField(document.querySelector(".files-dialog"));
+    if (field === null) return true;
+    revealField(field);
+    return false;
+  }, []);
+  const openFilesFor = useCallback((paneId: string, machineId: string, intent: WorkspaceFileIntent) => {
+    if (!canLeaveFiles()) return;
+    const pane = machines.find((machine) => machine.id === machineId)?.snapshot?.panes.find((pane) => pane.pane_id === paneId);
+    setFilesTarget({ machineId, paneId, start: pane?.foreground_cwd ?? pane?.cwd ?? "" });
+    setDiffCommentView(null);
+    setFilesIntent(intent);
+    setFilesOpen(true);
+  }, [machines, canLeaveFiles]);
+  const [filesIntent, setFilesIntent] = useState<WorkspaceFileIntent>("browse");
+  const [diffCommentView, setDiffCommentView] = useState<{ paneId: string; machineId: string; comment: FileComment } | null>(null);
+  const { viewing, openFile, closeFile, releaseFile } = useFileViewer(canLeaveFiles);
   const viewFile = useCallback((path: string) => {
-    // the Files dialog would cover the docked panel the file opens in
-    if (filePanelAvailable && filePresentation(path) === "panel") setFilesOpen(false);
     openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
-  }, [openFile, selectedPaneId, selectedMachineId, filePanelAvailable]);
+  }, [openFile, selectedPaneId, selectedMachineId]);
+  // Chat turn change links retain their repository comparison and history entry.
+  const { viewing: diffViewing, closeDiff } = useRepoDiffViewer();
+  // the composer's walk stops at a file comment: its file opens in the viewer, at that comment
+  const viewFileComment = useCallback((paneId: string, machineId: string, comment: FileComment) => {
+    if (!canLeaveFiles()) return;
+    if (comment.diff !== undefined) {
+      setDiffCommentView({ paneId, machineId, comment });
+      setFilesIntent("changes");
+      setFilesOpen(true);
+      return;
+    }
+    openFile({ path: comment.path, paneId, machineId, comment: comment.id });
+  }, [openFile, canLeaveFiles]);
   // a link to Settings opens it on its page, for that first opening alone
   const [settingsOpen, setSettingsOpen] = useState(() => initialLink?.settings != null);
   const [settingsLinkPage, setSettingsLinkPage] = useState<string | null>(() => initialLink?.settings ?? null);
@@ -459,6 +453,7 @@ export function App() {
   const [connected, setConnected] = useState(false);
   // the active slot's pane could not be drawn: no terminal is attached there to say so itself
   const paneLost = useCallback(() => setConnected(false), []);
+  const [paneRole, setPaneRole] = useState<{ machineId: string; paneId: string; mode: "observe" | "interact" } | null>(null);
   const [outputStopped, setOutputStopped] = useState(false);
   const [notifications, setNotifications] = useState<NotificationState>(() => notificationState());
   // this device has a server-side push subscription: alerts come from the server, not the tab
@@ -851,6 +846,12 @@ export function App() {
     setDrawerOpen(false);
   }, []);
 
+  const openWorkspaceFiles = useCallback((paneId: string) => {
+    if (!canLeaveFiles()) return;
+    selectPane(paneId, false);
+    openFilesFor(paneId, selectedMachineId, "browse");
+  }, [selectPane, selectedMachineId, openFilesFor, canLeaveFiles]);
+
   // a layout call the palette made and the PC refused: a bridge from before the route says so
   // over the pane (the tab's own menu has a line of its own); anything else is logged, as
   // other background failures are
@@ -884,6 +885,8 @@ export function App() {
 
 
   const selectedPane = snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId) ?? null;
+  const filesCwd = selectedPane?.foreground_cwd ?? selectedPane?.cwd ?? "";
+  const filesChanged = useWorkspaceChangesSnapshot(selectedPane ? { machineId: selectedMachineId, paneId: selectedPane.pane_id, cwd: filesCwd } : null);
   useScreenWakeLock(settings.keepScreenOn && locked === false && selectedPane !== null);
   const selectedWorkspace = selectedPane
     ? (snapshot?.workspaces.find((workspace) => workspace.workspace_id === selectedPane.workspace_id) ?? null)
@@ -1326,7 +1329,7 @@ export function App() {
       lock: canSignOut ? lock : null,
       enableNotifications: bellVisible && bell.run === enableNotifications ? () => void enableNotifications() : null,
       refresh: () => void load(),
-      openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); setFilesOpen(true); } : null,
+      openFiles: selectedPaneId !== null ? () => { setDrawerOpen(false); openFilesFor(selectedPaneId, selectedMachineId, "browse"); } : null,
       // herdr's layout calls on the selected pane (components/TabStrip.tsx has the same for the
       // tab's own menu): the new layout reaches every client as session-changed, so only a
       // refusal is left to say, and that is logged as other background failures are
@@ -1396,8 +1399,11 @@ export function App() {
 
   const moreItems: RowMenuItem[] = [
     ...(selectedPane && !selectedPane.restore_error ? [{ id: "find", label: t("Find in terminal"), icon: Search, run: actions.openFind }] : []),
-    // from 769px Files has its own button beside the lens switch; a phone keeps it here
-    ...(selectedPane && !wideScreen ? [{ id: "files", label: t("Browse files"), icon: FolderOpen, run: () => setFilesOpen(true) }] : []),
+
+    ...(selectedPane && !wideScreen ? [{ id: "files", label: t("Browse files"), icon: FolderOpen,
+      title: filesChanged ? `${t("Browse files")} · ${t("Changed files")}` : t("Browse files"),
+      glyph: <MachineContext.Provider value={selectedMachineId}><BrowseFilesMenuIcon paneId={selectedPane.pane_id} cwd={filesCwd} connected={selectedMachine?.state === "connected" && !selectedPane.restore_error} status={paneStatus(selectedPane)} /></MachineContext.Provider>,
+      run: () => openFilesFor(selectedPane.pane_id, selectedMachineId, "browse") }] : []),
     // the address says where the app is (lib/deepLink.ts); a phone has no address bar to copy it from
     { id: "copy-link", label: t("Copy link"), icon: Link, run: () => void copyText(window.location.href).then((ok) => { if (ok) setHeaderNote("copied"); }) },
     ...(bellVisible ? [{ id: "alerts", label: t("Alerts"), hint: bell.state, checked: bell.on, title: bell.title, icon: Bell, run: () => void bell.run() }] : []),
@@ -1435,10 +1441,19 @@ export function App() {
   }
   if (locked) return <AccessGate reason={lockReason} initialCode={pairCode} onUnlocked={unlock} />;
 
+  const browserMachineId = viewing?.machineId ?? diffCommentView?.machineId ?? filesTarget?.machineId ?? selectedMachineId;
+  const browserPaneId = viewing ? viewing.paneId : diffCommentView?.paneId ?? filesTarget?.paneId ?? selectedPaneId;
+  const browserPane = machines.find((machine) => machine.id === browserMachineId)?.snapshot?.panes.find((pane) => pane.pane_id === browserPaneId);
+  const browserComment = viewing ? null : diffCommentView?.comment ?? null;
+  const closeBrowser = (): void => {
+    setFilesOpen(false);
+    setDiffCommentView(null);
+    if (viewing) closeFile();
+  };
+
   return (
-    <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null && filePanelWidth === null ? undefined : {
+    <MachineSessionsProvider machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><div className={`app${sidebarCollapsed ? " sidebar-collapsed" : ""}`} style={sidebarWidth === null ? undefined : {
       ...(sidebarWidth === null ? {} : { "--sidebar-user-w": `${sidebarWidth}px` }),
-      ...(filePanelWidth === null ? {} : { "--file-panel-user-w": `${filePanelWidth}px` }),
     } as CSSProperties}>
       <header className={`app-header is-zoned${chatShown ? " is-chat" : ""}`}>
         {/* is-zoned tells this header from the connecting shell's, which has no zones to draw.
@@ -1513,8 +1528,8 @@ export function App() {
           <>
             {/* opens Files, it is no third lens: set apart from the switch by a hairline */}
             <span className="header-divider" aria-hidden="true" />
-            <button type="button" className="icon-button header-files-button" aria-label={t("Browse files")} title={t("Browse files")} onClick={() => setFilesOpen(true)}>
-              <FolderOpen />
+            <button type="button" className="icon-button header-files-button" aria-label={t("Browse files")} title={filesChanged ? `${t("Browse files")} · ${t("Changed files")}` : t("Browse files")} onClick={() => selectedPane && openFilesFor(selectedPane.pane_id, selectedMachineId, "browse")}>
+              <BrowseFilesMenuIcon paneId={selectedPane.pane_id} cwd={filesCwd} connected={selectedMachine?.state === "connected" && !selectedPane.restore_error} status={paneStatus(selectedPane)} />
             </button>
           </>
         )}
@@ -1580,6 +1595,8 @@ export function App() {
 
         {/* a file path in the chat opens in the viewer, relative to the selected pane's folder */}
         <OpenFileContext.Provider value={selectedPaneId !== null ? viewFile : null}>
+        <WorkspaceFilesContext.Provider value={openWorkspaceFiles}>
+        <FileCommentNavContext.Provider value={viewFileComment}>
         <div className={`pane-column${chatShown ? " is-chat" : ""}`}>
         {/* over the pane only: a bar across the window would cut the sidebar off from its top row in the header */}
         <UpdateNotice updates={updates} onOpen={() => { setSettingsSection("updates"); setSettingsOpen(true); }} />
@@ -1615,6 +1632,7 @@ export function App() {
             };
             return (
               <MachineContext.Provider key={slot} value={machineId}><SlotSessions slot={slot} machineIds={machines.map((item) => item.id)}><PaneFollowContext.Provider value={sameTabs && !active}>
+              <WorkspaceFilesContext.Provider value={(id) => { if (!canLeaveFiles()) return; onSelect(id, false); openFilesFor(id, machineId, "browse"); }}>
               <div
                 className={`pane-slot${showsChat(pane, slotView) ? " is-chat" : ""}${splitOn ? active ? " is-active" : " is-inactive" : ""}`}
                 data-slot={slot}
@@ -1688,6 +1706,7 @@ export function App() {
                         cwd={item?.cwd ?? null}
                         workspaceId={item?.workspace_id ?? null}
                         worktreeRepo={worktreeRepoName(item === null ? undefined : slotSnapshot?.workspaces.find((workspace) => workspace.workspace_id === item.workspace_id))}
+                        filesCwd={item?.foreground_cwd ?? item?.cwd ?? null}
                         machineName={machine?.name ?? machineId}
                         view={item ? lensOf(item) : slotView}
                         // the other half never takes the keyboard: a press in it makes it active first
@@ -1703,6 +1722,7 @@ export function App() {
                         theme={resolvedTheme}
                         palette={resolvedPalette}
                         onConnectionChange={active && itemActive ? (next) => { setConnected(next); if (next) setOutputStopped(false); } : undefined}
+                        onRoleAck={active && itemActive && item ? (mode) => setPaneRole({ machineId, paneId: item.pane_id, mode }) : undefined}
                         onServerMessage={active && itemActive ? handleServerMessage : undefined}
                       />
                     </OpenFileContext.Provider>} />
@@ -1710,17 +1730,17 @@ export function App() {
                 </main>
                 </RenderBoundary>
               </div>
+              </WorkspaceFilesContext.Provider>
               </PaneFollowContext.Provider></SlotSessions></MachineContext.Provider>
             );
           })}
           <SplitDropPreview visible={splitDragOn && (paneDragging || tabDrag !== null)} side={dropAt} />
         </div>
         </div>
+        </FileCommentNavContext.Provider>
+        </WorkspaceFilesContext.Provider>
         </OpenFileContext.Provider>
         {/* last in the row: the file beside the pane (from 980px), the pane column shrinks and its terminal refits */}
-        {viewing !== null && fileDocked && <MachineContext.Provider value={viewing.machineId}>
-          <FileViewer key={viewing.path} docked panelStart={<FilePanelResizer width={filePanelWidth} onResize={setFilePanelWidth} />} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path, presentation })} onKind={reportFileKind} onTogglePresentation={toggleFilePresentation} keyboardActive={!settingsOpen} />
-        </MachineContext.Provider>}
       </div>
 
       <MachineContext.Provider value={newSessionMachineId}><NewSessionDialog
@@ -1745,28 +1765,22 @@ export function App() {
         // an ended pane's card outlives the pane: the refetch has dropped it, and selecting it attaches nothing
         if (!machinesRef.current.find((m) => m.id === machineId)?.snapshot?.panes.some((p) => p.pane_id === paneId)) return;
         // Files lists the pane it was opened on, and would open its paths on the new one
+        if (!canLeaveFiles()) return;
         setFilesOpen(false);
         selectTargetRef.current(machineId, paneId);
       }} />
-      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} onUsageLogin={(paneId) => { closeSettings(); selectTarget("local", paneId, "terminal"); void load(); }} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={(viewing !== null && !fileDocked) || diffViewing !== null} />
-      {filesOpen && selectedPane && (
-        <FilesDialog start={selectedPane.foreground_cwd ?? selectedPane.cwd ?? ""} paneId={selectedPane.pane_id} viewing={(viewing !== null && !fileDocked) || diffViewing !== null} onOpenFile={viewFile}
-          onOpenDiff={(comparison, file) => openDiff({ machineId: selectedMachineId, paneId: selectedPane.pane_id, directory: selectedPane.foreground_cwd ?? selectedPane.cwd ?? null, ...comparison, path: file.path, oldPath: file.old_path })}
-          onBrowseFolders={(path) => actions.openPalette(folderQueryFor(path, null))}
-          onClose={() => setFilesOpen(false)} />
-      )}
+      <SettingsDialog auth={auth} herdrVersion={health?.herdr?.version ?? null} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} onUsageLogin={(paneId) => { closeSettings(); selectTarget("local", paneId, "terminal"); void load(); }} actions={actions} updates={updates} onEnableNotifications={enableNotifications} overPreview={filesOpen || viewing !== null || diffViewing !== null} />
       {diffViewing !== null && <MachineContext.Provider value={diffViewing.machineId}>
-        <RepoDiffViewer key={`${diffViewing.scope}:${diffViewing.path}`} target={diffViewing} onClose={closeDiff} onOpenFile={(path) => {
-          const docked = filePanelAvailable && filePresentation(path) === "panel";
-          if (docked) {
-            setFilesOpen(false);
-            releaseDiff();
-          }
-          openFile({ path, paneId: diffViewing.paneId, machineId: diffViewing.machineId }, docked);
-        }} keyboardActive={!settingsOpen && (viewing === null || fileDocked)} />
+        <RepoDiffViewer key={`${diffViewing.scope}:${diffViewing.path}`} target={diffViewing} onClose={closeDiff} onOpenFile={(path) => openFile({ path, paneId: diffViewing.paneId, machineId: diffViewing.machineId })} keyboardActive={!settingsOpen && viewing === null && !filesOpen} />
       </MachineContext.Provider>}
-      {viewing !== null && !fileDocked && <MachineContext.Provider value={viewing.machineId}>
-        <FileViewer key={viewing.path} path={viewing.path} paneId={viewing.paneId} onClose={closeFile} onOpen={(path) => openFile({ ...viewing, path, presentation })} onKind={reportFileKind} onTogglePresentation={toggleFilePresentation} keyboardActive={!settingsOpen} />
+      {(viewing !== null || filesOpen && browserPaneId !== null) && <MachineContext.Provider value={browserMachineId}>
+        <FilesDialog key={`${browserMachineId}:${browserPaneId}:${viewing?.path ?? browserComment?.id ?? filesIntent}`}
+          initialIntent={viewing ? "browse" : filesIntent}
+          start={browserComment?.diff?.repository ?? (!viewing && filesTarget ? filesTarget.start : browserPane?.foreground_cwd ?? browserPane?.cwd ?? "")} paneId={browserPaneId}
+          initialPath={viewing?.path ?? (browserComment?.diff ? null : browserComment?.path ?? null)} initialComment={browserComment} initialCommentId={viewing?.comment ?? null}
+          connected={connected && paneRole?.mode === "interact" && paneRole.machineId === browserMachineId && paneRole.paneId === browserPaneId}
+          onBrowseFolders={(path) => actions.openPalette(folderQueryFor(path, null))}
+          keyboardActive={!settingsOpen && !paletteOpen} onClose={closeBrowser} />
       </MachineContext.Provider>}
       <CommandPalette key={selectedMachineId} machines={machines} onSelect={selectTarget} open={paletteOpen} initialQuery={paletteQuery} onClose={() => setPaletteOpen(false)} snapshot={snapshot} online={selectedMachine?.state === "connected"} selectedPaneId={selectedPaneId} view={view} actions={actions} />
     </div></MachineContext.Provider></MachineSessionsProvider>

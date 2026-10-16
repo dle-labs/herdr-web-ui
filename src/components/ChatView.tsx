@@ -617,6 +617,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
   const copyError = copyFailed && <p className="chat-copy-error" role="alert">{t("Couldn't copy. Select the text and copy it manually.")}</p>;
   const copied = (ok: boolean): void => setCopyFailed(!ok);
   const time = turn.ts === null ? null : <TurnTime ts={turn.ts} />;
+  const { work, answer } = splitTurn(turn.parts);
   const compact = turn.parts.find((part): part is Extract<ConversationPart, { kind: "compact" }> => part.kind === "compact");
   if (compact !== undefined) {
     return <ChatDetails memoryKey="compact" className="chat-compact">
@@ -655,14 +656,13 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
       <SkillActivityList parts={turn.parts} />
     </article>;
   }
-  const { work, answer } = splitTurn(turn.parts);
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
   return <article className="chat-turn chat-turn-agent">
     <SkillActivityList parts={turn.parts} />
     {goal !== null && <GoalActivity goal={goal} />}
     {work.length > 0 && <WorkBlockView paneId={paneId} parts={work} duration={formatWorkDuration(turn.ts, turn.end_ts ?? null)} live={live} waiting={waiting} defaultOpen={workStartsOpen(live, turn.parts)} showThinking={showThinking} />}
-    {answer.map((part, index) => <Markdown key={index} skills={skills}>{part.text}</Markdown>)}
+    {answer.map((part, n) => <Markdown key={n} skills={skills}>{part.text}</Markdown>)}
     {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
       <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>
@@ -673,6 +673,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
   </article>;
 });
 
+/** A scrollback message drawn as a turn when no agent runs in the pane. */
 function FallbackTurn({ paneId, message }: { paneId: string; message: TranscriptMessage }) {
   if (message.role === "status") return null;
   const turn: ConversationTurn = { role: message.role === "user" ? "user" : "assistant", ts: null, parts: [{ kind: "text", text: message.text }] };
@@ -717,8 +718,8 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 export const ChatView = memo(function ChatView({ paneId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
-  const { settings } = useSettings();
   const machineId = useMachineId();
+  const { settings } = useSettings();
   const skillMatcher = useSkillMatcher(paneId, agent);
   // polls pause while the page or the pane is hidden and pick up at once when it is back
   const pageVisible = usePageVisible();
@@ -768,9 +769,16 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   sentKeyRef.current = sentKey;
   const [promptPollKey, setPromptPollKey] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
+  // LegendList owns the actual scrolling element. Publish it after commit so the pin portal
+  // mounts even on the first lazy-list render, and rebinds if the fallback replaces the list.
   const timeline = useRef<LegendListRef>(null);
   const ChatTimeline = useChatTimeline();
   const stickToBottom = useRef(true);
+  // LegendList also follows row-size changes and glide completion. Guard those paths as well
+  // as ChatView's explicit scrolls: reserving editor space is never new-output follow intent.
+  const timelineFollowing = useMemo(() => ({ get current() {
+    return stickToBottom.current;
+  } }), []);
   // Explicit paging stays away even inside the ordinary near-bottom tolerance.
   const pagingAway = useRef(false);
   const lastScrollTop = useRef(0);
@@ -1383,7 +1391,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
   const jump = newMessages ? <button type="button" className="btn chat-new-messages chat-virtual-jump" onClick={scrollToBottom}>{t("New messages")} <ArrowDown aria-hidden="true" /></button>
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
   return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
-    <div className="chat-frame">
+    <div className="chat-frame chat-surface-layout">
     <div className="chat-frame-body">
     {state.source === "conversation" ? ChatTimeline === null
       // its chunk is still loading: no turn is read until it arrives, so this is the loading state
@@ -1399,7 +1407,7 @@ export const ChatView = memo(function ChatView({ paneId, active = true, visible:
       source={state.conversationSource}
       scroller={scroller}
       listRef={timeline}
-      following={stickToBottom}
+      following={timelineFollowing}
       smoothFollow={smoothFollow}
       memories={rowMemories}
       header={header}

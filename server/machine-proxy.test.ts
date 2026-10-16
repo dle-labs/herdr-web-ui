@@ -119,7 +119,7 @@ it("forwards a repository diff read with its query and the bridge's own credenti
   }
   expect(diffAsked.slice(before)).toEqual(["files", "file"].map((route) => ({ path: `/api/workspace/diff/${route}`, search, authorization: "Bearer remote-token", cookie: null, forwarded: null })));
   // only the two reads are routes: nothing else under that name reaches the PC
-  for (const path of ["workspace/diff", "workspace/diff/file/extra", "workspace/diff/apply", "workspace/diffs/file"]) {
+  for (const path of ["workspace/diff/extra", "workspace/diff/file/extra", "workspace/diff/apply", "workspace/diffs/file"]) {
     const response = await handleMachineRequest(new Request(`http://127.0.0.1/api/machines/pc1/${path}${search}`), manager);
     expect(response.status).toBe(404);
     expect(await response.json()).toMatchObject({ error: { code: "not_found" } });

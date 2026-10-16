@@ -157,6 +157,97 @@ blue there instead of `--accent`, and Latte's colors are darkened to stay readab
   `--text-dim`, except in Catppuccin, whose `--text-dim` (subtext1) is nearly `--text`: Mocha
   overlay2 `#9399b2` (5.8:1), Latte `#64677d` (subtext0 darkened to 4.9:1 on `--bg`).
 
+### Git Changes view
+
+- Browse files opens a bounded workspace dialog (a full-width, full-height phone sheet), with a file tree
+  beside an initially empty document area. No first diff is selected or loaded automatically. Changed paths open their Git diff, except Markdown opened through ordinary browsing
+  or a file link: even a new or staged Markdown file opens its rendered preview. The
+  explicit comparisons and diff-comment links keep Markdown in Diff. A changed Markdown document
+  offers **Preview | Diff** above the tree/document; deleted and binary paths offer no preview.
+  Switching keeps saved comments and is refused while a comment field is dirty. Unchanged paths
+  open the existing file preview in the same surface. All-file comparisons form one continuous
+  scroll region; layout-driven scrolling never changes the selected file. On narrow screens the tree and document are separate steps.
+  **Close file** closes only the embedded document, clears its selection and returns focus to
+  navigation; the browser, expanded folders, saved comments and history entry stay open. The
+  desktop detail says **Select a file to view.** until another file is selected; refresh does not
+  reopen the closed document. Compact wrapping headers sit above a generous phone file viewport.
+  **Close files**, Escape without an open comment, the scrim and
+  system Back dismiss the whole browser. Close buttons and repeated browser/system Back protect
+  dirty comment drafts. A browser retains the machine, pane and folder it opened on even when
+  pane selection changes. Initial file-comment navigation is consumed when selecting another file.
+  Tree and document gestures use native overflow scrolling from padding, icons, labels, gutters
+  and code alike. Only actual scroll regions contain overscroll; truncated labels and horizontal
+  code blocks let vertical gestures reach their enclosing scroller. Virtual source padding lives
+  inside its scroll root. On phones, pulling down in content never dismisses Files, even at its
+  top; swipe-to-dismiss starts only on the Files header. Wrap, horizontal source scrolling,
+  native text selection and the diff gutter's explicit comment-range gesture remain available.
+- **Browse files** is a quick action beside the composer's microphone, or beside `+` when
+  dictation is unavailable. It targets that composer's pane/PC without background polling;
+  pane and tab menus do not contain Changed files. Settings → Chat → File viewer → **Show Browse files
+  shortcut** controls this device's folder button (on by default); the header menu entry stays
+  available. Both folder icons carry a small `--notice` dot for known uncommitted changes,
+  including untracked files, never for historical comparison differences. Shared read-only
+  snapshots refresh on activation, window focus/visibility return, menu opening and transitions
+  into/out of agent work; normal browser inventories also update the dot. There is no timer
+  polling, and unknown/non-Git inventories show no dot. **Wrap long lines** is an icon toggle in
+  the Files header alongside the other controls, sharing `wrapCode` with Settings. Syntax highlighting is automatic.
+  **Unified / Split** sits beside Refresh in the browser header only when the current comparison
+  inventory contains diffs, and shares the Settings layout preference. Phones remain unified.
+  Dirty comment drafts block layout changes.
+- The Files header shows its **Files** title and icon actions, including **Find files…**,
+  **Compare with…**, folder browsing and **Unified / Split**, with accessible labels/tooltips
+  and no inline search input. Find files uses Lucide `FolderSearch`;
+  browsing folders in the command palette uses `FolderOpen`. Header controls use `--space-3`
+  horizontal gaps and `--space-6` inline padding; narrow headers use `--space-1` gaps and
+  `--space-2` padding (both axes on narrow screens), wrapping when necessary rather than overflowing.
+  **Find files…** opens a separate palette above the browser, styled like the command palette
+  (a bottom sheet on phones), without shifting the tree or document. It searches filenames/paths
+  across the repository (tracked and untracked, nonignored), or through a bounded directory walk
+  outside Git. Arrow keys and Enter choose a result into the same browser; Mod+P opens the finder
+  only while focus is inside Files, never in a terminal. Opening Files never opens the finder
+  automatically. At most five fixed-height path rows are visible, with long paths ellipsized and
+  remaining results scrollable; keyboard navigation scrolls only that list. Requests are debounced,
+  stale responses ignored, and incomplete results explicitly marked.
+  Both nested palettes own focus, Escape, swipe and phone Back while open. Closing one by its
+  close button, Escape, backdrop, swipe or Back preserves Files, its selection and tree state,
+  and returns focus to the opener. Files resumes its own phone Back entry after dismissal.
+- **Compare with…** opens a header-anchored searchable commit overlay, without shifting or
+  shrinking the file view. Its list shows up to five fixed-height, two-line rows, with remaining
+  commits scrollable and long subjects/authors ellipsized; full text remains in tooltips.
+  Keyboard navigation scrolls only that list. Escape, its close button, or moving focus/clicking
+  outside dismisses the picker without closing Files. The header button compares all files; a
+  file's right-click/Shift+F10 menu compares just that file. Choosing a commit compares its contents with
+  the current working tree; **Working changes** restores the HEAD baseline. The chosen hash is
+  available in the comparison icon's tooltip and preserved in saved comment coordinates. Comparisons are read-only and keep
+  dirty drafts until saved or cleared. Deleted, renamed and binary paths retain their semantics.
+- Pierre's shadow-root variables map to existing surfaces, text, fonts and focus tokens. Added
+  lines use `--status-done`, deleted lines `--status-blocked`, and renamed paths `--notice`;
+  Git letters and +/- indicators convey the same meaning without color. Every ancestor folder
+  of a changed file uses `--notice` for its label/icon and a visible, accessibly named `*` marker,
+  even when collapsed; mixed descendant statuses use one deterministic contains-changes state.
+  Ignored folders remain muted. Tree icons use Lucide.
+- The gutter plus toggles a plain-text comment in the flow below the selected old/new line;
+  releasing a dragged line range opens the same editor. Touch drags from the gutter number or
+  comment utility select lines without scrolling; swiping the source text still scrolls the file.
+  The utility hit-tests the shadow-root rows because touch capture does not update hover events.
+  Configured dictation inserts text without
+  sending. Comments use the shared comment field and save/delete behavior. Saved cards always name the file, line range and side. Changed comparison
+  revisions move cards into Outdated comments, never onto unrelated source lines.
+- Opening an inline diff comment keeps the viewport and collapsed context unchanged, on either
+  side and in either layout. Comment links explicitly reveal and open the requested current or
+  outdated editor, including old-side rename paths; context expanded for a link stays open for
+  that document rather than collapsing underneath the reader when its editor closes.
+  A failed diff keeps its saved comments editable in the fallback section.
+- Comment fields measure wrapping in a hidden, layout-isolated textarea outside the reading
+  surface, copying its width and typography. The visible height changes only when needed;
+  typing never resets it to auto and reflows the source/diff grid on every character. Fields
+  still grow, shrink and adapt to width changes, and their measurement node leaves with the editor.
+- Saving adds a pending chat comment; it neither changes source files nor sends a message.
+  A new diff comment has an explicit **Discard comment** trash action, which closes its draft
+  without touching saved comments. Saved comments use **Delete comment**, including when another
+  tab replaced the saved ID while a changed editor stayed open; deletion stays on the same target.
+  Dirty fields block close, comparison switches and refresh until saved or explicitly discarded or cleared.
+
 ### Rules
 - Amber is the one chrome color. Accent (selected, focused, informational) and primary (the user's
   action: Send, primary buttons) are both amber; in light, accent is the darker text-safe ochre and
@@ -366,12 +457,17 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | `--ring-offset` | `2px` | Outline offset |
 | `--z-header` | `4` | A phone's glass header, over the transcript that scrolls under it |
 | `--z-banner` | `5` | Terminal banners |
-| `--z-popover` | `10` | Composer completions |
+| `--z-popover` | `10` | Composer completions and the comment popover |
 | `--z-scrim` | `15` | Mobile drawer scrim |
 | `--z-drawer` | `20` | Mobile drawer |
 | `--z-modal` | `30` | Dialog scrims |
 | `--z-palette` | `35` | Command palette scrim, over every scrim dialog (a `showModal()` dialog sits in the top layer above it) |
 | `--z-droplet` | `40` | In-app alert, over dialogs |
+
+Dialogs that open over another dialog take a step above `--z-modal`, so what opened last lies on
+top: the file preview `+ 1` (over the file browser), a comment's dialog or sheet `+ 2` (over the
+preview it may open from), a raised Settings and every confirmation `+ 3`, under the palette
+(`--z-palette`, `+ 5`).
 
 ### In-app alert
 
@@ -441,7 +537,10 @@ One set for both themes: the card is island black wherever it shows.
 
 ### Button (`.btn`, `.icon-button`)
 - `.btn` is a medium text control. Variants: neutral, `.btn-primary`, `.btn-danger`, `.btn-ghost`.
-  Primary uses `--primary`; danger uses danger tint plus blocked border; ghost removes fill/edge.
+  Primary uses `--primary`; danger uses danger tint plus blocked border, and keeps both a shade stronger under the pointer instead of the
+  neutral hover grey; ghost removes fill/edge.
+- A destructive action that is not what its dialog is for is ghost; danger is for the
+  confirmation.
 - `.icon-button` is a square unlabeled visual control with mandatory `aria-label`; `.is-outlined`
   adds the border. Both families use `--control-h`, `--radius-md`, focus ring, hover and disabled.
 - Coarse pointers grow controls to `--touch-target`.
@@ -467,7 +566,8 @@ One set for both themes: the card is island black wherever it shows.
   (`--dur-sheet-out`) however it closes. Let go past `30%` of its height, or flicked down, it
   closes through the same close as its scrim; short of that it springs back. A busy dialog
   (a deed pending) does not follow the finger. A stroke on a sheet or its scrim pans nothing
-  behind it (`touch-action: none`); the sheet's own lists still scroll and keep their overscroll.
+  behind it (`touch-action: pinch-zoom`); the sheet's own lists still scroll and keep their overscroll.
+  Files instead permits native panning throughout its content and reserves dismissal for its header.
   A closed sheet's drop is drawn in a closed shadow root, so no query of the page sees it.
   lib/sheets.ts.
 - While a phone's keyboard is up (`data-keyboard`), the scrim is `--app-height` tall instead of the
@@ -816,11 +916,12 @@ One set for both themes: the card is island black wherever it shows.
 - The browser demo answers the same list/create/open/remove worktree APIs with fictional
   checkout records, so its branch rows and dialogs work without a filesystem or live herdr.
 
-### Changes list and diff viewer (`.repo-changes`, `.repo-diff*`)
-- Files has two faces, **Browse** | **Changes** (`.segmented` in its header). **Changes** lists
-  what a comparison changed in the repository the pane sits in: the working tree against the
-  index, the index against HEAD, or two commits named by hand (**From commit**, **To commit**,
-  **Compare**); a Refresh button re-reads it, nothing polls. Under the controls, the branch
+### Retained repository comparison components (`.repo-changes`, `.repo-diff*`)
+- The unified Files browser above replaces the former Browse/Changes tab UI. `RepoChanges`
+  remains covered by its standalone fixture, not mounted as a second tree in Files. Its legacy
+  comparison controls support the working tree against the index, the index against HEAD, or
+  two named commits. These capabilities are not yet exposed by the unified browser's picker.
+  In that retained component, a Refresh button re-reads the list, nothing polls. The branch
   (`Detached HEAD`, `No commits yet`) beside a `GitBranch` glyph and the repository's root, mono,
   cut from its start. The files sit under the folders they are in (lib/changeTree.ts): a
   `.repo-change-folder` button row (caret, `--accent` folder glyph, name, and the count of files
@@ -840,14 +941,16 @@ One set for both themes: the card is island black wherever it shows.
   Empty and refused comparisons say so in the list's own words (`No uncommitted changes`,
   `Nothing staged`, `These commits are the same`, a cut list with its counts, a folder outside
   git, a commit that does not exist, a bridge too old for the routes), never in git's.
-- A row opens `.repo-diff-viewer`, a modal above the list with a history entry of its own
+- The retained repository-diff fixture opens `.repo-diff-viewer`; chat no longer shows a
+  per-turn edited-file list. This modal has a history entry of its own
   (lib/useRepoDiffViewer.ts, as a file preview has): Back, Escape, Close and the scrim each close
   it alone and return the focus to its row; a reload restores it. Its header is the file viewer's:
   the name cut inside its stem, a mono meta line with the status in words (`.repo-diff-status`,
   tinted like the chip), the counts, a `--notice` warning with an icon when the rows are left
   plain or forced to one column, the comparison (`Working tree`, `Staged`, `abc1234..def5678`),
   and the folder giving way first. Its actions: **Unified** | **Split** (`.segmented`, the
-  `diffStyle` setting; Split is disabled at `<=640px` with the reason as its tooltip and the note
+  shared `diffStyle` setting;
+  Split is disabled at `<=640px` with the reason as its tooltip and the note
   in the meta line), **Fold context** (an `aria-pressed` icon button: one unchanged line around
   each change instead of the three git printed, the rest counted in the separators), **Open
   file** (the file viewer, on the PC that holds the repository; not for a deleted file) and
@@ -899,6 +1002,9 @@ One set for both themes: the card is island black wherever it shows.
   document as a `role="status"` a screen reader can read (`.conn-live`; never `display: none`).
 
 ### Chat turn (`.chat-turn`)
+- `.chat-frame-body` is a shrinking flex column that bounds the relative `.chat-view` scroll
+  viewport. Find reserves space above it; a docked comment reserves space in the outer surface
+  layout, never inside the transcript. Header/composer overlap padding stays on the reading view.
 - Native conversation rows use LegendList 3.3.5, with the chat view as the single
   scroll owner. The centered lane, exchange spacing and prompt portal stay separate from
   row lifetime. The list anchors prepends by a browser-local slot, never by a timestamp or
@@ -958,31 +1064,13 @@ One set for both themes: the card is island black wherever it shows.
   never looks like Open raw file), highlighted source with CSS-counter line
   numbers (past 2 000 lines, the virtualizer's numbered rows; see File viewer under Typography),
   and **Copy file** for complete text (selecting the source if clipboard copy fails).
-  There is no separate Raw action. HTML blocks in Markdown files are parsed in the preview worker
+  There is no separate Raw action. A Markdown preview refused by the worker's bounds or parsing
+  shows source with an explicit **Markdown preview is unavailable. Showing source.** status.
+  HTML blocks in Markdown files are parsed in the preview worker
   with HTML enabled; local images still pass through the file endpoint's image-size check.
   The page has an h1 and no Close or new-tab action; the dialog keeps its focus trap and sheet swipe.
   Actions use the existing header icon-button primitive, labels and focus states. On a phone the
-  header is one row: the name cut inside its stem, Show source and Copy, a **More** (Ellipsis)
-  menu holding new tab, raw and download, then Close; the size and folder are left out there unless
-  a partial-view notice is among them. A reader page has no Close.
-  Docked beside the pane (from 980px, `aside.file-panel`) the viewer is a split of the workspace on
-  `--bg` behind one `--border` hairline, not a raised card, and its chrome is two thin rows on
-  hairlines (t3code's file surface subheader, paseo's file panel bar): a header of
-  `--control-h` + `--space-2` with the file's glyph (`FileGlyph`), its name at `--fs-sm`
-  `--fw-medium` cut inside its stem, then the actions as `--control-h` − 6px ghost buttons in one
-  run (popup, new tab, raw, download, copy, Close), never stacked; and a toolbar of `--control-h` −
-  `--space-1` carrying the meta line (size or partial-view notice, folder) and, at its end, the
-  file's view modes as a compact segmented control (**Preview | Source** for Markdown in place of
-  Show source, **Page | Source** for HTML) whose chosen segment is the row's one `--bg-hover` fill.
-  The content fills the panel edge to edge (no inset, radius or frame around a page, PDF or
-  video; code and Markdown keep their `--space-3` inset). The panel's left edge is an unseen
-  `--space-2` grip that draws a 2px `--accent` seam under the pointer, while held and on focus.
-  Under 300px (a 980px window with the sidebar at its widest) the header keeps the name, the
-  popup toggle and Close alone. The panel is its pane's (its paths are read from the pane's
-  folder): selecting another pane or PC closes it (a file in the popup too), and the move takes the
-  file's history entry over, so Back returns to the pane the file was open on, without the file.
-  Closed from inside itself (Close file, Escape) the panel gives the focus back to what opened the
-  file, as the dialog does; a focus already elsewhere (the composer, a sidebar row) stays there.
+  name and Close occupy the first row, with actions below; a reader page has no Close.
   A link keeps `--accent` and a file chip reads in `--text-strong` with a dotted underline; both
   underlines are `--text-dim` at rest and both take the accent on hover and focus-visible.
   Code blocks are `--radius-lg` and never scroll inside: one longer than 30 lines opens at its
@@ -996,6 +1084,45 @@ One set for both themes: the card is island black wherever it shows.
   column is never narrower than its longest word, and a table without room scrolls sideways in
   its own box.
   Thinking renders as a folded block only when **Show thinking** is enabled.
+- Comments are enabled per device by **Settings → Chat → Comments** (default on), only in
+  pane-owned source and Git diff viewers. Chat messages have no comment gestures, pins or
+  highlights; selecting and copying chat text stays native. Legacy reply comments are not counted,
+  navigated or sent by the composer.
+  - Turning Comments off confirms **Turn off and delete** when comments exist, then clears all
+    panes' stored comments on this device, propagating to other tabs, and closes editors. Cancel
+    leaves it enabled; with no comments it disables immediately. Pending message snapshots remain.
+- Source and diff comments share the same gutter, line-range selection and inline editor.
+  A gutter's **+** starts a whole-line comment; dragging across gutter lines selects a range.
+  The editor appears directly below the selected lines, keeping source visible rather than
+  floating a pin or covering the text. Large source files keep their virtualized rendering.
+  - Phones expose touch-friendly gutter controls and range selection without requiring hover or
+    dragging over source text. Controls retain full touch targets. Plain source-text clicks and
+    native source text selections never create comments. In Markdown Preview, selecting text
+    offers an explicit **Comment** action; activating it opens the shared editor. Preview notes
+    retain rendered quotes and source-line references.
+  - Saved comments display inline cards with edit and delete actions. Enter inserts a newline;
+    Cmd/Ctrl+Enter saves. A dirty editor blocks replacement, navigation, walking or Send rather
+    than silently losing a draft. There is no per-comment cap; the combined outgoing message is
+    limited to 20,000 characters.
+  - Preview notes remain stored, counted and sendable, and reopen in their rendered view.
+  - File references show filename and line/range, preserving extension and lines when shortened,
+    with the full path available. Source and diff views use the same comment identity and store.
+  - On load, retain a comment where its saved lines still match, else relocate only to a unique
+    exact match in a complete file. Never relocate within a truncated prefix. Missing, ambiguous,
+    unreadable or unloaded source makes it **outdated**: retain its stored quote and lines, count
+    it and allow editing through an outdated card explaining why it cannot be placed inline.
+  - The file header's comment counter walks in send order, reveals source lines and opens the
+    selected comment; outdated cards remain reachable. Only the composer sends comments.
+  - Composer counts and navigation include file comments only, in send order. Opening a file
+    preserves its target; its counter continues the walk while the composer is covered. Closing
+    it resumes after the last visited file comment, remembered in memory.
+  - Outgoing file quotes are grouped by first-comment file order, then line and selection start.
+    Format: `> path:8` or `> path:42-44`, pane-relative when possible, followed by quoted whole
+    source lines and the unquoted comment. Blank quoted lines are bare `>`. Limits are 200
+    characters per line (around a selection, else its start), 20 lines with `> … (+N lines)` and
+    the original range header, and 2000 characters per quote. Cuts stay on code points and use
+    `…`, included in the limit. Comments go only to an agent, never into a shell, and wait while
+    answering a prompt or sending a command.
 - Auto-follow stops when the reader scrolls up; later output raises a **New messages** pill.
 - An empty chat is greeted from the composer (`.composer-greeting`, below), only where the agent's
   conversation was read and holds no turn. A chat still loading, one whose read failed, an agent
@@ -1249,6 +1376,26 @@ One set for both themes: the card is island black wherever it shows.
   Enter delivery removes the pending row and refreshes the transcript. Next-turn delivery and
   an explicit Send now action claim the same server ID; connection loss never resumes automatic input.
   Previously held browser messages retain their explicit Send now/Discard recovery.
+  A working Send with comments becomes a pending message whose text carries the quotes; the
+  bridge holds it for the agent session that accepted it, and a saved copy sent again with Send
+  now goes agent-only while its text quotes (`hasQuotedLine`), so the quotes never reach a shell.
+- Pending comments appear in `.composer-comments-bar` inside the card, in visual and DOM order:
+  attachments, comments, message, controls. With no comments the bar takes no space. Attachments
+  remain files-only; the status/control row is unchanged. The rail-free rounded bar aligns with
+  attachment/message text, retains full touch targets and unclipped focus rings, and shortens
+  the field's top padding without changing the first line's distance to the controls.
+  - **Goes with the next send** (`is-going`): accent icon and `3 comments` in normal
+    text. **Waits** (`is-waiting`): dim icon and `3 comments waiting` for commands, prompt answers
+    or no agent; the reason is included in the accessible name and tooltip, not color alone.
+  - The sentence is a full-height walk button, named by that sentence and titled **Go to the next
+    comment**. It cycles this pane's file comments, opening source lines or outdated cards.
+    Counts include stored file comments and survive reload. A dirty editor
+    blocks walking or Send and regains focus without submitting anything.
+  - **Remove all comments** is a separate X, kept visible when the sentence ellipsizes. It clears
+    this pane's file comments immediately, without undo or confirmation. Focus returns
+    to the message on hover pointers; on touch it is released without raising the keyboard.
+    Send has no badge: only its name/tooltip includes this send's comment count, never waiting
+    comments. Legacy reply comments never enter the bar or outgoing message.
 - Not connected, the sentence `Reconnecting… message held here, never queued` is said once and
   whole: it is the placeholder while the box is empty and moves into the status content once
   there is a draft (`composerStatusHint`), on a phone too. A sentence there (this one, or
@@ -1294,7 +1441,17 @@ One set for both themes: the card is island black wherever it shows.
   `Held until the agent is ready`, plus `· 2 messages` from two; a translation too long for a
   phone's column takes a second line, it is never cut), then a row per message: its text, still
   a box to edit (transparent until focused, up to four lines, two at `480px` and below),
-  `Send now` and `Discard`. Hairlines between rows run the column's width; every line of text starts `--space-3`
+  `Send now` and `Discard`. A message queued with comments keeps them as a snapshot taken when
+  Queue was pressed: the row shows and edits only what was typed, and before `Send now` sits the
+  comment chip in its going state (`--accent-tint`, `--accent` icon, the count; a `role="img"`
+  that only informs, named "Comments with this message: n", centred on the row's own height). A
+  message of comments alone shows `Comments only` in `--text-dim` in its empty box, and `Send now`
+  stays enabled. `Send now` composes the comments and the typed text at that moment, as the
+  composer does, and a message over the length limit is not sent: the row says "Too long to send.
+  Shorten the message or remove comments." `Discard` drops the message with its comments.
+  A message with comments, sent from here or from the box, goes agent-only; the server refuses it
+  with `agent_only_busy` while a Codex is busy with its own queued questions, so it is never typed
+  into them, and the message and its comments stay. Hairlines between rows run the column's width; every line of text starts `--space-3`
   in. The list, not the group, has the height limit (two and a half rows, then it scrolls), and it
   gives way before the caption does. "Queued messages (n)" and each row's "Message n" stay for
   assistive tech only (`.visually-hidden`).
@@ -1388,10 +1545,11 @@ One set for both themes: the card is island black wherever it shows.
   when none is left). Below 640px the sheet is one fixed height, the chips and footer staying put.
 
 ### Settings dialog
-- A Settings shortcut opened over a file preview places Settings above it (`--z-modal + 2`, one
-  above the preview). Settings owns Escape until it closes; the preview keeps its history entry
-  underneath for the next Back or close. With no preview open Settings stays at `--z-modal`. The
-  command palette opened from its shortcut shows above both (`--z-palette`).
+- A Settings shortcut opened over a file preview or a comment's dialog places Settings above it
+  (`--z-modal + 3`, over the preview and the comment's dialog). Settings owns Escape
+  until it closes; the preview keeps its history entry underneath for the next Back or close. With
+  neither open Settings stays at `--z-modal`. Its confirmations lie above it (`+ 3`, portalled
+  later). The command palette opened from its shortcut shows above both (`--z-palette`).
 - One page at a time. From 641px the dialog is two columns at a fixed size (`--content-w` wide,
   `40rem` tall, so turning a page never moves its edge): a `13rem` list of pages on `--bg`
   (icon + name, the open one on `--bg-hover` with its glyph in `--accent`) and the open page
@@ -1406,15 +1564,15 @@ One set for both themes: the card is island black wherever it shows.
   control, the X, Escape and the scrim take the same entries off. Beside the list, turning pages
   replaces the one entry. A reload steps out of the entries it finds; Forward reopens the page.
 - Pages, in order: **Appearance** (theme, colors, density, language, sidebar rows), **Chat**
-  (panes open in, show thinking, chat width, chat font size and family; then
+  (panes open in, show thinking, comments, chat width, chat font size and family; then
   **Composer**: Enter sends, send queued messages automatically, and on a touch screen the suggestion
-  chip (off by default); then **Quick replies**; then **File viewer**: wrap long
-  lines, Markdown width, Diff layout), **Terminal** (font size, font family, wheel
+  chip (off by default); then **Quick replies**; then **File viewer**: Browse files shortcut,
+  wrap long lines, Markdown width, Diff layout), **Terminal** (font size, font family, wheel
   speed, input mode, Key bar), **Alerts**, **Voice input**, **Subscription usage**,
   **Shortcuts** (the platform-resolved global bindings), **Phone & devices** (the phone address,
   Keep screen on, Install; then Portal, where the server offers it; then paired devices),
-  **Remote PCs**, **About** (Updates, herdr, the repository links). A button that points at
-  Updates opens the dialog on About.
+  **Remote PCs**, **Agent integrations**, **About** (Updates, herdr, the repository links).
+  A button that points at Updates opens the dialog on About.
 - Every page is built from the same parts (`components/SettingsControls.tsx`). A group is an
   optional caption (`--fs-sm`, `--fw-semibold`, `--text-dim`, sentence case) over one card:
   `--bg-elevated`, hairline `--border`, `--radius-lg`, its rows parted by hairlines and never

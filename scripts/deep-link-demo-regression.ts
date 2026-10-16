@@ -238,31 +238,31 @@ try {
       });
       console.log("PASS a link to a Settings group scrolls to and focuses it, and another page drops it from the address");
 
-      // a link to a file opens it beside its pane (a panel from 980px); closing the viewer takes it off the address
+      // a link to a file opens it in Files over its pane; closing the viewer takes it off the address
       await withPage(browser, `?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}&file=README.md`, async (page) => {
-        await page.locator("aside.file-panel .file-viewer").waitFor();
-        assert.equal(await page.locator(".modal.file-viewer, .file-viewer-scrim").count(), 0, "a wide window docks the file, no dialog");
+        await page.locator(".files-dialog .file-viewer").waitFor();
+        assert.equal(await page.locator(".file-viewer-modal, .file-viewer-scrim").count(), 0, "the file uses the single Files dialog");
         await waitQuery(page, "file", "README.md");
-        // the pane beside the panel keeps its own Escape: the panel's is pressed from inside it
-        await page.locator("aside.file-panel").getByRole("button", { name: "Close file", exact: true }).focus();
+        // Escape from inside Files closes its history entry.
+        await page.locator(".files-dialog").getByRole("button", { name: "Close files", exact: true }).focus();
         await page.keyboard.press("Escape");
-        await page.locator("aside.file-panel").waitFor({ state: "detached" });
+        await page.locator(".files-dialog").waitFor({ state: "detached" });
         await waitQuery(page, "file", null);
         await waitQuery(page, "pane", INFRA);
       });
       // a reload restores the viewer from its own entry; Back then closes it for good
       await withPage(browser, `?ws=${wsOf(INFRA)}&pane=${encodeURIComponent(INFRA)}&file=README.md`, async (page) => {
-        await page.locator("aside.file-panel .file-viewer").waitFor();
+        await page.locator(".files-dialog .file-viewer").waitFor();
         await page.reload();
-        await page.locator("aside.file-panel .file-viewer").waitFor();
+        await page.locator(".files-dialog .file-viewer").waitFor();
         await page.goBack();
-        await page.locator("aside.file-panel").waitFor({ state: "detached" });
+        await page.locator(".files-dialog").waitFor({ state: "detached" });
         for (const deadline = Date.now() + 1_500; Date.now() < deadline;) {
           assert.equal(await page.locator(".file-viewer").count(), 0, "the linked file does not open again after Back closed it");
           await page.waitForTimeout(100);
         }
       });
-      console.log("PASS a link to a file opens it beside its pane, and closing the viewer takes it off the address");
+      console.log("PASS a link to a file opens it in Files over its pane, and closing the viewer takes it off the address");
 
       // Copy link puts the address on the clipboard and says so
       await withPage(browser, `?ws=${wsOf(DOCS)}&pane=${encodeURIComponent(DOCS)}`, async (page) => {
@@ -503,7 +503,7 @@ try {
       });
       console.log("PASS a pane Back selects under an open modal does not take the keyboard out of it");
 
-      // Phone touch controls cannot open the palette; resizing restores the Files entry.
+      // The phone header omits the palette; the unified Files browser keeps its folder-browsing action.
       const palettePhone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, locale: "en-US" });
       try {
         await palettePhone.addInitScript(() => localStorage.setItem("herdr-web-ui:settings", JSON.stringify({ language: "en" })));
@@ -519,10 +519,10 @@ try {
         const files = page.getByRole("dialog", { name: "Files", exact: true });
         await files.waitFor();
         // New folder belongs to New workspace's Browse; the Files browser only reads
-        await files.locator(".dir-browser-bar").first().waitFor({ state: "attached" });
-        assert.equal(await files.locator('.dir-browser-bar button[aria-label="New folder"]').count(), 0, "Files has no New folder");
+        await files.locator(".workspace-file-tree").waitFor();
+        assert.equal(await files.getByRole("button", { name: "New folder", exact: true }).count(), 0, "Files has no New folder");
         const browse = files.getByRole("button", { name: "Browse folders in the palette", exact: true });
-        assert.equal(await browse.count(), 0, "Files has no phone palette entry");
+        assert.equal(await browse.count(), 1, "Files keeps folder browsing available on a phone");
         await page.setViewportSize({ width: 1024, height: 768 });
         await browse.waitFor();
         await browse.click();
@@ -531,11 +531,11 @@ try {
         await page.keyboard.press("Escape");
         await palette.waitFor({ state: "detached" });
         await page.setViewportSize({ width: 390, height: 844 });
-        await browse.waitFor({ state: "detached" });
+        await browse.waitFor();
         await page.keyboard.press("ControlOrMeta+Shift+K");
         await palette.waitFor();
       } finally { await palettePhone.close(); }
-      console.log("PASS phone header, More and Files omit palette entry points; wider Files and keyboard shortcuts still open it");
+      console.log("PASS phone header and More omit the palette; Files keeps folder browsing across widths and the keyboard shortcut opens it");
 
       // a phone's ⋯ sheet is an entry of its own: Back closes it and stays on the pane; a sheet
       // closed by Cancel or by an item leaves no entry behind, so the next Back goes to the pane before

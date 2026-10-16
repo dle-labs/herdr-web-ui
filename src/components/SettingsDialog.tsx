@@ -4,6 +4,8 @@ import { ArrowLeft, Bell, Check, ChevronRight, Gauge, Info, Keyboard, MessageSqu
 import "./SettingsDialog.css";
 
 import type { AppActions } from "../lib/actions.ts";
+import { blockComments } from "../lib/blockComments.ts";
+import { hasChangedComment, hasCommentDialog } from "../lib/commentDom.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { SHORTCUTS, bindingDisplayKeys, formatKeys, isMacPlatform, setShortcutRecording, shortcutDisplayKeys, shortcutKeys, shortcutConflict, type ShortcutId } from "../lib/shortcuts.ts";
 import { MENU_SHORTCUT_KEYS, recordShortcut, shortcutMatchesQuery } from "../lib/shortcutRecorder.ts";
@@ -302,6 +304,22 @@ function ChatPage() {
   const { settings, update } = useSettings();
   const t = useT();
   const touch = useMediaQuery("(pointer: coarse)");
+  // Disabling comments deletes device-local drafts, only after an explicit confirmation.
+  const [deleting, setDeleting] = useState<number | null>(null);
+  const commentsToggle = useRef<HTMLButtonElement>(null);
+  const refocusToggle = useRef(false);
+  useEffect(() => {
+    if (deleting !== null || !refocusToggle.current) return;
+    refocusToggle.current = false;
+    commentsToggle.current?.focus({ preventScroll: true });
+  }, [deleting]);
+  const setComments = (on: boolean): void => {
+    if (on) { update({ comments: true }); return; }
+    const stored = blockComments.countAll();
+    const count = stored > 0 ? stored : hasChangedComment(document) ? 1 : 0;
+    if (count === 0) update({ comments: false });
+    else setDeleting(count);
+  };
   return (
     <>
       <SettingsGroup>
@@ -373,6 +391,12 @@ function ChatPage() {
       </SettingsGroup>
 
       <SettingsGroup title={t("File viewer")}>
+        <SettingsRow label={t("Comments")} description={t("Comment on files using line numbers in the source or diff view. Turning this off deletes every comment on this device.")}>
+          <Toggle label={t("Comments")} checked={settings.comments} onChange={setComments} buttonRef={commentsToggle} />
+        </SettingsRow>
+        <SettingsRow label={t("Show Browse files shortcut")} description={t("The folder button appears beside the composer controls. Browse files stays available in the menu.")}>
+          <Toggle label={t("Show Browse files shortcut")} checked={settings.showBrowseFilesShortcut} onChange={(showBrowseFilesShortcut) => update({ showBrowseFilesShortcut })} />
+        </SettingsRow>
         <SettingsRow label={t("Wrap long lines")}>
           <Toggle label={t("Wrap long lines")} checked={settings.wrapCode} onChange={(wrapCode) => update({ wrapCode })} />
         </SettingsRow>
@@ -384,6 +408,12 @@ function ChatPage() {
           <Segmented label={t("Diff layout")} value={settings.diffStyle} onChange={(diffStyle) => update({ diffStyle })} options={DIFF_STYLES.map((diffStyle) => ({ value: diffStyle, label: diffStyle === "split" ? t("Split") : t("Unified") }))} />
         </SettingsRow>
       </SettingsGroup>
+      {deleting !== null && <ConfirmDialog
+        title={deleting === 1 ? t("Delete 1 comment?") : t("Delete {count} comments?", { count: deleting })}
+        body={t("Every saved comment on this device is deleted. This cannot be undone.")}
+        confirmLabel={t("Turn off and delete")}
+        onConfirm={async () => { blockComments.clearAll(); update({ comments: false }); refocusToggle.current = true; setDeleting(null); }}
+        onClose={() => setDeleting(null)} />}
     </>
   );
 }
@@ -892,7 +922,7 @@ function SettingsCrash({ onClose, overPreview }: { onClose: () => void; overPrev
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
   return (
-    <div className={overPreview ? "modal-scrim settings-over-preview" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className={overPreview ? "modal-scrim settings-raised" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div ref={surface} className="modal" role="dialog" aria-modal="true" aria-label={t("Settings")} tabIndex={-1}>
         <RegionCrash message={t("Settings can't be shown.")} retry={onClose} retryLabel={t("Close")} buttonRef={closeRef} />
       </div>
@@ -932,6 +962,8 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
   // Tab stays inside the dialog, and the focus returns to whatever opened it
   const surface = useFocusTrap<HTMLElement>(true, { initialFocus: backRef });
   useSheetSwipe(surface, onClose);
+  // A comment dialog can already be open when the global Settings shortcut runs.
+  const [overComment] = useState(() => hasCommentDialog(document));
   const shown = useRef<{ page: SettingsPage | null; keyBar: boolean } | null>(null);
   const label = (id: SettingsPage): string => t(id === "appearance" ? "Appearance" : id === "chat" ? "Chat" : id === "terminal" ? "Terminal" : id === "alerts" ? "Alerts" : id === "voice" ? "Voice input"
     : id === "usage" ? "Subscription usage" : id === "shortcuts" ? "Shortcuts" : id === "devices" ? "Phone & devices" : id === "remote" ? "Remote PCs" : id === "integrations" ? "Agent integrations" : "About");
@@ -1022,7 +1054,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
   const focusable = page ?? PAGES[0]!.id;
 
   return (
-    <div className={overPreview ? "modal-scrim settings-over-preview" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className={overPreview || overComment ? "modal-scrim settings-raised" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       {/* named Settings on every page: the page's own name is the visible title */}
       <section ref={surface} className="modal settings-dialog" role="dialog" aria-modal="true" aria-label={keyBarOpen ? t("Key bar") : t("Settings")} tabIndex={-1}>
         <header className="modal-header settings-header">
