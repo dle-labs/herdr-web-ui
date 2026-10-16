@@ -12,6 +12,7 @@ import { useSettings, wantsVoiceInput } from "../lib/settings.ts";
 import { isMacPlatform, isVoiceShortcut } from "../lib/shortcuts.ts";
 import { applyDictation, useVoiceInput, type InsertedSpan, type VoiceError, type VoiceInput, type VoiceText, type VoiceUnavailable } from "../lib/voice.ts";
 import { VOICE_MAX_SECONDS, type VoiceMode } from "../../shared/voice.ts";
+import { nativeModalOver } from "../lib/useFocusTrap.ts";
 
 // literal t() calls, so the i18n test finds every key
 function errorNote(t: Translate, error: VoiceError | VoiceUnavailable): string | null {
@@ -33,16 +34,55 @@ function errorNote(t: Translate, error: VoiceError | VoiceUnavailable): string |
 
 const BAR_COUNT = 7;
 
-// Mod+Shift+Space dictates into one mounted field: the focused one, else the composer, else any visible one
-interface VoiceTarget { mode: VoiceMode; box: RefObject<HTMLTextAreaElement | null>; voice: () => VoiceInput; press: () => void }
+/** Comment ownership stays in the UI; the transcription endpoint still receives chat prose. */
+export type DictationMode = VoiceMode | "comment";
+
+interface VoiceTarget {
+  mode: DictationMode;
+  box: RefObject<HTMLTextAreaElement | null>;
+  surface: () => HTMLElement | null;
+  voice: () => VoiceInput;
+  connected: () => boolean;
+  press: () => void;
+}
 const targets = new Set<VoiceTarget>();
 let held: VoiceTarget | null = null;
 
-function shortcutTarget(): VoiceTarget | null {
-  const usable = [...targets].filter((target) => target.voice().available && target.box.current !== null && target.box.current.getClientRects().length > 0);
-  return usable.find((target) => target.box.current === document.activeElement)
+function eligibleTargets(eventTarget: EventTarget | null): VoiceTarget[] {
+  const element = eventTarget instanceof Element ? eventTarget : document.activeElement;
+  const modal = element?.closest("[aria-modal='true'], dialog[open]") ?? null;
+  return [...targets].filter((target) => {
+    const box = target.box.current;
+    const surface = target.surface() ?? box;
+    return box !== null && surface !== null && !nativeModalOver(surface)
+      && surface.getClientRects().length > 0 && (!modal || modal.contains(box));
+  });
+}
+
+function shortcutTarget(eventTarget: EventTarget | null): VoiceTarget | null {
+  const usable = eligibleTargets(eventTarget);
+  const focused = eventTarget instanceof Node ? eventTarget : document.activeElement;
+  // Choose ownership before availability: an unavailable comment never starts the composer.
+  return usable.find((target) => focused !== null && (target.surface() ?? target.box.current)?.contains(focused))
+    ?? usable.find((target) => target.mode === "comment")
     ?? usable.find((target) => target.mode === "chat")
     ?? usable[0] ?? null;
+}
+
+/** Shared with comment dialogs so Escape cancels speech before any editor dismisses itself. */
+export function consumeDictationEscape(event: KeyboardEvent, within?: Element | null): boolean {
+  if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229) return false;
+  const candidates = eligibleTargets(event.target).filter((target) => target.voice().state !== "idle"
+    && (!within || within.contains(target.box.current)));
+  const focused = event.target instanceof Node ? event.target : document.activeElement;
+  const target = candidates.find((candidate) => focused !== null && (candidate.surface() ?? candidate.box.current)?.contains(focused))
+    ?? candidates.find((candidate) => candidate.mode === "comment") ?? candidates[0];
+  if (!target) return false;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (held === target) held = null;
+  target.voice().cancel();
+  return true;
 }
 
 function releaseHeld(): void {
@@ -52,13 +92,14 @@ function releaseHeld(): void {
 }
 
 function onShortcutDown(event: KeyboardEvent): void {
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || consumeDictationEscape(event)) return;
   if (!isVoiceShortcut(event, isMacPlatform())) return;
-  const target = shortcutTarget();
+  const target = shortcutTarget(event.target);
   if (!target) return;
   // a focused terminal must not also get the key (xterm would send ^@ for it)
   event.preventDefault();
-  event.stopPropagation();
-  if (event.repeat || held) return;
+  event.stopImmediatePropagation();
+  if (event.repeat || held || !target.connected() || !target.voice().available) return;
   held = target;
   target.press();
 }
@@ -87,13 +128,15 @@ function registerTarget(target: VoiceTarget): () => void {
 export interface DictationOptions {
   /** A mounted sibling must not own the global shortcut or retain a recording after selection leaves. */
   active?: boolean;
-  mode: VoiceMode;
+  mode: DictationMode;
   connected: boolean;
   polish: boolean;
   /** a phone's input, short of room: the mic is there only when Settings asks for it */
   phone?: boolean;
   keywords?: () => string[];
   box: RefObject<HTMLTextAreaElement | null>;
+  /** The field's editor, including its mic and recording controls, owns shortcuts and Escape. */
+  surface?: RefObject<HTMLElement | null>;
   /** the input's current text */
   read: () => string;
   /** sets the text and puts the caret at `caret`, without taking focus */
@@ -105,10 +148,12 @@ export interface DictationOptions {
 }
 
 export interface Dictation {
-  /** the button and pill are shown at all: settings.voiceInput, and on auto only where dictation can work */
+  /** Comments show disabled controls on Auto/On; other fields preserve upstream availability policy. */
   shown: boolean;
   connected: boolean;
   voice: VoiceInput;
+  /** Abort pending speech and discard queued IME results and polish spans; keep visible text. */
+  cancel: () => void;
   /** drops the polish still owed to text already in the box: the caller is sending that text as it is */
   forget: () => void;
   /** the transcript so far, while it is being made */
@@ -172,11 +217,8 @@ export function useDictation(options: DictationOptions): Dictation {
       element.removeEventListener("compositionend", end);
     };
   }, [options.box, apply]);
-  // a flush already scheduled finds nothing to insert once the field is gone
-  useEffect(() => () => { held.current = []; }, []);
-
   const voice = useVoiceInput({
-    mode: options.mode,
+    mode: options.mode === "comment" ? "chat" : options.mode,
     enabled: wanted,
     polish: options.polish,
     keywords: options.keywords,
@@ -184,13 +226,21 @@ export function useDictation(options: DictationOptions): Dictation {
     onPartial: setPartial,
   });
   const voiceRef = useRef(voice);
-  voiceRef.current = voice;
-  // nobody asked for the button on auto, so one that cannot work here is left out, not shown disabled
-  const shown = wanted && (settings.voiceInput === "on" || voice.available);
+  // Comments keep their mic and its unavailable reason visible, including on phones.
+  // Chat and terminal retain upstream Auto behavior and the phone policy in wantsVoiceInput.
+  const shown = wanted && (options.mode === "comment" || settings.voiceInput === "on" || voice.available);
 
   // a transcript waiting for an IME composition to end is part of what the user cancels
   const engineCancel = voice.cancel;
-  const cancel = useCallback((): void => { held.current = []; engineCancel(); }, [engineCancel]);
+  const cancel = useCallback((): void => {
+    held.current = [];
+    spans.current.clear();
+    setPartial("");
+    engineCancel();
+  }, [engineCancel]);
+  voiceRef.current = { ...voice, cancel };
+  // A scheduled IME flush or late polish finds no work after this field unmounts.
+  useEffect(() => () => { held.current = []; spans.current.clear(); engineCancel(); }, [engineCancel]);
   const forget = useCallback((): void => { spans.current.clear(); held.current = held.current.filter((result) => result.phase === "raw"); }, []);
 
   const press = useCallback((): void => {
@@ -210,25 +260,17 @@ export function useDictation(options: DictationOptions): Dictation {
     if (!options.connected || options.active === false) cancel();
   }, [options.connected, options.active, cancel]);
 
-  const active = voice.state !== "idle";
   useEffect(() => {
-    if (!active) return;
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopPropagation();
-      cancel();
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [active, cancel]);
+    // A comment claims its shortcut even when its mic is hidden or disabled.
+    if ((!shown && options.mode !== "comment") || options.active === false) return;
+    return registerTarget({
+      mode: options.mode, box: options.box,
+      surface: () => latest.current.surface?.current ?? latest.current.box.current,
+      voice: () => voiceRef.current, connected: () => latest.current.connected, press,
+    });
+  }, [shown, press, options.active, options.mode, options.box]);
 
-  useEffect(() => {
-    if (!shown || options.active === false) return;
-    return registerTarget({ mode: latest.current.mode, box: latest.current.box, voice: () => voiceRef.current, press });
-  }, [shown, press, options.active]);
-
-  return { shown, connected: options.connected, voice: { ...voice, cancel }, forget, partial, press };
+  return { shown, connected: options.connected, voice: { ...voice, cancel }, cancel, forget, partial, press };
 }
 
 /** The mic: press to talk, held (release finishes) or tapped (tap again to finish). */

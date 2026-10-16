@@ -8,8 +8,8 @@ import "./HighlightedCode.css";
 
 /**
  * The lines of `code` to show now, and whether they were left plain for being too long. Highlighting
- * never holds the page: short code is highlighted at once, longer code in a worker (shown plain
- * until it answers, or with the colors it had while a reply grows), and code the worker gives up on
+ * never tokenizes on the page: all code is highlighted in a bounded worker (shown plain until it
+ * answers, or with the colors it had while a reply grows), and code the worker gives up on
  * stays plain. Above `limit` characters, or `LINE_ELEMENT_LIMIT` lines, it is not tried at all;
  * otherwise the worker's budget bounds it. In a language it has no grammar for, every code is plain
  * and never too long.
@@ -19,7 +19,7 @@ export function useHighlightedLines(code: string, language: string | null, limit
   const highlighted = canHighlight(language) ? language : null;
   const manyLines = useMemo(() => countLines(source) > LINE_ELEMENT_LIMIT, [source]);
   const overLimit = highlighted !== null && ((limit !== undefined && code.length > limit) || manyLines);
-  // what is known without waiting: no language, too long, short enough, or highlighted before
+  // what is known without waiting: no language, too long, or highlighted before
   const known = useMemo((): Highlighted | null => {
     if (highlighted === null || overLimit) return { lines: plainLines(source), tooLong: overLimit };
     return highlightKnown(source, highlighted);
@@ -58,8 +58,10 @@ interface CodeLinesProps {
   className?: string;
   /** A requested source line; the host has checked that it is among the numbered lines. */
   markedLine?: number | null;
-  /** opens a file path the code names; null leaves every path as text */
-  open: ((path: string) => void) | null;
+  /** opens a file path the code names; absent or null leaves paths as text */
+  open?: ((path: string) => void) | null;
+  /** the source line of the first line: each `.hl-line` carries its number */
+  firstLine?: number;
 }
 
 /**
@@ -68,13 +70,15 @@ interface CodeLinesProps {
  * `wrap` or `lineNumbers` leaves them alone. The line-number gutter is a CSS counter, so it never
  * reaches a copy.
  *
- * The lines are inline spans joined by literal "\n" text nodes (none after the last line), so the
+ * The lines are inline spans, each but the last followed by a literal "\n" text node, so the
  * text of the `<pre>` is the code itself: `innerText` and a copied selection keep every blank line.
  * Block lines would add a line break of their own between lines and drop or double the blank ones.
+ * The "\n" stays outside the `.hl-line`: a line's element holds its text only. The ref is that
+ * `<pre>`: the file viewer selects it when the clipboard is out of reach.
  * Past `LINE_ELEMENT_LIMIT` lines it is one text, as drawing an element per line would hold the page.
  * The ref is that `<pre>`: the file viewer selects it when the clipboard is out of reach.
  */
-export const CodeLines = memo(forwardRef<HTMLPreElement, CodeLinesProps>(function CodeLines({ lines, open, lineNumbers = false, wrap = false, className, markedLine = null }, ref) {
+export const CodeLines = memo(forwardRef<HTMLPreElement, CodeLinesProps>(function CodeLines({ lines, open = null, lineNumbers = false, wrap = false, className, markedLine = null, firstLine }, ref) {
   // one text past LINE_ELEMENT_LIMIT lines, with no numbers then: they are an element per line
   const plain = lines.length > LINE_ELEMENT_LIMIT;
   // index keys: the lines are a static list that is rebuilt as a whole
@@ -82,12 +86,12 @@ export const CodeLines = memo(forwardRef<HTMLPreElement, CodeLinesProps>(functio
     ? linkFilePaths(lines.map((tokens) => tokens.map((token) => token.text).join("")).join("\n"), open)
     : lines.map((tokens, index) => (
       <Fragment key={index}>
-        {index > 0 && "\n"}
-        <span className={index + 1 === markedLine ? "hl-line is-marked" : "hl-line"} data-line={index + 1}>
+        <span className={(firstLine ?? 1) + index === markedLine ? "hl-line is-marked" : "hl-line"} data-line={(firstLine ?? 1) + index} data-source-line={firstLine === undefined ? undefined : firstLine + index}>
           {tokens.map((token, n) => token.role === null ? <Fragment key={n}>{linkFilePaths(token.text, open)}</Fragment> : <span className={`hl-${token.role}`} key={n}>{linkFilePaths(token.text, open)}</span>)}
         </span>
+        {index < lines.length - 1 && "\n"}
       </Fragment>
-    )), [lines, plain, open, markedLine]);
+    )), [lines, plain, open, firstLine, markedLine]);
   const numbered = lineNumbers && !plain;
   // the gutter is as wide as the last line's number, at least two digits
   const gutter = numbered ? { "--hl-digits": String(Math.max(2, String(lines.length).length)) } as CSSProperties : undefined;
@@ -101,22 +105,24 @@ interface HighlightedCodeProps {
   limit?: number;
   /** opens a file path the code names (output, a log); absent, paths stay text */
   open?: ((path: string) => void) | null;
+  /** the source line of the first line (a code block of the file viewer's preview) */
+  firstLine?: number;
 }
 
 /**
  * A code block that highlights itself and, when it was left plain for its length, says so under
- * the code. Every prop is a primitive or a stable callback, so `memo` skips a parent's re-render (a chat reply's other
- * blocks while one grows). A host that says "too long" elsewhere (the file viewer, in its header)
+ * the code. Every prop is a primitive or stable callback, so `memo` skips a parent's re-render.
+ * A host that says "too long" elsewhere (the file viewer, in its header)
  * calls `useHighlightedLines` and draws `CodeLines` itself.
  */
-export const HighlightedCode = memo(function HighlightedCode({ code, language, limit, open = null }: HighlightedCodeProps) {
+export const HighlightedCode = memo(function HighlightedCode({ code, language, limit, open = null, firstLine }: HighlightedCodeProps) {
   const t = useT();
   const { lines, tooLong } = useHighlightedLines(code, language, limit);
   // the whole block is measured, not each token of each line: a block of short lines is as long as its text
   const links = useMemo(() => open !== null && linksFilePaths(code), [code, open]);
   return (
     <>
-      <CodeLines lines={lines} open={links ? open : null} />
+      <CodeLines lines={lines} open={links ? open : null} firstLine={firstLine} />
       {tooLong && <p className="hl-note">{t("Too long to highlight")}</p>}
     </>
   );
