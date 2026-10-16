@@ -1,0 +1,23 @@
+.browse-files-icon {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.browse-files-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.browse-files-dot {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: calc(var(--space-1) + 2 * var(--hairline));
+  height: calc(var(--space-1) + 2 * var(--hairline));
+  border-radius: var(--radius-pill);
+  background: var(--notice);
+  box-shadow: 0 0 0 var(--hairline) var(--bg-panel);
+}

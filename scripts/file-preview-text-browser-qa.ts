@@ -38,23 +38,35 @@ try {
   } });
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const page = await browser.newPage(); page.setDefaultTimeout(10_000);
+  // Plain text has no Markdown preview: TextFileView shows its numbered source directly.
+  // Read the code's text, not its gutter (CSS counters) or the viewer's notices.
+  const source = page.locator(".file-viewer-content > pre.hl-code.file-viewer-text > code");
+  const partialNotice = page.locator(".file-viewer-notice");
   await page.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" })));
   const errors: string[] = [], cancelled: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   page.on("requestfailed", (request) => cancelled.push(request.url()));
   await page.goto(`http://127.0.0.1:${server.port}`);
-  const open = async (path: string) => { await page.evaluate((path) => window.previewQA.open(path), path); await page.getByRole("dialog").waitFor(); };
+  // FileViewer is embedded in the workspace browser now; this focused fixture exercises
+  // that real preview directly, rather than relying on its former standalone dialog role.
+  const viewer = page.locator(".file-viewer-embedded");
+  const open = async (path: string) => { await page.evaluate((path) => window.previewQA.open(path), path); await viewer.waitFor(); };
   await open("error");
   await page.getByRole("alert").filter({ hasText: "The file could not be opened." }).waitFor();
-  assert.equal(await page.locator(".file-viewer-text").count(), 0);
+  assert.equal(await source.count(), 0);
   assert.ok(!(await page.locator("body").innerText()).includes("PRIVATE ERROR BODY"));
-  await open("large"); await page.locator(".file-viewer-text").waitFor();
-  assert.equal((await page.locator(".file-viewer-text").textContent())?.length, 256 * 1024);
-  await page.getByText("Only part of this file is shown. Download it to read the rest.", { exact: true }).waitFor();
+  await open("large"); await source.waitFor();
+  assert.equal((await source.textContent())?.length, 256 * 1024);
+  assert.equal(await partialNotice.getAttribute("title"), "Only part of this file is shown. Download it to read the rest.");
+  assert.equal(await page.getByRole("button", { name: "Copy file", exact: true }).count(), 0);
+  // The header's visible label is the stat's size, not the warning sentence. The tooltip
+  // and its screen-reader text must still explain that this stale-stat response was cut.
+  const partialWarning = partialNotice.locator(".visually-hidden");
+  assert.equal(await partialWarning.textContent(), "Only part of this file is shown. Download it to read the rest.");
   if (process.env.UI_EVIDENCE_DIR) {
     mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByText("Only part of this file is shown. Download it to read the rest.", { exact: true }).scrollIntoViewIfNeeded();
+    await partialNotice.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "text-preview-mobile.png") });
   }
   {
@@ -62,23 +74,27 @@ try {
     const start = performance.now(); await open("headers");
     await page.getByRole("alert").filter({ hasText: "The file could not be opened." }).waitFor();
     assert.ok(performance.now() - start < 6_500, "headers has a bounded deadline");
-    assert.equal(await page.locator(".file-viewer-text").count(), 0);
+    assert.equal(await source.count(), 0);
   }
   {
     // a body that stalls: what arrived by the deadline is shown as a cut prefix, not an error
     const start = performance.now(); await open("body");
-    await page.getByText("Only part of this file is shown. Download it to read the rest.", { exact: true }).waitFor();
+    await source.waitFor();
+    await partialNotice.waitFor();
     assert.ok(performance.now() - start < 6_500, "body has a bounded deadline");
-    assert.equal(await page.locator(".file-viewer-text").textContent(), "partial");
+    assert.equal(await partialNotice.getAttribute("title"), "Only part of this file is shown. Download it to read the rest.");
+    assert.equal(await source.textContent(), "partial");
+    assert.equal(await page.getByRole("alert").count(), 0, "a stalled body keeps its prefix instead of becoming an error");
+    assert.equal(await page.getByRole("button", { name: "Copy file", exact: true }).count(), 0, "a cut prefix cannot be copied as a whole file");
     assert.ok(!(await page.locator("body").innerText()).includes("LATE BODY"));
   }
   const closingResponse = page.waitForResponse((response) => new URL(response.url()).searchParams.get("path") === "close");
   await open("close");
   await closingResponse;
   await page.getByRole("button", { name: "Close file", exact: true }).click();
-  await page.getByRole("dialog").waitFor({ state: "detached" });
+  await viewer.waitFor({ state: "detached" });
   await open("good"); await page.getByText("한글 complete", { exact: true }).waitFor();
-  await page.waitForFunction(() => document.querySelector(".file-viewer-text")?.textContent === "한글 complete");
+  await page.waitForFunction(() => document.querySelector(".file-viewer-content > pre.hl-code.file-viewer-text > code")?.textContent === "한글 complete");
   assert.ok(cancelled.some((url) => new URL(url).searchParams.get("path") === "close"), "closing aborts the active response");
   assert.deepEqual(errors, []);
   for (const timer of timers) clearTimeout(timer);

@@ -121,4 +121,6 @@ export const TERMINAL_JA: Record<string, string> = {
   "Show keyboard": "キーボードを表示",
   "Hide keyboard": "キーボードを非表示",
   "Recover unsent text": "未送信のテキストを復元",
+  "Comments only": "コメントのみ",
+  "Comments with this message: {count}": "このメッセージのコメント: {count}",
 };

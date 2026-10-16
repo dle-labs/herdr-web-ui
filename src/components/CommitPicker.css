@@ -1,0 +1,105 @@
+.commit-picker {
+  --commit-picker-row-height: calc(var(--touch-target) + var(--space-5));
+  position: absolute;
+  inset-inline: 0;
+  top: calc(100% + var(--space-2));
+  z-index: var(--z-popover);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+  max-height: min(calc(var(--app-height, 100dvh) * 0.55), 28rem);
+  overflow: hidden;
+  min-width: 0;
+  padding: var(--space-3);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+}
+
+.commit-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.commit-picker-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.commit-picker-input {
+  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
+}
+
+.commit-picker-list {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: calc(5 * var(--commit-picker-row-height));
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.commit-picker-option {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+  height: var(--commit-picker-row-height);
+  min-height: var(--commit-picker-row-height);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.commit-picker-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-picker-option[aria-selected="true"] {
+  background: var(--accent-tint);
+  color: var(--text-strong);
+}
+
+.commit-picker-meta {
+  display: flex;
+  min-width: 0;
+  gap: var(--space-1) var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.commit-picker-meta code {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+}
+.commit-picker-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit-picker-meta > span:last-child { flex-shrink: 0; }
+
+.commit-picker-status,
+.commit-picker-error {
+  margin: var(--space-2) 0 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+}
+
+.commit-picker-error {
+  color: var(--danger-text);
+}

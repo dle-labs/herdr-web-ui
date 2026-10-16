@@ -53,6 +53,11 @@ export function errorResponse(error: unknown): Response {
   return jsonResponse({ error: { code: "internal_error", message: `internal error (${id})` } }, 500);
 }
 
+/** An authored public error; never pass an arbitrary exception's message here. */
+export function publicErrorResponse(code: string, message: string, status: number, headers: Record<string, string> = {}): Response {
+  return jsonResponse({ error: { code, message } }, status, headers);
+}
+
 export function conflictResponse(code: string, message: string): Response {
   return jsonResponse({ error: { code, message } }, 409);
 }
