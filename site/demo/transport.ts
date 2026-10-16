@@ -30,6 +30,7 @@ import { movedTabOrder } from "../../src/lib/tabOrder.ts";
 import { agentSkillRows, CHATS, DEMO_AGENT_CATALOG, DEMO_PUSH, PROMPT, resumedSession, SESSION_HISTORY_AGENTS, sessionHistoryRows, SPECS, type DemoSpec } from "./fixtures.ts";
 import { DemoHistory } from "./history.ts";
 import { screenAgent, screenCommand, screenFrame } from "./agentScreens.ts";
+import { DEMO_COMMITS, demoGitChanges, demoGitDiff } from "./gitDiff.ts";
 import machinesFixture from "./fixtures/machines.json";
 import agentsFixture from "./fixtures/agents.json";
 import commandsFixture from "./fixtures/commands.json";
@@ -759,6 +760,12 @@ function closeAgentScreen(paneId: string, text: string): void {
   drawAgentScreen(paneId);
 }
 
+/** The demo agent's chat in a pane; a pane without one has no agent to take a message. */
+function chatOf(paneId: string) {
+  const key = keyOfPane.get(paneId);
+  return key ? chats.get(key) : undefined;
+}
+
 /** The bridge takes one accepted pending message when the current mock turn finishes. */
 /**
  * The first messages create requests queued for new panes' agents (`first_message`), by pane, as the
@@ -823,8 +830,7 @@ function finishDemoTurn(paneId: string, status: "idle" | "done" = "done"): void 
  * bridge would have (the transcript, or the card for a dialog); one no row lists stays unknown.
  */
 function submitToChat(paneId: string, text: string): void {
-  const key = keyOfPane.get(paneId);
-  const chat = key ? chats.get(key) : undefined;
+  const chat = chatOf(paneId);
   if (!chat) return;
   const command = sentCommand(paneId, text);
   if (command?.form?.interaction === "terminal") {
@@ -1845,9 +1851,35 @@ async function route(url: URL, method: string, init: RequestInit | undefined, in
     const parent = String(body["path"] ?? "/home/demo");
     return json({ path: `${parent.replace(/\/$/, "")}/${name}` }, 201);
   }
+  if (path === "/api/workspace/commits" || path === "/api/workspace/files") {
+    if (method !== "GET") return error("method_not_allowed", "use GET", 400);
+    if (!query.get("pane_id")?.trim()) return error("missing_pane_id", "pane_id query parameter is required", 400);
+    const pane = snapshot().panes.find((pane) => pane.pane_id === query.get("pane_id"));
+    if (!pane) return error("pane_not_found", "no such demo pane", 404);
+    const needle = (query.get("query") ?? "").trim().toLowerCase();
+    if (path.endsWith("/commits")) return json({ commits: DEMO_COMMITS.filter((commit) => commit.id.includes(needle) || commit.subject.toLowerCase().includes(needle)), truncated: false });
+    const files = ["README.md", "src/greeting.ts", "src/new.ts"].filter((file) => {
+      let at = 0;
+      for (const character of file.toLowerCase()) if (character === needle[at]) at++;
+      return at === needle.length;
+    });
+    return json({ root: pane.foreground_cwd ?? pane.cwd ?? "/home/demo/project", files, truncated: false });
+  }
+  if (path === "/api/workspace/changes" || path === "/api/workspace/diff") {
+    const pane = snapshot().panes.find((pane) => pane.pane_id === query.get("pane_id"));
+    if (!pane) return error("pane_not_found", "no such demo pane", 404);
+    const mode = query.get("mode") ?? "all";
+    if (mode !== "all" && mode !== "unstaged" && mode !== "staged") return error("invalid_mode", "unknown comparison", 400);
+    const root = pane.foreground_cwd ?? pane.cwd ?? "/home/demo/project";
+    const baseCommit = query.get("base_commit")?.toLowerCase();
+    if (baseCommit !== undefined && (mode !== "all" || !DEMO_COMMITS.some((commit) => commit.id === baseCommit))) return error("invalid_base_commit", "base_commit must name a demo commit and requires mode=all", 400);
+    if (path === "/api/workspace/changes") return json(demoGitChanges(root, mode, baseCommit));
+    const diff = demoGitDiff(root, mode, query.get("path") ?? "", baseCommit);
+    return diff === null ? error("git_path_not_changed", "no such changed demo file", 404) : json(diff);
+  }
   if (path === "/api/workspace/directories") {
     const dir = query.get("path") || "/home/demo";
-    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "cli-tools"] : [], truncated: false, files: [] });
+    return json({ path: dir, parent: dir === "/" ? null : dir.replace(/\/[^/]*$/, "") || "/", home: "/home/demo", directories: dir === "/home/demo" ? ["checkout-api", "cli-tools"] : [], truncated: false, ...(query.get("files") === "1" ? { files: [], ignored_directories: [] } : {}) });
   }
   if (path === "/api/workspace/create") {
     const body = await bodyOf(init, input);
@@ -2136,7 +2168,7 @@ class DemoSocket extends EventTarget {
       const open = new Event("open");
       this.onopen?.(open);
       this.dispatchEvent(open);
-      this.push({ type: "snapshot", snapshot: readSnapshot(local)!, features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "ping", "terminal-insert", "agent-only"], connection: this.connection });
+      this.push({ type: "snapshot", snapshot: readSnapshot(local)!, features: ["submit", "pending-input", "pending-hold", "secret-input", "input-ready", "conversation-watch", "ping", "terminal-insert", "agent-only", "submit-agent-only"], connection: this.connection });
     }, 20);
     this.timers.add(opening);
   }
@@ -2330,10 +2362,12 @@ class DemoSocket extends EventTarget {
           else if (queued && (text.trim().length === 0 || text.length > 20_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(text))) code = "invalid_submit_text";
           else if (badFraming) code = "invalid_submit_text";
           else if (queued) code = this.pendingTargetError(message.pane_id);
+          // like the bridge: a message only an agent may get is refused where none runs
+          else if (message.agent_only && !chatOf(message.pane_id)) code = "agent_not_found";
           if (code) {
             const framingRefused = badFraming && code === "invalid_submit_text";
             const reply: Extract<ServerMessage, { type: "submit-result" }> = { type: "submit-result", id: message.id, pane_id: message.pane_id, ok: false, code,
-              message: framingRefused ? `A message must be at most ${framingLimit} characters, without terminal control characters or paste markers, and sent as the composer shapes it; nothing was typed` : code === "agent_not_ready" ? NO_AGENT_MESSAGE : "The demo agent cannot take this submission." };
+              typed: false, message: framingRefused ? `A message must be at most ${framingLimit} characters, without terminal control characters or paste markers, and sent as the composer shapes it; nothing was typed` : code === "agent_not_ready" ? NO_AGENT_MESSAGE : "The demo agent cannot take this submission." };
             if (resendKey !== null && this.mode !== "observe" && code !== "pending_limit" && !framingRefused && !previous) heldCopyResends.set(resendKey, { text, reply, at: Date.now() });
             this.completeRequest(reply);
             break;
@@ -2447,7 +2481,7 @@ class DemoSocket extends EventTarget {
     if (!this.attached.has(paneId)) return "not_attached";
     const pane = paneOf(paneId);
     if (!pane) return "pane_not_found";
-    if (!(pane.agent ?? pane.agent_session?.agent)) return "agent_not_ready";
+    if (!(pane.agent ?? pane.agent_session?.agent)) return "agent_not_found";
     if (keyOfPane.get(paneId) === "web" && promptOpen) return "agent_blocked";
     if (pane.agent_status === "blocked") return "agent_blocked";
     if (!["working", "idle", "done"].includes(pane.agent_status)) return "agent_not_ready";

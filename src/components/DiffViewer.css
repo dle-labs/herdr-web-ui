@@ -1,0 +1,32 @@
+/* Shared by source files and Git diffs. The utility must stack above line numbers. */
+.diff-comment-plus {
+  position: relative;
+  z-index: 4;
+  appearance: none;
+  padding: 0;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary-text);
+  background: var(--primary);
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  width: var(--space-5);
+  height: var(--space-5);
+}
+.diff-comment-plus svg { width: var(--space-4); height: var(--space-4); }
+.diff-comment-card { display: flex; flex-direction: column; text-align: start; gap: var(--space-2); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg-elevated); color: var(--text); border: var(--hairline) solid var(--border); border-radius: var(--radius-md); padding: var(--space-3); margin-block: var(--space-2); width: 100%; cursor: pointer; font-family: var(--font-ui); }
+.diff-comment-card span:first-child { font-size: var(--fs-xs); color: var(--text-dim); }
+.diff-comment-editor { width: 100%; min-width: 0; margin-block: var(--space-2); box-shadow: none; }
+.diff-comment-actions, .diff-comment-heading { display: flex; align-items: center; gap: var(--space-2); }
+.diff-comment-heading { font-size: var(--fs-xs); overflow-wrap: anywhere; justify-content: space-between; }
+.diff-comment-actions { justify-content: space-between; font-size: var(--fs-xs); color: var(--text-dim); }
+.diff-outdated { margin-block-start: var(--space-4); }
+.diff-outdated h3 { font-size: var(--fs-sm); color: var(--text-dim); }
+@media (max-width: 768px) {
+  .diff-comment-plus { width: var(--touch-target); height: var(--touch-target); }
+  .diff-comment-actions { flex-wrap: wrap; }
+  .diff-comment-actions > span { flex: 1; min-width: 0; }
+}

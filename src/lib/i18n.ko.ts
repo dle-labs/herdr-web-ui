@@ -27,6 +27,15 @@ const BASE: Record<string, string> = {
   "Goal": "목표",
   "Waiting for your answer": "답변을 기다리는 중",
   "Back": "뒤로",
+  "Find files…": "파일 찾기…",
+  "Search commits…": "커밋 검색…",
+  "Working changes": "작업 중인 변경 사항",
+  "Could not load files": "파일을 불러오지 못했습니다",
+  "Could not load commits": "커밋을 불러오지 못했습니다",
+  "More results available. Refine your search.": "결과가 더 있습니다. 검색어를 구체화하세요.",
+  "Compare with…": "다음과 비교…",
+  "Working tree": "작업 트리",
+  "All files": "모든 파일",
   "Scroll pane up": "패널 위로 스크롤",
   "Scroll pane down": "패널 아래로 스크롤",
   "Find in terminal": "터미널에서 찾기",
@@ -160,9 +169,11 @@ const BASE: Record<string, string> = {
 
   // ---- files ----
   "Files": "파일",
+  "Reveal in file tree": "파일 트리에서 표시",
   "This image is {size}; download it to view.": "이 이미지는 {size}입니다. 보려면 다운로드하세요.",
   "Download": "내려받기",
   "Open {path}": "{path} 열기",
+  "Preview": "미리보기",
 
   // ---- PC dialog ----
   "Continue": "계속",
@@ -185,6 +196,7 @@ const BASE: Record<string, string> = {
   "Pairing code": "페어링 코드",
   "Open this address on your phone": "폰에서 이 주소를 여세요",
   "{agent} is ready": "{agent} 준비 완료",
+
 
 
   // ---- composer ----
@@ -237,6 +249,7 @@ const BASE: Record<string, string> = {
 
   // ---- devices ----
   "Loading…": "불러오는 중…",
+  "Select a file to view.": "볼 파일을 선택하세요.",
   "Done": "완료",
 
   // ---- phone ----
@@ -296,6 +309,7 @@ const BASE: Record<string, string> = {
   "This pane can't be shown.": "이 패널을 표시할 수 없습니다.",
   "The sidebar can't be shown.": "사이드바를 표시할 수 없습니다.",
   "Diff layout": "비교 보기 방식",
+  "Changed files": "변경된 파일",
   "Unified": "한 열",
   "Split": "나란히",
   // t3code ports (a)
@@ -326,6 +340,34 @@ const BASE: Record<string, string> = {
   "Weekly": "주간",
   "Open terminal": "터미널 열기",
   "Sign in to {agent}": "{agent}에 로그인",
+  "Add comment": "댓글 추가",
+  "Binary files cannot be displayed as a text diff.": "바이너리 파일은 텍스트 비교로 표시할 수 없습니다.",
+  "Close comment": "댓글 닫기",
+  "Comment": "코멘트",
+  "Delete comment": "댓글 삭제",
+  "Discard comment": "댓글 버리기",
+  "File diff": "파일 비교",
+  "Markdown view": "Markdown 보기",
+  "Diff": "차이",
+  "Files changed while this diff was loading. Refresh to review the latest changes.": "비교를 불러오는 동안 파일이 변경되었습니다. 새로고침하여 최신 변경 사항을 확인하세요.",
+  "Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs.": "Git 변경 사항을 불러오지 못했습니다. 패널이 Git 저장소에 있고 브리지가 파일 비교를 지원하는지 확인하세요.",
+  "Go to the next comment": "다음 댓글로 이동",
+  "Line {line}": "{line}번째 줄",
+  "Lines {first}–{last}": "{first}–{last}번째 줄",
+  "New": "새 버전",
+  "No changes in this comparison.": "이 비교에는 변경 사항이 없습니다.",
+  "Old": "이전 버전",
+  "Outdated comments": "이전 버전의 댓글",
+  "Save comment": "댓글 저장",
+  "Saved comments are included with your next chat message.": "저장된 댓글은 다음 채팅 메시지에 포함됩니다.",
+  "This diff could not be displayed.": "이 파일 비교를 표시하지 못했습니다.",
+  "This diff could not be loaded. The file may have changed, be too large, or have unresolved conflicts.": "파일 비교를 불러오지 못했습니다. 파일이 변경되었거나 너무 크거나 해결되지 않은 충돌이 있을 수 있습니다.",
+  "This folder listing is incomplete.": "이 폴더의 일부 항목만 표시됩니다.",
+  "Too long to send. Shorten the message or remove comments.": "너무 길어서 보낼 수 없습니다. 메시지를 줄이거나 댓글을 삭제하세요.",
+  "Write a comment…": "댓글 쓰기…",
+  "{count} comment": "댓글 {count}개",
+  "{count} comments": "댓글 {count}개",
+  "Wrap long lines": "긴 줄 바꿈",
 };
 
 /** The parts KO is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

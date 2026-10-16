@@ -5,32 +5,21 @@ import { Database } from "bun:sqlite";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, type Locator, type Page } from "playwright-core";
+import { chromium, type Locator } from "playwright-core";
 import { createServer } from "../server/index.ts";
 import { forgetPageMedia, PAGE_MEDIA_LIFETIME_MS, pageFileHooks, pageMediaResponse } from "../server/file-view.ts";
 import { herdrRpc, workspaceClose, workspaceCreate } from "../server/herdr/client.ts";
 import { openSettingsPage } from "./settings-page.ts";
-
-/** a file action: its button in the header, or up to 600px the item in the header's More menu */
-async function fileAction(scope: Locator | Page, name: string): Promise<Locator> {
-  const link = scope.getByRole("link", { name, exact: true });
-  if (await link.isVisible()) return link;
-  const item = scope.getByRole("menuitem", { name, exact: true });
-  if (!(await item.isVisible())) await scope.getByRole("button", { name: "More", exact: true }).click();
-  await item.waitFor();
-  return item;
-}
 import { sheetsSettled } from "./sheets-settled.ts";
-import { runMoreItem } from "./header-more.ts";
 import type { Machine } from "../shared/protocol.ts";
+import { FAVICON_CANDIDATES } from "../server/project-favicon.ts";
 import { chromePath } from "./chrome-path.ts";
 import { routeDrained } from "./drained-route.ts";
 
-const openFiles = async (page: import("playwright-core").Page) => {
-  const headerButton = page.locator(".header-files-button");
-  if (await headerButton.isVisible()) await headerButton.click();
-  else await runMoreItem(page, "Browse files");
-};
+// CSS locators pierce the File renderer's open shadow root.
+const sourceRows = (scope: Locator) => scope.locator(".source-comments-file [data-line]");
+const sourceText = async (scope: Locator) => (await sourceRows(scope).allTextContents()).map((line) => line.replace(/\r?\n$/, "")).join("\n");
+const markedSource = (scope: Locator) => scope.locator(".source-comments-file [data-line][data-selected-line]");
 
 const root = mkdtempSync(join(tmpdir(), "ovis-file-back-"));
 const reportServer = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(
@@ -56,7 +45,7 @@ const fidelitySources = ["const last = 7;\n\n", "first\n", "first\n\nlast", "\n"
 writeFileSync(transcript, [
   { type: "session_meta", payload: { id: thread, cwd: root } },
   { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Show me the demo video." }] } },
-  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [guide](./docs/guide.md) or [big](./big.txt) or [big code](./big.ts) or [mid code](./mid.ts) or [deep quotes](./deep.md) or [empty](./empty.txt) or [slow preview](./slow.md) or [long notes](./long.md) or [many lines](./lines.txt) or [long list](./list.md) or [contents page](./toc.html) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}) or [web report](${reportUrl}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}\n\n\`\`\`ts\nconst answer = 42;\n\nexport { answer };\n\`\`\`\n\n${chatImages}` }] } },
+  { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Open [demo video](./preview.webm) or [notes](./notes.txt) or [guide](./docs/guide.md) or [diagram](./docs/diagram.md) or [big](./big.txt) or [big code](./big.ts) or [mid code](./mid.ts) or [deep quotes](./deep.md) or [empty](./empty.txt) or [slow preview](./slow.md) or [long notes](./long.md) or [many lines](./lines.txt) or [long list](./list.md) or [contents page](./toc.html) or [file URI notes](${new URL(`file://${join(root, "notes.txt")}`).href}) or [folder](${new URL(`file://${root}`).href}) or [web report](${reportUrl}).\n\n${new URL(`file://${join(root, "notes.txt")}`).href}\n\n\`\`\`ts\nconst answer = 42;\n\nexport { answer };\n\`\`\`\n\n${chatImages}` }] } },
   // a block the highlighter is quadratic on (a line of dashes in YAML): seconds on the page
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: "References: [source column](./target.ts:60:8), [source range](./target.ts#L60-L65), [Markdown line](./docs/guide.md#L6), [past end](./notes.txt:999), [past preview](./big.txt:999999), [capped line](./lines.txt:5)." }] } },
   { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: `Dashes:\n\n\`\`\`yaml\n${"-".repeat(90_000)}\n\`\`\`` }] } },
@@ -155,9 +144,10 @@ writeFileSync(join(root, "other.md"), "# Other notes\n\nLinked from the preview.
 writeFileSync(join(root, "chart #? % 한글.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="teal"/></svg>');
 writeFileSync(join(root, "preview.svg"), '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="80"><rect width="240" height="80" fill="teal"/></svg>');
 writeFileSync(join(root, "broken.png"), "not PNG bytes");
+// in a subfolder, so a link is resolved from the file's folder (../notes.txt), not the pane's
+writeFileSync(join(root, "docs", "diagram.md"), "# Diagram preview\n\n```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```\n\n![Local dot](./dot.png)\n");
+writeFileSync(join(root, "docs", "dot.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4ZsAAAAASUVORK5CYII=", "base64"));
 let workspace: string | undefined;
-// a second workspace, for the pane moves of the docked block alone
-let otherWorkspace: string | undefined;
 let server: ReturnType<typeof createServer> | undefined;
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
 
@@ -182,13 +172,24 @@ try {
   browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await context.newPage();
-  // seeded once: a later step changes a setting and reloads. The chat's own font size and
-  // family are set, so a Markdown preview can be shown to take them over. Long tasks are recorded
-  // from the first paint: nothing an agent writes may hold the page for a second
+  // Seeded once: a later step changes a setting and reloads. The preview inherits the chat's
+  // Georgia font at 17px. Record long tasks from the first paint: nothing an agent writes may
+  // hold the page for a second.
   await page.addInitScript(() => {
-    // the app's own document only: a sandboxed HTML page the viewer frames has no storage to seed
+    // This app fixture must not access storage inside sandboxed HTML file frames.
     if (window.top !== window) return;
-    if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", chatFontSize: 17, chatFontFamily: "Georgia", fileOpen: "panel", webLinks: "panel" }));
+    // Shiki handles the old pathological Markdown input efficiently. Exercise
+    // the worker deadline deterministically instead of relying on machine speed.
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      postMessage(message: unknown, options?: Transferable[] | StructuredSerializeOptions): void {
+        const job = message as { request?: { language?: string; source?: string } };
+        if (job?.request?.language === "markdown" && job.request.source?.startsWith("Notes on a slow file.")) return;
+        if (Array.isArray(options)) super.postMessage(message, options);
+        else super.postMessage(message, options);
+      }
+    };
+    if (localStorage.getItem("ovis:settings") === null) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", fileOpen: "panel", webLinks: "panel", chatFontSize: 17, chatFontFamily: "Georgia" }));
     const record = window as unknown as { longTasks: number[] };
     record.longTasks = [];
     new PerformanceObserver((list) => { for (const entry of list.getEntries()) record.longTasks.push(entry.duration); }).observe({ type: "longtask" });
@@ -280,26 +281,19 @@ try {
     (window as unknown as { testDocument: string }).testDocument = "same-document";
   });
   const baseline = await page.evaluate(() => history.length);
-  // a dialog below 980px, a panel beside the pane (role complementary) from there
-  const preview = page.getByRole("dialog", { name: "preview.webm", exact: true }).or(page.getByRole("complementary", { name: "preview.webm", exact: true }));
+  const preview = page.getByRole("dialog", { name: "Files", exact: true });
   await videoLink.click();
-  await preview.locator("video").waitFor();
+  await preview.locator(".file-viewer-embedded video").waitFor();
+  assert.equal(await page.getByRole("dialog").count(), 1, "chat file links open the single Files dialog");
+  assert.equal(await page.locator(".file-viewer-scrim, .file-viewer-modal").count(), 0, "no standalone file viewer surface remains");
+  await preview.locator('.file-viewer-embedded [role="region"]').waitFor();
+  await preview.getByRole("button", { name: "Back to files", exact: true }).click();
+  await preview.locator(".workspace-file-tree").waitFor();
+  assert.equal(await preview.locator(".changes-detail").isVisible(), false, "Back to files returns to the phone tree");
+  await preview.locator('.workspace-tree-row[title="preview.webm"]').click();
+  await preview.locator(".file-viewer-embedded video").waitFor();
   await page.waitForFunction(() => (document.querySelector("video")?.readyState ?? 0) >= 1);
   assert.equal(await page.evaluate(() => history.length), baseline + 1);
-  // a phone's file header is one row: the name, its actions and Close side by side, no size/folder line
-  const headerRow = await preview.locator(".file-viewer-header").evaluate((header) => {
-    const middle = (element: Element | null) => { const box = element?.getBoundingClientRect(); return box ? box.top + box.height / 2 : NaN; };
-    const meta = header.querySelector(".file-viewer-meta");
-    return {
-      title: middle(header.querySelector(".modal-title")),
-      actions: middle(header.querySelector(".file-viewer-actions")),
-      close: middle(header.querySelector(".file-viewer-close")),
-      metaShown: meta !== null && getComputedStyle(meta).display !== "none",
-    };
-  });
-  assert.ok(Math.abs(headerRow.title - headerRow.close) < 4 && Math.abs(headerRow.actions - headerRow.close) < 4,
-    `a phone's file header keeps the name, the actions and Close on one row (${JSON.stringify(headerRow)})`);
-  assert.equal(headerRow.metaShown, false, "a phone's file header leaves the size and folder out");
   if (process.env.UI_EVIDENCE_DIR) {
     mkdirSync(process.env.UI_EVIDENCE_DIR, { recursive: true });
     await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "mobile-video-open.png") });
@@ -317,7 +311,7 @@ try {
 
   await page.goForward();
   await preview.waitFor();
-  await preview.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await preview.waitFor({ state: "hidden" });
   // Repeated opens must not accumulate extra history entries.
   await videoLink.click();
@@ -327,42 +321,12 @@ try {
   await preview.waitFor({ state: "hidden" });
   await videoLink.click();
   await preview.waitFor();
-  // A press on the backdrop itself closes the viewer. On a touch device the viewer fills the
-  // scrim edge to edge, so the press is sent to the scrim rather than aimed at an exposed pixel.
-  // (From 980px the file is a panel beside the pane, with no scrim: see the docked block below.)
-  await page.locator(".file-viewer-scrim").evaluate((scrim) => scrim.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+  // The integrated Files backdrop owns dismissal, not a second viewer scrim.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.locator(".workspace-files-scrim").evaluate((scrim) => scrim.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
   await preview.waitFor({ state: "hidden" });
-  console.log("PASS Forward restores the viewer; X, Escape and scrim close consume its entry");
-
-  // the one-row header's worst case, a Markdown dialog at 320px: Show source, Copy, More and Close
-  // leave the name room, and More holds new tab, raw and download
-  await page.setViewportSize({ width: 320, height: 700 });
-  const narrowGuide = page.getByRole("dialog", { name: "guide.md", exact: true });
-  await page.getByRole("button", { name: "guide", exact: true }).click();
-  await narrowGuide.locator(".file-viewer-header .file-viewer-close").waitFor();
-  const narrowRow = await narrowGuide.locator(".file-viewer-header").evaluate((header) => {
-    const box = (selector: string) => header.querySelector(selector)?.getBoundingClientRect();
-    const title = box(".modal-title"), close = box(".file-viewer-close"), actions = box(".file-viewer-actions");
-    return { titleWidth: title?.width ?? 0, titleMiddle: title ? title.top + title.height / 2 : NaN, closeMiddle: close ? close.top + close.height / 2 : NaN, actionsRight: actions?.right ?? NaN, closeLeft: close?.left ?? NaN };
-  });
-  assert.ok(Math.abs(narrowRow.titleMiddle - narrowRow.closeMiddle) < 4 && narrowRow.actionsRight <= narrowRow.closeLeft + 1,
-    `a 320px Markdown header stays one row (${JSON.stringify(narrowRow)})`);
-  assert.ok(narrowRow.titleWidth >= 64, `a 320px Markdown header leaves the name room (${narrowRow.titleWidth}px)`);
-  await narrowGuide.getByRole("button", { name: "More", exact: true }).click();
-  assert.deepEqual((await narrowGuide.getByRole("menuitem").allTextContents()).map((item) => item.trim()), ["Open in a new tab", "Open raw file", "Download"]);
-  assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), "Open in a new tab", "More's menu takes the focus on its first item");
-  await page.keyboard.press("ArrowDown");
-  assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), "Open raw file", "Down moves to the next item");
-  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "mobile-markdown-more-320.png") });
-  await page.keyboard.press("Escape");
-  await narrowGuide.getByRole("menu").waitFor({ state: "detached" });
-  assert.equal(await narrowGuide.count(), 1, "Escape closes the More menu, not the file");
-  assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "More", "and gives the focus back to More");
-  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "mobile-markdown-320.png") });
-  await page.goBack();
-  await narrowGuide.waitFor({ state: "hidden" });
   await page.setViewportSize({ width: 390, height: 844 });
-  console.log("PASS a phone's Markdown header stays one row at 320px and keeps new tab, raw and download in More");
+  console.log("PASS Forward restores the viewer; Close files, Escape and scrim close consume its entry");
 
   // The Settings shortcut must open a visible dialog above the preview. Its history entries
   // retain the file beneath it, so only Settings may handle Escape until those entries land.
@@ -402,9 +366,9 @@ try {
     await page.waitForFunction(() => history.state?.["ovis:settings"] === undefined);
     await preview.waitFor();
     assert.deepEqual(await page.evaluate(() => history.state["ovis:file-preview"]), previewEntry, "Escape closes only Settings and preserves the preview entry");
-    await preview.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await preview.waitFor({ state: "hidden" });
-    assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, "one click on Close file consumes the preview entry");
+    assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, "one click on Close files consumes the preview entry");
     assert.equal(await composer.inputValue(), "Keep my mobile draft");
 
     // System Back follows the same order, preserving the document instead of closing the file.
@@ -416,10 +380,10 @@ try {
     await page.goBack();
     await settings.waitFor({ state: "hidden" });
     await preview.waitFor();
-    await preview.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await preview.waitFor({ state: "hidden" });
     assert.equal(await page.evaluate(() => (window as unknown as { testDocument: string }).testDocument), "same-document");
-    console.log(`PASS Settings opens above the preview at ${width}px; Escape and Back preserve it, then X closes the file once`);
+    console.log(`PASS Settings opens above the preview at ${width}px; Escape and Back preserve it, then Close files dismisses Files once`);
   }
 
   // Add PC from Settings over a preview: Settings closes, the preview stays mounted beneath, and
@@ -454,7 +418,7 @@ try {
   await addPc.waitFor({ state: "hidden" });
   assert.equal(await page.locator(".file-viewer").count(), 1, "Escape over Add PC leaves the preview beneath it");
   assert.deepEqual(await page.evaluate(() => history.state["ovis:file-preview"]), previewUnderAddPc, "Escape over Add PC preserves the preview entry");
-  await preview.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await preview.waitFor({ state: "hidden" });
   console.log("PASS Add PC opened from Settings over a preview keeps Tab inside Add PC, and its Escape closes Add PC alone");
 
@@ -509,369 +473,13 @@ try {
   await page.keyboard.press("Escape");
   await settingsAlone.waitFor({ state: "hidden" });
   await preview.waitFor();
-  await preview.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await preview.waitFor({ state: "hidden" });
-  console.log("PASS the command palette opens above Settings over a preview; Escape closes the palette, then Settings, then X the file");
-
-  // Wide windows choose by kind, and an explicit move replaces only the preview's entry.
-  const notesLink = page.getByRole("button", { name: "notes", exact: true });
-  const textPopup = page.getByRole("dialog", { name: "notes.txt", exact: true });
-  const panel = page.locator("aside.file-panel");
-  const setFileOpen = async (fileOpen: string | null) => {
-    await page.evaluate((fileOpen) => {
-      const { fileOpen: _, ...settings } = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as Record<string, unknown>;
-      localStorage.setItem("ovis:settings", JSON.stringify(fileOpen === null ? settings : { ...settings, fileOpen }));
-    }, fileOpen);
-    await page.reload();
-  };
-  // with Open files at its default, even text opens in the popup; Beside the pane is a choice
-  await setFileOpen(null);
-  // Reloaded images can move the following transcript between pointer down and up. This checks
-  // presentation/history, not pointer targeting; activate the file by keyboard on its fresh node.
-  await notesLink.press("Enter");
-  await textPopup.getByText("File preview history regression", { exact: true }).waitFor();
-  assert.equal(await panel.count(), 0, "text starts in the popup at 1280px by default");
-  await textPopup.getByRole("button", { name: "Close file", exact: true }).click();
-  await textPopup.waitFor({ state: "detached" });
-  await setFileOpen("panel");
-  console.log("PASS by default a text file opens in the popup on a wide window");
-  const beforePlacement = await page.evaluate(() => history.state);
-  await videoLink.click();
-  await page.locator(".modal.file-viewer video").waitFor();
-  assert.equal(await panel.count(), 0, "video starts in the popup at 1280px");
-  const videoHistoryLength = await page.evaluate(() => history.length);
-  await preview.getByRole("button", { name: "Show beside the pane", exact: true }).click();
-  await panel.locator("video").waitFor();
-  assert.equal(await page.evaluate(() => history.length), videoHistoryLength, "moving a video adds no entry");
-  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "video-moved-to-panel-1280.png") });
-  await panel.getByRole("button", { name: "Close file", exact: true }).click();
-  await panel.waitFor({ state: "detached" });
-  assert.deepEqual(await page.evaluate(() => history.state), beforePlacement, "one Close consumes the moved video's entry");
-  await notesLink.press("Enter");
-  await panel.getByText("File preview history regression", { exact: true }).waitFor();
-  const textHistoryLength = await page.evaluate(() => history.length);
-  await panel.getByRole("button", { name: "Show as a popup", exact: true }).click();
-  await textPopup.waitFor();
-  assert.equal(await panel.count(), 0, "moving text removes its panel");
-  await page.reload();
-  await textPopup.getByText("File preview history regression", { exact: true }).waitFor();
-  assert.equal(await panel.count(), 0, "reload keeps the explicit popup choice");
-  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "text-moved-to-popup-1280.png") });
-  await page.goBack();
-  await textPopup.waitFor({ state: "detached" });
-  assert.deepEqual(await page.evaluate(() => history.state), beforePlacement, "one Back consumes the moved text entry");
-  await page.goForward();
-  await textPopup.waitFor();
-  await textPopup.getByRole("button", { name: "Show beside the pane", exact: true }).click();
-  await panel.getByText("File preview history regression", { exact: true }).waitFor();
-  assert.equal(await page.evaluate(() => history.length), textHistoryLength, "reload, Forward and moves add no entry");
-  await panel.getByRole("button", { name: "Close file", exact: true }).click();
-  await panel.waitFor({ state: "detached" });
-  console.log("PASS video defaults to popup, text defaults to panel, both move, reload and Forward keep the choice, and Close/Back consume one entry");
-
-  // From 980px a text file opens in a panel beside the pane, not a dialog over it: no scrim, the pane
-  // keeps its clicks, the panel's left edge drags its width (kept on this device across a reload),
-  // Escape closes it only from inside it, and Close file takes the panel and its entry away.
-  const panelWidth = () => panel.evaluate((element) => element.getBoundingClientRect().width);
-  await notesLink.press("Enter");
-  await panel.getByText("File preview history regression", { exact: true }).waitFor();
-  assert.equal(await page.locator(".modal-scrim, .file-viewer-scrim, .modal.file-viewer, [aria-modal='true']").count(), 0, "a docked file has no scrim and no dialog");
-  const paneBox = await page.locator(".app-body > .pane-column").boundingBox();
-  const panelBox = await panel.boundingBox();
-  assert.ok(paneBox && panelBox && paneBox.x + paneBox.width <= panelBox.x + 1, `the pane ends where the panel starts: ${JSON.stringify({ paneBox, panelBox })}`);
-  if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "file-panel-docked-1280.png") });
-  // a click on the pane lands in it (Playwright refuses a click a layer would take), and the panel stays
-  await composer.click();
-  assert.equal(await composer.evaluate((input) => document.activeElement === input), true, "the pane beside the panel takes a click");
-  assert.equal(await panel.count(), 1, "a click in the pane leaves the panel open");
-  assert.equal(await composer.inputValue(), "Keep my mobile draft");
-  // Escape from inside the panel closes it and takes its entry off, and the focus it held goes
-  // back to the link that opened the file, as it does from the popup
-  await panel.locator(".file-panel-resizer").focus();
-  await page.keyboard.press("Escape");
-  await panel.waitFor({ state: "detached" });
-  assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, "Escape in the panel consumes the preview entry");
-  // A history traversal removes the panel and restores focus: detachment alone is not the
-  // focus signal. Keep the focus assertion, but wait for the state it actually checks.
-  await page.waitForFunction((link) => document.activeElement === link, await notesLink.elementHandle());
-  assert.equal(await notesLink.evaluate((link) => document.activeElement === link), true, "Escape in the panel returns the focus to the link that opened the file");
-  // the left edge dragged 100px to the left widens the panel by as much, and the width is stored
-  await notesLink.press("Enter");
-  await panel.getByText("File preview history regression", { exact: true }).waitFor();
-  const before = await panelWidth();
-  const grip = await panel.locator(".file-panel-resizer").boundingBox();
-  assert.ok(grip, "the panel's edge is laid out");
-  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(grip.x + grip.width / 2 - 100, grip.y + grip.height / 2, { steps: 5 });
-  await page.mouse.up();
-  const stored = Number(await (await page.waitForFunction(() => localStorage.getItem("ovis:file-panel-width"))).jsonValue());
-  assert.ok(Math.abs(stored - (before + 100)) <= 2, `dragging the edge 100px widens the panel 100px: ${before} -> ${stored}`);
-  await page.waitForFunction((want) => Math.abs((document.querySelector("aside.file-panel")?.getBoundingClientRect().width ?? 0) - want) <= 1, stored);
-  // a reload restores the file from its entry, at the stored width
-  await page.reload();
-  await panel.getByText("File preview history regression", { exact: true }).waitFor();
-  assert.ok(Math.abs(await panelWidth() - stored) <= 1, `a reload keeps the dragged width: ${await panelWidth()} vs ${stored}`);
-  // a double-click on the edge puts the default width back and forgets the stored one, so the
-  // steps after this one see the panel as a fresh device does
-  await panel.locator(".file-panel-resizer").dblclick();
-  await page.waitForFunction(() => localStorage.getItem("ovis:file-panel-width") === null);
-  await page.waitForFunction((want) => Math.abs((document.querySelector("aside.file-panel")?.getBoundingClientRect().width ?? 0) - want) <= 1, before);
-  await panel.getByRole("button", { name: "Close file", exact: true }).click();
-  await panel.waitFor({ state: "detached" });
-  assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, "Close file consumes the preview entry");
-  console.log("PASS from 980px a file is a panel beside the pane: no scrim, the pane takes clicks, its edge drags and keeps its width, Escape inside and Close file close it");
-  // a page the reader navigates inside its frame (a click on its table of contents; a script setting
-  // location.hash once the page has loaded does the same) puts an entry of its own above the
-  // preview's in the session history: Close file and Escape must still close the panel and consume
-  // the preview's entry, not step the frame back and leave the panel there (#1203)
-  const contentsLink = page.getByRole("button", { name: "contents page", exact: true });
-  for (const close of ["Close file", "Escape"]) {
-    await contentsLink.click();
-    const framed = page.frameLocator(".file-viewer-page");
-    await framed.getByText("contents ran", { exact: true }).waitFor();
-    const opened = await page.evaluate(() => history.length);
-    await framed.locator("#toc").click();
-    await page.waitForFunction((length) => history.length === length + 1, opened);
-    if (close === "Escape") { await panel.locator(".file-panel-resizer").focus(); await page.keyboard.press("Escape"); }
-    else await panel.getByRole("button", { name: "Close file", exact: true }).click();
-    await panel.waitFor({ state: "detached" });
-    assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, `${close} consumes the preview entry under a page the reader navigated inside its frame`);
-  }
-  console.log("PASS from 980px a page the reader navigated inside its frame still closes on Close file and Escape, consuming the preview's entry");
-  // a file chosen in the Files dialog opens in the panel, and the dialog, which would cover it, closes
-  await openFiles(page);
-  const filesDialog = page.getByRole("dialog", { name: "Files", exact: true });
-  await filesDialog.getByRole("button", { name: /preview\.webm/ }).click();
-  await page.locator(".modal.file-viewer video").waitFor();
-  assert.equal(await filesDialog.count(), 1, "a media popup stacks over Files");
-  await preview.getByRole("button", { name: "Close file", exact: true }).click();
-  await preview.waitFor({ state: "detached" });
-  await filesDialog.waitFor();
-  await filesDialog.getByRole("button", { name: /notes\.txt/ }).click();
-  await filesDialog.waitFor({ state: "detached" });
-  await panel.getByText("File preview history regression", { exact: true }).waitFor();
-  await panel.getByRole("button", { name: "Close file", exact: true }).click();
-  await panel.waitFor({ state: "detached" });
-  assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, "Close file consumes the entry of a file opened from Files");
-  console.log("PASS from 980px a file opened from the Files dialog shows in the panel and the dialog closes");
-
-  for (const [label, content] of [["extensionless", "Extensionless text"], ["unknown text", "Unknown extension text"]] as const) {
-    const link = page.getByRole("button", { name: label, exact: true });
-    await link.click();
-    await panel.getByText(content, { exact: true }).waitFor();
-    assert.equal(await page.locator(".modal.file-viewer").count(), 0, "real text metadata corrects an unknown-extension popup guess");
-    await panel.getByRole("button", { name: "Close file", exact: true }).click();
-    await panel.waitFor({ state: "detached" });
-    // whether the panel was the first guess or the correction of a popup, Close file gives the focus back to the link
-    assert.equal(await link.evaluate((button) => document.activeElement === button), true, `Close file returns the focus to the ${label} link that opened the file`);
-  }
-  await page.getByRole("button", { name: "dotted folder", exact: true }).click();
-  const folderPopup = page.locator(".modal.file-viewer");
-  await folderPopup.getByRole("button", { name: /inside\.txt/ }).waitFor();
-  assert.equal(await panel.count(), 0, "a 404 directory listing corrects a text-extension panel guess");
-  await folderPopup.getByRole("button", { name: /inside\.txt/ }).click();
-  const insidePopup = page.getByRole("dialog", { name: "inside.txt", exact: true });
-  await insidePopup.getByText("Chosen inside the popup", { exact: true }).waitFor();
-  await page.reload();
-  await insidePopup.getByText("Chosen inside the popup", { exact: true }).waitFor();
-  assert.equal(await panel.count(), 0, "choosing text inside a popup keeps the popup across reload");
-  await insidePopup.getByRole("button", { name: "Close file", exact: true }).click();
-  await insidePopup.waitFor({ state: "detached" });
-  console.log("PASS late metadata corrects extensionless text and a dotted directory; choosing a file inside keeps the presentation");
-
-  // Remembered maxima must yield to the pane, both after reload and a viewport reduction.
-  await notesLink.press("Enter");
-  await panel.getByText("File preview history regression", { exact: true }).waitFor();
-  await page.evaluate(() => {
-    localStorage.setItem("ovis:sidebar-width", "520");
-    localStorage.setItem("ovis:file-panel-width", "900");
-  });
-  await page.reload();
-  await panel.getByText("File preview history regression", { exact: true }).waitFor();
-  const showSidebar = page.getByRole("button", { name: "Show workspace list", exact: true });
-  if (await showSidebar.count()) await showSidebar.click();
-  for (const width of [1280, 981, 980]) {
-    await page.setViewportSize({ width, height: 800 });
-    if (width === 980) {
-      await page.reload();
-      await panel.getByText("File preview history regression", { exact: true }).waitFor();
-    }
-    const geometry = await page.evaluate(() => ({
-      pane: document.querySelector(".pane-column")?.getBoundingClientRect().width ?? 0,
-      panelRight: document.querySelector(".file-panel")?.getBoundingClientRect().right ?? Infinity,
-      sidebar: document.querySelector(".sidebar")?.getBoundingClientRect().width ?? 0,
-      viewport: window.innerWidth,
-    }));
-    assert.equal(geometry.sidebar, Math.min(520, width / 2), "the sidebar is expanded at its maximum");
-    assert.ok(geometry.pane >= 320, `a maximum sidebar and panel leave a 320px pane: ${JSON.stringify(geometry)}`);
-    assert.ok(geometry.panelRight <= geometry.viewport, `the panel stays inside the viewport: ${JSON.stringify(geometry)}`);
-    const separator = panel.getByRole("separator", { name: "Resize file panel", exact: true });
-    await separator.focus();
-    await page.keyboard.press("End");
-    await page.waitForFunction(() => {
-      const panel = document.querySelector(".file-panel");
-      const edge = panel?.querySelector("[role='separator']");
-      return edge?.getAttribute("aria-valuemax") === String(Math.floor(panel?.getBoundingClientRect().width ?? 0));
-    });
-    assert.equal(Number(await separator.getAttribute("aria-valuemin")), Math.min(320, Math.floor(width - geometry.sidebar - 320)));
-    assert.ok(Number(await separator.getAttribute("aria-valuenow")) <= Number(await separator.getAttribute("aria-valuemax")), "fractional layout widths never exceed the integer ARIA maximum");
-    if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `file-panel-maxima-${width}.png`) });
-  }
-  await panel.getByRole("button", { name: "Close file", exact: true }).click();
-  await panel.waitFor({ state: "detached" });
-  await page.evaluate(() => {
-    localStorage.removeItem("ovis:sidebar-width");
-    localStorage.removeItem("ovis:file-panel-width");
-  });
-  await page.reload();
-  await videoLink.waitFor();
-  console.log("PASS remembered width maxima at 1280px and 980px preserve a 320px pane, keep the panel onscreen, and match the resizer limits");
-
-  // The file beside the pane is the pane's: selecting another pane closes it, and the move takes
-  // the file's entry over, so Back returns to the first pane without the file (DESIGN.md)
-  const other = await workspaceCreate({ cwd: root, label: "ovis-test-file-back-other" });
-  otherWorkspace = other.workspace.workspace_id;
-  const otherPane = other.root_pane.pane_id;
-  const selectedPane = () => page.evaluate(() => new URLSearchParams(location.search).get("pane"));
-  const rowOf = (paneId: string) => page.locator(`.workspace-select[data-pane=${JSON.stringify(paneId)}]`);
-  if (await showSidebar.count()) await showSidebar.click();
-  await rowOf(otherPane).waitFor();
-  await notesLink.press("Enter");
-  await panel.getByText("File preview history regression", { exact: true }).waitFor();
-  const openLength = await page.evaluate(() => history.length);
-  await rowOf(otherPane).click();
-  await page.waitForFunction((paneId) => new URLSearchParams(location.search).get("pane") === paneId, otherPane);
-  // the panel unmounts on the render after the address moves: wait for that, bounded, then judge
-  await panel.waitFor({ state: "detached", timeout: 5_000 }).catch(() => {});
-  assert.equal(await panel.count(), 0, "selecting another pane closes the file open beside the first");
-  assert.equal(await page.evaluate(() => history.length), openLength, "the move takes the file's entry over: no entry is pushed");
-  assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, "the other pane's entry holds no file");
-  assert.equal(new URL(page.url()).searchParams.has("file"), false, "the other pane's address names no file");
-  await page.goBack();
-  await page.waitForFunction((paneId) => new URLSearchParams(location.search).get("pane") === paneId, pane);
-  assert.equal(await panel.count(), 0, "Back returns to the first pane without the file");
-  assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, "Back lands on no file entry");
-  assert.equal(new URL(page.url()).searchParams.has("file"), false, "the first pane's address names no file either");
-  console.log("PASS selecting another pane closes the panel and takes its entry over; Back returns to the pane without the file");
-  // two moves (there and back) leave entries behind the pane: the handoff below then has room for a stray second step to show
-  await rowOf(otherPane).click();
-  await page.waitForFunction((paneId) => new URLSearchParams(location.search).get("pane") === paneId, otherPane);
-  await rowOf(pane).click();
-  await page.waitForFunction((paneId) => new URLSearchParams(location.search).get("pane") === paneId, pane);
-  await videoLink.waitFor();
-
-  await openFiles(page);
-  await filesDialog.getByRole("button", { name: "Changes", exact: true }).click();
-  const beforeMediaDiff = await page.evaluate(() => history.state);
-  await filesDialog.locator(".repo-change").filter({ hasText: "preview.webm" }).click();
-  const mediaDiff = page.locator(".repo-diff-viewer");
-  await mediaDiff.waitFor();
-  await mediaDiff.getByRole("button", { name: "Open file", exact: true }).click();
-  await page.locator(".modal.file-viewer video").waitFor();
-  assert.equal(await mediaDiff.count(), 1, "wide media popup keeps the diff beneath it");
-  assert.equal(await panel.count(), 0, "wide media handoff does not dock");
-  await preview.getByRole("button", { name: "Close file", exact: true }).click();
-  await preview.waitFor({ state: "detached" });
-  await mediaDiff.getByRole("button", { name: "Open file", exact: true }).click();
-  await page.locator(".modal.file-viewer video").waitFor();
-  await preview.getByRole("button", { name: "Show beside the pane", exact: true }).click();
-  await panel.locator("video").waitFor();
-  await mediaDiff.waitFor({ state: "detached" });
-  await filesDialog.waitFor({ state: "detached" });
-  await panel.getByRole("button", { name: "Close file", exact: true }).click();
-  await panel.waitFor({ state: "detached" });
-  assert.deepEqual(await page.evaluate(() => history.state), beforeMediaDiff, "moving a stacked popup to the panel hands off the diff entry; one Close returns to its opener");
-  // two clicks on Show beside the pane before the first has landed (or a text file's automatic
-  // move in the same moment) collapse the stack once, not twice: a second pair of steps would
-  // land on the pane moves above and open the file a second time
-  await openFiles(page);
-  await filesDialog.getByRole("button", { name: "Changes", exact: true }).click();
-  await filesDialog.locator(".repo-change").filter({ hasText: "preview.webm" }).click();
-  await mediaDiff.waitFor();
-  await mediaDiff.getByRole("button", { name: "Open file", exact: true }).click();
-  await page.locator(".modal.file-viewer video").waitFor();
-  // both clicks in one task, before the traversal the first asks for can land
-  await preview.getByRole("button", { name: "Show beside the pane", exact: true }).evaluate((button: HTMLElement) => { button.click(); button.click(); });
-  await panel.locator("video").waitFor();
-  await mediaDiff.waitFor({ state: "detached" });
-  await panel.getByRole("button", { name: "Close file", exact: true }).click();
-  await panel.waitFor({ state: "detached" });
-  assert.deepEqual(await page.evaluate(() => ({ state: history.state, pane: new URLSearchParams(location.search).get("pane") })), { state: beforeMediaDiff, pane }, "two clicks collapse once: one Close returns to the diff's opener, on the same pane");
-  await openFiles(page);
-  await filesDialog.getByRole("button", { name: "Changes", exact: true }).click();
-  await filesDialog.locator(".repo-change").filter({ hasText: "preview.webm" }).click();
-  await mediaDiff.waitFor();
-  await mediaDiff.getByRole("button", { name: "Close diff", exact: true }).click();
-  await mediaDiff.waitFor({ state: "detached" });
-  await filesDialog.getByRole("button", { name: "Close files", exact: true }).click();
-  await filesDialog.waitFor({ state: "detached" });
-  console.log("PASS a wide video handoff stacks above the diff and Close file returns to the diff, also after two clicks");
-  // back over the two pane moves, so the steps after this one start from the pane's own entry
-  await page.goBack();
-  await page.waitForFunction((paneId) => new URLSearchParams(location.search).get("pane") === paneId, otherPane);
-  await page.goBack();
-  await page.waitForFunction((paneId) => new URLSearchParams(location.search).get("pane") === paneId, pane);
-  await videoLink.waitFor();
-  await workspaceClose(otherWorkspace);
-  otherWorkspace = undefined;
-  await rowOf(otherPane).waitFor({ state: "detached" });
-  assert.equal(await selectedPane(), pane, "closing the other workspace leaves the selection on the pane");
-
-  // The actual App and server, with a readable file in the owned pane's repository.
-  for (const width of [1280, 980, 979]) {
-    await page.setViewportSize({ width, height: 800 });
-    await openFiles(page);
-    await filesDialog.getByRole("button", { name: "Changes", exact: true }).click();
-    const beforeDiff = await page.evaluate(() => ({ state: history.state, url: location.href }));
-    await filesDialog.locator(".repo-change").filter({ hasText: "notes.txt" }).click();
-    const diff = page.locator(".repo-diff-viewer");
-    await diff.waitFor();
-    const diffLength = await page.evaluate(() => history.length);
-    await diff.getByRole("button", { name: "Open file", exact: true }).click();
-    if (width < 980) {
-      const modal = page.getByRole("dialog", { name: "notes.txt", exact: true });
-      await modal.getByText("File preview history regression", { exact: true }).waitFor();
-      assert.equal(await diff.count(), 1, "below 980px the modal file keeps the diff beneath it");
-      await modal.getByRole("button", { name: "Close file", exact: true }).click();
-      await modal.waitFor({ state: "detached" });
-      await diff.waitFor();
-      await diff.getByRole("button", { name: "Close diff", exact: true }).click();
-      await diff.waitFor({ state: "detached" });
-      await filesDialog.getByRole("button", { name: "Close files", exact: true }).click();
-      await filesDialog.waitFor({ state: "detached" });
-      console.log("PASS real App below 980px keeps the modal file above the diff; Close file returns to the diff");
-      continue;
-    }
-    await panel.getByText("File preview history regression", { exact: true }).waitFor();
-    await diff.waitFor({ state: "detached" });
-    await filesDialog.waitFor({ state: "detached" });
-    assert.equal(await page.evaluate(() => history.length), diffLength, "the file replaces rather than pushes over the diff");
-    assert.equal(await page.evaluate(() => history.state?.["ovis:repo-diff"]), undefined, "no stale diff target remains in the file entry");
-    const close = panel.getByRole("button", { name: "Close file", exact: true });
-    assert.equal(await close.evaluate((button) => {
-      const rect = button.getBoundingClientRect();
-      return button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
-    }), true, "Close file is hit-testable in the interactive panel");
-    if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `file-panel-diff-to-file-${width}.png`) });
-    await close.click();
-    await panel.waitFor({ state: "detached" });
-    assert.equal(await diff.count(), 0, "one Close file does not uncover the diff");
-    assert.deepEqual(await page.evaluate(() => ({ state: history.state, url: location.href })), beforeDiff, "one Close file returns to where the diff opened");
-    await page.goForward();
-    await panel.getByText("File preview history regression", { exact: true }).waitFor();
-    await page.reload();
-    await panel.getByText("File preview history regression", { exact: true }).waitFor();
-    assert.equal(await page.locator(".repo-diff-scrim, .files-dialog").count(), 0, "reload restores only the file panel");
-    await page.goBack();
-    await panel.waitFor({ state: "detached" });
-    assert.deepEqual(await page.evaluate(() => ({ state: history.state, url: location.href })), beforeDiff, "one Back consumes the handed-off entry after reload");
-    console.log(`PASS real App ${width}px diff -> readable file closes both dialogs, exposes Close file, replaces history, reloads, and consumes one Close/Back without a stale diff`);
-  }
+  console.log("PASS the command palette opens above Settings over a preview; Escape closes the palette, then Settings, then Close files dismisses Files");
   await page.setViewportSize({ width: 390, height: 844 });
 
   await page.getByRole("button", { name: "notes", exact: true }).click();
-  const notes = page.getByRole("dialog", { name: "notes.txt", exact: true });
+  const notes = preview;
   await notes.getByText("File preview history regression", { exact: true }).waitFor();
   await page.reload();
   await notes.getByText("File preview history regression", { exact: true }).waitFor();
@@ -880,7 +488,7 @@ try {
   await videoLink.waitFor();
   await videoLink.click();
   await preview.waitFor();
-  await preview.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await preview.waitFor({ state: "hidden" });
   await page.goBack();
   assert.equal(page.url(), `${origin}/api/health`, "no ghost modal entry or back trap after explicit close");
@@ -888,37 +496,51 @@ try {
   console.log("PASS text preview survives reload; closed viewers leave normal Back navigation intact");
   await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
   await page.getByRole("button", { name: "file URI notes", exact: true }).tap();
-  await page.locator(".file-viewer-text").waitFor();
-  assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
+  await sourceRows(preview).first().waitFor();
+  assert.match(await sourceText(preview), /File preview history regression/);
   console.log("PASS Chat file URI label opens file content through touch");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "folder", exact: true }).tap();
   await page.locator(".file-viewer .dir-browser").waitFor();
   await page.locator(".file-viewer .dir-browser").getByRole("button", { name: /notes.txt/ }).tap();
-  await page.locator(".file-viewer-text").waitFor();
-  assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
+  await sourceRows(preview).first().waitFor();
+  assert.match(await sourceText(preview), /File preview history regression/);
   console.log("PASS Chat folder URI opens directory browser through touch");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: new URL(`file://${join(root, "notes.txt")}`).href, exact: true }).tap();
-  await page.locator(".file-viewer-text").waitFor();
-  assert.match(await page.locator(".file-viewer-text").innerText(), /File preview history regression/);
+  await sourceRows(preview).first().waitFor();
+  assert.match(await sourceText(preview), /File preview history regression/);
   console.log("PASS Chat plain file URI opens content through touch");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
-  // Markdown: Show source, reader tab, Open raw file, Download, Copy; no Wrap (a setting)
-  const guide = page.getByRole("dialog", { name: "guide.md", exact: true });
+  // A Markdown document linked from chat resolves its diagram and local image inside Files.
+  await page.getByRole("button", { name: "diagram", exact: true }).click();
+  const diagram = preview.getByRole("region", { name: "diagram.md", exact: true });
+  await diagram.getByRole("heading", { name: "Diagram preview", exact: true }).waitFor();
+  await diagram.locator(".markdown-mermaid svg").waitFor();
+  await diagram.getByRole("button", { name: "Enlarge diagram", exact: true }).waitFor();
+  await page.waitForFunction(() => {
+    const image = document.querySelector<HTMLImageElement>('.file-viewer-markdown img[alt="Local dot"]');
+    return image?.complete && image.naturalWidth === 1;
+  });
+  await preview.getByRole("button", { name: "Close files", exact: true }).click();
+  await preview.waitFor({ state: "hidden" });
+  console.log("PASS A chat-linked Markdown diagram and its relative image render inside Files");
+
+  // Markdown: Show source, reader tab, Open raw file, Download, Copy; shared Wrap in Files.
+  const guide = preview;
   await page.getByRole("button", { name: "guide", exact: true }).click();
   await guide.getByRole("heading", { name: "Guide", exact: true }).waitFor();
   await guide.locator(".hl-keyword", { hasText: "const" }).waitFor();
   assert.equal(await guide.getByRole("button", { name: "Show source", exact: true }).getAttribute("aria-pressed"), "false");
   // a new tab is an in-app view in an installed app on a phone, where saving is not always offered
-  const download = guide.getByRole("link", { name: "Download", exact: true, includeHidden: true });
+  const download = guide.getByRole("link", { name: "Download", exact: true });
   assert.equal(await download.getAttribute("download"), "guide.md", "the file can be saved from the viewer");
   assert.match(await download.getAttribute("href") ?? "", /\/api\/fs\/file\?.*download=1/);
-  assert.equal(await guide.getByRole("button", { name: "Wrap long lines", exact: true }).count(), 0, "Wrap is for code, not the rendered Markdown");
+  assert.equal(await guide.locator(".files-dialog-header").getByRole("button", { name: "Wrap long lines", exact: true }).count(), 1, "the shared wrap toggle stays in Files while Markdown is previewed");
   console.log("PASS Markdown opens as a Preview with a highlighted code block");
   // the preview reads as the chat does: its font size and family, and at most its lane's width
   const textStyle = (selector: string) => page.locator(selector).first().evaluate((element) => {
@@ -937,49 +559,45 @@ try {
   assert.ok(Math.abs(Number.parseFloat(previewText.headingSize ?? "") - 18 * 17 / 14) < 0.05, `its headings scale with it: ${previewText.headingSize}`);
   assert.equal(await page.locator(".file-viewer-markdown").evaluate((element) => getComputedStyle(element).maxWidth), "820px", "Default is the chat's Default lane");
   // on a wide screen the Default lane follows the pane (71.43% of it, up to 60rem): the preview
-  // follows with it, as wide as the chat beside it, not the 820px floor. The file is a panel beside
-  // the pane at this width, so the window is wide enough for the pane to reach the 60rem cap beside it
-  await page.setViewportSize({ width: 2560, height: 1080 });
-  const maxWidth = await page.waitForFunction(() => {
+  // follows with it, as wide as the chat beside it, not the 820px floor
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.waitForFunction(() => {
     const preview = document.querySelector(".file-viewer-markdown");
     const chat = document.querySelector(".chat-transcript");
-    const maxWidth = preview === null ? "" : getComputedStyle(preview).maxWidth;
-    return chat !== null && maxWidth === `${chat.getBoundingClientRect().width}px` && maxWidth === "960px" ? maxWidth : false;
+    return preview !== null && chat !== null && getComputedStyle(preview).maxWidth === `${chat.getBoundingClientRect().width}px`;
   });
-  assert.equal(await maxWidth.jsonValue(), "960px", "Default is as wide as the chat's lane");
+  assert.equal(await page.locator(".file-viewer-markdown").evaluate((element) => getComputedStyle(element).maxWidth), "960px", "Default is as wide as the chat's lane");
   // the lane is the opening pane's, written on the viewer: one length on the document would be
   // shared, and overwritten, by two panes side by side
   assert.deepEqual(await page.evaluate(() => ({
     root: document.documentElement.style.getPropertyValue("--chat-w"),
-    // docked (this width), the viewer's surface is its panel
-    viewer: (document.querySelector<HTMLElement>("aside.file-panel") ?? document.querySelector<HTMLElement>(".file-viewer"))?.style.getPropertyValue("--chat-w") !== "",
+    viewer: document.querySelector<HTMLElement>(".file-viewer")?.style.getPropertyValue("--chat-w") !== "",
   })), { root: "", viewer: true }, "the viewer carries the lane, not the document");
   await page.setViewportSize({ width: 390, height: 844 });
   assert.match(await guide.locator(".file-viewer-markdown pre, .file-viewer-markdown .hl-code").first().evaluate((element) => getComputedStyle(element).fontFamily), /monospace/, "its code stays monospace");
   console.log("PASS A Markdown preview takes the chat's font size, font and width");
   await guide.getByRole("button", { name: "Show source", exact: true }).click();
-  await guide.locator(".file-viewer-text .hl-line").first().waitFor();
-  // seven lines and the empty one after the final newline, which the source keeps (#710)
-  assert.equal(await guide.locator(".file-viewer-text .hl-line").count(), 8);
-  assert.match(await guide.locator(".file-viewer-text").innerText(), /# Guide/);
-  // the gutter is drawn: every line counts itself in a box of its own, which the text leaves out
-  assert.equal(await guide.locator(".file-viewer-text[data-line-numbers]").count(), 1, "a gutter");
-  assert.match(await guide.locator(".file-viewer-text").evaluate((pre) => getComputedStyle(pre).counterReset), /\bline\b/);
-  const gutter = await guide.locator(".file-viewer-text .hl-line").evaluateAll((lines) => lines.map((line) => {
-    const before = getComputedStyle(line, "::before");
-    return { content: before.content, width: parseFloat(before.width) || 0 };
-  }));
-  assert.ok(gutter.every((line) => line.content === "counter(line)" && line.width > 0), `numbers drawn: ${JSON.stringify(gutter)}`);
-  assert.doesNotMatch(await guide.locator(".file-viewer-text").innerText(), /^1/);
+  await sourceRows(guide).first().waitFor();
+  assert.match(await sourceText(guide), /# Guide/);
+  const gutter = guide.locator(".source-comments-file [data-column-number]");
+  assert.equal(await gutter.count(), await sourceRows(guide).count(), "each source row has a gutter number");
+  assert.equal(await gutter.first().getAttribute("data-column-number"), "1");
+  assert.ok(await gutter.evaluateAll((numbers) => numbers.every((number) => number.getBoundingClientRect().width > 0)), "numbers are drawn");
+  assert.doesNotMatch(await sourceText(guide), /^1/);
   if (process.env.UI_EVIDENCE_DIR) await guide.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "code-line-numbers.png") });
   console.log("PASS Code shows the Markdown source, one numbered line each");
-  const raw = guide.getByRole("link", { name: "Open raw file", exact: true, includeHidden: true });
+  const raw = guide.getByRole("link", { name: "Open raw file", exact: true });
   assert.equal(await raw.getAttribute("target"), "_blank");
   assert.match(await raw.getAttribute("href") ?? "", /\/api\/fs\/file/);
   await guide.getByRole("button", { name: "Copy file", exact: true }).waitFor();
   console.log("PASS Open raw file opens the original bytes in a new tab; Copy is offered");
-  assert.equal(await guide.getByRole("button", { name: "Wrap long lines", exact: true }).count(), 0, "wrapping is a setting, not a header action");
-  assert.equal(await guide.locator(".file-viewer-text[data-wrap]").count(), 0, "lines do not wrap by default");
+  const wrapLines = guide.locator(".files-dialog-header").getByRole("button", { name: "Wrap long lines", exact: true });
+  assert.equal(await wrapLines.getAttribute("aria-pressed"), "false", "header exposes the shared wrap preference");
+  assert.equal(await guide.locator(".source-comments-file pre").getAttribute("data-overflow"), "scroll", "lines do not wrap by default");
+  await wrapLines.click();
+  await guide.locator('.source-comments-file pre[data-overflow="wrap"]').waitFor();
+  await wrapLines.click();
+  await guide.locator('.source-comments-file pre[data-overflow="scroll"]').waitFor();
   await guide.getByRole("button", { name: "Show source", exact: true }).click();
   // When nothing can copy (no clipboard API on plain-HTTP LAN, and the browser's copy command
   // refused) Copy selects the source: from a Preview it switches to Code first
@@ -990,10 +608,10 @@ try {
   await guide.getByRole("button", { name: "Copy file", exact: true }).click();
   await guide.locator(".file-viewer-text .hl-line").first().waitFor();
   assert.equal(await guide.getByRole("button", { name: "Show source", exact: true }).getAttribute("aria-pressed"), "true");
-  const sourceText = await guide.locator(".file-viewer-text").innerText();
-  assert.match(sourceText, /See \[notes\]\(\.\.\/notes\.txt\)\./);
-  assert.ok(sourceText.endsWith("\n"), "the Markdown source keeps its final newline");
-  assert.equal(await guide.locator(".file-viewer-text code").textContent(), sourceText, "the source DOM keeps its final newline");
+  const copiedSource = await guide.locator(".file-viewer-text").innerText();
+  assert.match(copiedSource, /See \[notes\]\(\.\.\/notes\.txt\)\./);
+  assert.ok(copiedSource.endsWith("\n"), "the Markdown source keeps its final newline");
+  assert.equal(await guide.locator(".file-viewer-text code").textContent(), copiedSource, "the source DOM keeps its final newline");
   // Chromium omits the final newline from Selection.toString() even for a plain pre/code.
   const selected = await page.evaluate((source) => {
     const selection = window.getSelection()!;
@@ -1006,25 +624,25 @@ try {
     const expected = selection.toString();
     baseline.remove(); selection.removeAllRanges();
     return { actual, expected };
-  }, sourceText);
+  }, copiedSource);
   assert.equal(selected.actual, selected.expected, "the selection matches a native pre/code of the Markdown source");
   await guide.getByRole("button", { name: "Copy file", exact: true }).click();
   assert.equal(await page.evaluate(() => window.getSelection()?.toString()), selected.expected, "from Code, Copy selects the source in place");
   console.log("PASS When nothing can copy, Copy selects the Markdown source (switching a Preview to Code)");
   await guide.getByRole("button", { name: "Show source", exact: true }).click();
   await guide.getByRole("button", { name: "notes", exact: true }).click();
-  const linked = page.getByRole("dialog", { name: "notes.txt", exact: true });
-  await linked.waitFor();
+  const linked = preview.getByRole("region", { name: "notes.txt", exact: true });
+  await linked.getByText("File preview history regression", { exact: true }).waitFor();
   assert.doesNotMatch(await linked.locator(".file-viewer-meta").getAttribute("title") ?? "", /\/docs\//);
   console.log("PASS A link in a Markdown preview opens the file it names");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // a text file past the source budget: its first 8 MB as a window of rows, shown in part, so it cannot be copied whole
   const virtualRows = () => page.evaluate(() => document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0);
   const coloredRows = () => page.evaluate(() => document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line] span[style*='--herdr-code-token']").length ?? 0);
   await page.getByRole("button", { name: "big", exact: true }).click();
-  const big = page.getByRole("dialog", { name: "big.txt", exact: true });
+  const big = preview;
   // the note is the header's size, where it is seen before the text: "8 MB of 9 MB"
   const cut = big.locator(".file-viewer-meta .file-viewer-notice");
   await cut.waitFor();
@@ -1037,7 +655,7 @@ try {
   assert.equal(await big.locator(".file-viewer-text").count(), 0, "not an element per line");
   assert.deepEqual(await frozen(), [], "no task held the page for a second");
   console.log("PASS A text file past the source budget shows its first 8 MB as a window of rows, says so in its header and has no Copy");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await preview.getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // code past the colors bound: whole, as a window of plain rows, and the header says why it is plain
@@ -1048,7 +666,7 @@ try {
   await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
   await page.locator(".conn-live").waitFor();
   await page.getByRole("button", { name: "big code", exact: true }).click();
-  const bigCode = page.getByRole("dialog", { name: "big.ts", exact: true });
+  const bigCode = preview;
   await page.waitForFunction(() => (document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0);
   assert.equal(await bigCode.locator(".file-viewer-meta .file-viewer-notice").getAttribute("title"), "Too long to highlight");
   assert.equal(await coloredRows(), 0, "the rows are plain");
@@ -1056,46 +674,48 @@ try {
   console.log("PASS Code past the colors bound opens whole as plain rows, and the header says why");
   assert.equal(await page.evaluate(() => document.querySelector("diffs-container")!.shadowRoot!.querySelector("pre")!.getAttribute("data-overflow")), "wrap");
   console.log("PASS Settings → Wrap long lines wraps the code");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // code past an element per line but within the colors bound: colored in the virtualizer's worker, served by this server under its CSP
   await page.getByRole("button", { name: "mid code", exact: true }).click();
-  const midCode = page.getByRole("dialog", { name: "mid.ts", exact: true });
+  const midCode = preview.getByRole("region", { name: "mid.ts", exact: true });
   await page.waitForFunction(() => (document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line] span[style*='--herdr-code-token']").length ?? 0) > 0, undefined, { timeout: 20_000 });
   assert.equal(await midCode.locator(".file-viewer-notice").count(), 0, "a colored source has no notice");
   await midCode.getByRole("button", { name: "Copy file", exact: true }).waitFor();
   assert.deepEqual(errors, []);
   console.log("PASS Code of 3 000 lines is colored in the virtualizer's worker under the server's CSP");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
-  await page.locator(".file-viewer").waitFor({ state: "hidden" });
+  await preview.getByRole("button", { name: "Close files", exact: true }).click();
+  await preview.waitFor({ state: "hidden" });
 
   for (const label of ["source column", "source range"]) {
     await page.getByRole("button", { name: label, exact: true }).click();
-    const target = page.getByRole("dialog", { name: "target.ts", exact: true });
-    const marked = target.locator(".file-viewer-text .hl-line.is-marked");
+    const target = preview.getByRole("region", { name: "target.ts", exact: true });
+    const marked = markedSource(target);
     await marked.waitFor();
     await sheetsSettled(page);
     assert.equal(await marked.count(), 1);
     assert.equal(await marked.getAttribute("data-line"), "60");
-    assert.equal(await marked.textContent(), "export const line60 = 60;");
-    assert.equal(await target.locator(".file-viewer-text code").textContent(), targetSource);
+    assert.equal((await marked.textContent())?.replace(/\r?\n$/, ""), "export const line60 = 60;");
+    assert.equal((await sourceText(target)).replace(/\n+$/, ""), targetSource.replace(/\n+$/, ""), "all physical source rows survive");
     const visible = await marked.evaluate((line) => {
-      const body = line.closest(".file-viewer-body");
+      const root = line.getRootNode();
+      const body = (root instanceof ShadowRoot ? root.host : line).closest(".file-viewer-body");
       if (!body) return false;
       const target = line.getBoundingClientRect(), viewport = body.getBoundingClientRect();
       return target.top >= viewport.top && target.bottom <= viewport.bottom && body.scrollTop > 0;
     });
-    assert.ok(visible, "requested first line is scrolled into the viewer");
-    await target.getByRole("button", { name: "Close file", exact: true }).click();
-    await target.waitFor({ state: "hidden" });
+    assert.ok(visible, `requested first line is scrolled into the viewer: ${JSON.stringify(await marked.evaluate((line) => { const host = (line.getRootNode() as ShadowRoot).host; const body = host.closest(".file-viewer-body")!; return { line: line.getBoundingClientRect().toJSON(), body: body.getBoundingClientRect().toJSON(), scroll: body.scrollTop, parent: host.parentElement?.getBoundingClientRect().toJSON() }; }))}`);
+    await preview.getByRole("button", { name: "Close files", exact: true }).click();
+    await preview.waitFor({ state: "hidden" });
   }
   await page.getByRole("button", { name: "Markdown line", exact: true }).click();
-  const anchored = page.getByRole("dialog", { name: "guide.md", exact: true });
-  await anchored.locator(".hl-line.is-marked[data-line='6']").waitFor();
+  const anchored = preview.getByRole("region", { name: "guide.md", exact: true });
+  await markedSource(anchored).waitFor();
+  assert.equal(await markedSource(anchored).getAttribute("data-line"), "6");
   assert.equal(await anchored.getByRole("button", { name: "Show source", exact: true }).getAttribute("aria-pressed"), "true");
   const popupOpened = page.waitForEvent("popup");
-  await (await fileAction(anchored, "Open in a new tab")).click();
+  await anchored.getByRole("link", { name: "Open in a new tab", exact: true }).click();
   const anchoredTab = await popupOpened;
   await anchoredTab.locator(".file-reader .hl-line.is-marked[data-line='6']").waitFor();
   assert.ok(new URL(anchoredTab.url()).searchParams.get("read")?.endsWith("guide.md#L6"));
@@ -1103,33 +723,33 @@ try {
   await anchored.getByRole("button", { name: "Show source", exact: true }).click();
   await anchored.locator(".file-viewer-markdown").getByRole("heading", { name: "Guide", exact: true }).waitFor();
   assert.equal(await anchored.locator(".hl-line.is-marked").count(), 0);
-  await anchored.getByRole("button", { name: "Close file", exact: true }).click();
-  await anchored.waitFor({ state: "hidden" });
+  await preview.getByRole("button", { name: "Close files", exact: true }).click();
+  await preview.waitFor({ state: "hidden" });
   for (const [label, name, line] of [["past end", "notes.txt", "999"], ["past preview", "big.txt", "999999"]] as const) {
     await page.getByRole("button", { name: label, exact: true }).click();
-    const target = page.getByRole("dialog", { name, exact: true });
+    const target = preview.getByRole("region", { name, exact: true });
     await target.locator(".file-viewer-text, diffs-container").first().waitFor();
     const notice = target.locator(".file-viewer-notice");
     await notice.waitFor();
     assert.ok((await notice.getAttribute("title"))?.includes(line), "notice names the unavailable requested line");
     assert.equal(await target.locator(".hl-line.is-marked").count(), 0, "no misleading jump");
     assert.equal(await page.evaluate(() => document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line][data-selected-line]").length ?? 0), 0, "no misleading mark");
-    await target.getByRole("button", { name: "Close file", exact: true }).click();
-    await target.waitFor({ state: "hidden" });
+    await preview.getByRole("button", { name: "Close files", exact: true }).click();
+    await preview.waitFor({ state: "hidden" });
   }
   // a file cut at the line cap keeps every line it shows numbered, so a line within it is marked
   await page.getByRole("button", { name: "capped line", exact: true }).click();
-  const capped = page.getByRole("dialog", { name: "lines.txt", exact: true });
+  const capped = preview.getByRole("region", { name: "lines.txt", exact: true });
   await page.waitForFunction(() => document.querySelector("diffs-container")?.shadowRoot?.querySelector('[data-line="5"][data-selected-line]') != null);
   assert.equal(await capped.locator(".file-viewer-notice").getAttribute("title"), "Showing the first 200,000 lines of this file. Download it to read the rest.");
   assert.equal(await capped.getByRole("button", { name: "Copy file", exact: true }).count(), 0, "a cut file has no Copy");
-  await capped.getByRole("button", { name: "Close file", exact: true }).click();
-  await capped.waitFor({ state: "hidden" });
+  await preview.getByRole("button", { name: "Close files", exact: true }).click();
+  await preview.waitFor({ state: "hidden" });
   console.log("PASS Line references mark and scroll the first source line, survive Markdown reader tabs, and explain unavailable lines");
 
   // a quote nested 20 000 deep renders as a quote nested to the parser's limit, the rest its text
   await page.getByRole("button", { name: "deep quotes", exact: true }).click();
-  const deep = page.getByRole("dialog", { name: "deep.md", exact: true });
+  const deep = preview;
   // one paragraph, in the innermost quote: the markers past the limit, then the text. At 390px the
   // quotes' padding and rails leave it no width, as the same quote does in the chat, so the step
   // checks that it is there and how deep, not that it can be read.
@@ -1144,17 +764,17 @@ try {
   assert.equal(quoteDepth, 33, "the quote nests to the parser's limit");
   assert.equal(await deep.getByRole("alert").count(), 0, "the preview renders, not its fallback");
   console.log("PASS A Markdown file of 20 000 nested quotes renders, and the app stays");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // an empty file opens empty, whole, with Copy: not as an error
   await page.getByRole("button", { name: "empty", exact: true }).click();
-  const empty = page.getByRole("dialog", { name: "empty.txt", exact: true });
+  const empty = preview;
   await empty.getByRole("button", { name: "Copy file", exact: true }).waitFor();
   assert.equal(await empty.getByRole("alert").count(), 0);
   assert.equal(await empty.locator(".file-viewer-notice").count(), 0, "an empty file is not cut short");
   console.log("PASS An empty file opens as an empty file, not as an error");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // The real app and file server, not a component-only fixture: a fresh tab must render
@@ -1183,7 +803,7 @@ try {
       await sheetsSettled(page);
       if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, `markdown-inline-${width}-${theme}.png`) });
       const popupReady = context.waitForEvent("page");
-      await (await fileAction(page.locator(".file-viewer"), "Open in a new tab")).click();
+      await page.getByRole("link", { name: "Open in a new tab", exact: true }).click();
       const popup = await popupReady;
       popup.setDefaultTimeout(10_000);
       await popup.setViewportSize({ width, height: 900 });
@@ -1204,10 +824,10 @@ try {
         return image?.complete && image.naturalWidth === 240;
       });
       await rendered.locator(".markdown-mermaid svg").waitFor();
-      const raw = await popup.getByRole("link", { name: "Open raw file", exact: true, includeHidden: true }).getAttribute("href");
+      const raw = await popup.getByRole("link", { name: "Open raw file", exact: true }).getAttribute("href");
       assert.ok(raw);
       assert.equal(await (await context.request.get(`${origin}${raw}`)).text(), markdownSource);
-      const download = await popup.getByRole("link", { name: "Download", exact: true, includeHidden: true }).getAttribute("href");
+      const download = await popup.getByRole("link", { name: "Download", exact: true }).getAttribute("href");
       assert.ok(download);
       const saved = await context.request.get(`${origin}${download}`);
       assert.match(saved.headers()["content-disposition"] ?? "", /attachment/);
@@ -1234,7 +854,7 @@ try {
       await rendered.getByRole("heading", { name: "Markdown preview", exact: true }).waitFor();
       await popup.close();
       await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}&file=${encodeURIComponent(join(root, "target.ts") + ":60:8")}`);
-      const marked = page.locator(".file-viewer-text .hl-line.is-marked");
+      const marked = markedSource(page.locator(".file-viewer"));
       await marked.waitFor();
       await sheetsSettled(page);
       await page.evaluate(() => document.fonts.ready.then(() => undefined));
@@ -1320,9 +940,10 @@ try {
       if (request.pathname === "/api/machines") { await route.fulfill({ json: { machines: [...roster.machines, remote] } }); return; }
       if (request.pathname === "/api/machines/remote-fixture/session") { await route.fulfill({ json: { snapshot: remote.snapshot } }); return; }
       if (request.pathname.includes("/fs/")) {
-        // the sidebar asks each workspace folder for its project icon on its own PC; only the
-        // document's reads are the link's
-        if (!request.pathname.endsWith("/fs/favicon")) fileRequests.push(request.pathname);
+        // The sidebar probes once, then fetches the chosen icon through /fs/file. Neither is
+        // a document read belonging to this link.
+        const asked = request.searchParams.get("path") ?? "";
+        if (!request.pathname.endsWith("/fs/favicon") && !FAVICON_CANDIDATES.some((candidate) => asked.endsWith(`/${candidate}`))) fileRequests.push(request.pathname);
         if (request.pathname.startsWith("/api/machines/remote-fixture/")) {
           request.pathname = request.pathname.replace("/api/machines/remote-fixture/", "/api/");
           await route.fulfill({ response: await route.fetch({ url: request.href }) });
@@ -1349,7 +970,7 @@ try {
       const prefix = target === "local" ? "/api/fs/" : "/api/machines/remote-fixture/fs/";
       assert.ok(fileRequests.length >= 2 && fileRequests.every((path) => path.startsWith(prefix)), fileRequests.join(", "));
       await ownerPage.waitForFunction((path) => new URLSearchParams(location.search).get("file") === path, markdownPath);
-      const link = await ownerPage.getByRole("link", { name: "Open in a new tab", exact: true, includeHidden: true }).getAttribute("href");
+      const link = await ownerPage.getByRole("link", { name: "Open in a new tab", exact: true }).getAttribute("href");
       assert.ok(link);
       assert.equal(new URL(link, origin).searchParams.get("machine") ?? "local", target);
       // the document's own tab reads the file from that PC too
@@ -1370,7 +991,6 @@ try {
   }
   await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}&view=chat`);
   await page.locator(".markdown-code").first().waitFor();
-
   // a chat code block the highlighter gives up on stays plain and says so, and the page runs on
   await page.locator(".markdown-code .hl-note", { hasText: "Too long to highlight" }).waitFor();
   assert.equal(await page.locator(".markdown-code").nth(1).locator("code span:not(.hl-line)").count(), 0, "the slow block is plain");
@@ -1388,55 +1008,71 @@ try {
   // a Markdown file the highlighter is slow on: its Preview shows, and its source stays plain with a
   // notice, while the page runs on
   await page.getByRole("button", { name: "slow preview", exact: true }).click();
-  const slow = page.getByRole("dialog", { name: "slow.md", exact: true });
+  const slow = preview;
   await slow.locator(".file-viewer-markdown p").first().waitFor({ timeout: 15_000 });
   await slow.getByRole("button", { name: "Show source", exact: true }).click();
+  await sourceRows(slow).first().waitFor();
+  assert.match(await sourceText(slow), /Notes on a slow file/);
+  // The pane renderer uses the diff worker. Its manual-copy fallback still uses
+  // CodeLines, whose deliberately stalled highlight worker must time out safely.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: () => Promise.reject(new Error("no clipboard")) }, configurable: true });
+    document.execCommand = () => false;
+  });
+  await slow.getByRole("button", { name: "Copy file", exact: true }).click();
   const slowNote = slow.locator(".file-viewer-meta .file-viewer-notice");
-  await page.waitForFunction(() => document.querySelector(".file-viewer-notice")?.getAttribute("title") === "Too long to highlight", undefined, { timeout: 15_000 });
+  await page.waitForFunction(() => document.querySelector(".file-viewer-notice")?.getAttribute("title") === "Too long to highlight", undefined, { timeout: 15_000 }).catch(async (error) => {
+    console.error("Slow Markdown diagnostic:", await slow.evaluate((node) => ({ notices: [...node.querySelectorAll(".file-viewer-notice")].map((notice) => ({ title: notice.getAttribute("title"), text: notice.textContent })), sourceLines: node.querySelectorAll(".file-viewer-text .hl-line").length, coloredSpans: node.querySelectorAll(".file-viewer-text code span:not(.hl-line)").length })));
+    if (process.env.UI_EVIDENCE_DIR) {
+      await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "slow-markdown-failure.png") });
+      writeFileSync(join(process.env.UI_EVIDENCE_DIR, "slow-markdown-failure.html"), await slow.evaluate((node) => node.outerHTML));
+    }
+    throw error;
+  });
   assert.equal(await slowNote.locator(".visually-hidden").innerText(), "Too long to highlight", "a screen reader still hears it");
   assert.equal(await slow.locator(".hl-note").count(), 0, "the note is not repeated under the code");
   await slow.locator(".file-viewer-text .hl-line").first().waitFor();
   assert.equal(await slow.locator(".file-viewer-text code span:not(.hl-line)").count(), 0, "the source is plain");
   assert.deepEqual(await frozen(), [], "no task held the page for a second");
   console.log("PASS A Markdown file the highlighter is slow on previews, its source stays plain, and the page never freezes");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // a Markdown file past the load limit: its first 256 KB, previewed, and the header says it is cut
   await page.getByRole("button", { name: "long notes", exact: true }).click();
-  const long = page.getByRole("dialog", { name: "long.md", exact: true });
+  const long = preview;
   await long.locator(".file-viewer-markdown .markdown-h1").first().waitFor();
-  assert.match(await long.locator(".file-viewer-meta .file-viewer-notice").getAttribute("title") ?? "", /^Showing the first 256 KB of /);
-  // Let the whole loaded prefix render, not just its first progressive chunk, before closing it.
+  assert.match(await long.locator(".file-viewer-meta .file-viewer-notice").getAttribute("title") ?? "", /^Showing the first 256 KB(?: of .+\.)?$/);
   await long.locator(".file-viewer-markdown .markdown-h1").nth(longPreviewHeadings - 1).waitFor();
-  // The preview can contain thousands of file-link buttons. Query its toolbar, not every
-  // accessible name in the document: the check itself must not monopolize the page.
-  const longHeader = long.locator(".file-viewer-header");
-  await longHeader.getByRole("button", { name: "Show source", exact: true }).waitFor();
+  await long.getByRole("button", { name: "Show source", exact: true }).waitFor();
   console.log("PASS A Markdown file past the load limit previews its first 256 KB and says it is cut");
-  await longHeader.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // a file of more lines than the source budget keeps shows its first 200 000 as a window of rows,
   // and a Markdown file of more than a Preview draws opens as its source; neither holds the page,
   // and the header says why
   await page.getByRole("button", { name: "many lines", exact: true }).click();
-  const manyLines = page.getByRole("dialog", { name: "lines.txt", exact: true });
-  await page.waitForFunction(() => document.querySelector(".file-viewer-notice")?.getAttribute("title") === "Showing the first 200,000 lines of this file. Download it to read the rest.");
+  const manyLines = preview;
+  await page.waitForFunction(() => document.querySelector(".file-viewer-notice")?.getAttribute("title") === "Showing the first 200,000 lines of this file. Download it to read the rest.").catch(async (error) => {
+    console.error("Many-lines notice:", await manyLines.locator(".file-viewer-notice").getAttribute("title"));
+    throw error;
+  });
   await page.waitForFunction(() => (document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0);
   assert.equal(await manyLines.locator(".file-viewer-text").count(), 0, "no element per line");
   assert.ok((await virtualRows()) < 500, "a bounded window of rows");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await preview.getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "long list", exact: true }).click();
-  const longList = page.getByRole("dialog", { name: "list.md", exact: true });
+  const longList = preview;
   await page.waitForFunction(() => (document.querySelector(".file-viewer-notice")?.getAttribute("title") ?? "").includes("Too long to preview"), undefined, { timeout: 15_000 });
+  await longList.getByRole("status").filter({ hasText: "Markdown preview is unavailable. Showing source." }).waitFor();
   // its 65 536-line source is past an element per line: a window of rows
   await page.waitForFunction(() => (document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0);
   assert.equal(await longList.locator(".file-viewer-markdown").count(), 0, "the Preview is not drawn");
   assert.deepEqual(await frozen(), [], "no task held the page for a second");
   console.log("PASS A file of too many lines shows its first 200 000 as rows, a Markdown file of too many elements as its source, and the page never freezes");
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await preview.getByRole("button", { name: "Close files", exact: true }).click();
   await page.locator(".file-viewer").waitFor({ state: "hidden" });
 
   // a path in a tool's output opens the file it names; the rest of the output stays its text
@@ -1448,16 +1084,16 @@ try {
   assert.equal(await output.getByRole("button", { name: "image/png" }).count(), 0, "a MIME type is not a file");
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "tool-output-links.png") });
   await output.getByRole("button", { name: shotPath, exact: true }).tap();
-  const shot = page.getByRole("dialog", { name: "t00000.png", exact: true });
+  const shot = preview;
   await shot.locator("img.file-viewer-media").waitFor();
   assert.equal(await shot.locator("img.file-viewer-media").evaluate((image: HTMLImageElement) => image.naturalWidth), 1);
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "tool-output-image-open.png") });
-  await shot.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await shot.waitFor({ state: "hidden" });
   console.log("PASS A file path in a tool's output opens the picture through touch");
   // the command names one too; a relative path is found from the pane's folder
   await page.locator(".work-row-detail .chat-tool-io pre").getByRole("button", { name: "shots/report.html", exact: true }).first().tap();
-  const report = page.getByRole("dialog", { name: "report.html", exact: true });
+  const report = preview;
   const frame = page.frameLocator(".file-viewer-page");
   await frame.getByText("script ran", { exact: true }).waitFor();
   await frame.getByText("network blocked", { exact: true }).waitFor();
@@ -1467,16 +1103,16 @@ try {
   assert.equal(await report.locator(".file-viewer-page").getAttribute("sandbox"), "allow-scripts");
   assert.equal(await report.getByRole("button", { name: "Show source", exact: true }).count(), 0, "HTML uses only Page | Source");
   assert.equal(await report.getByRole("button", { name: "Page", exact: true }).getAttribute("aria-pressed"), "true");
-  assert.equal(await report.getByRole("link", { name: "Open in a new tab", includeHidden: true }).getAttribute("href").then((href) => href?.includes("render=1")), true, "the page opens as the page");
+  assert.equal(await report.getByRole("link", { name: "Open in a new tab" }).getAttribute("href").then((href) => href?.includes("render=1")), true, "the page opens as the page");
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "tool-output-html-page.png") });
   await report.getByRole("button", { name: "Source", exact: true }).click();
-  await report.locator(".file-viewer-text[data-line-numbers] .hl-line").first().waitFor();
-  await report.locator(".file-viewer-text .hl-string").first().waitFor();
-  assert.equal(await report.locator(".file-viewer-text button").count(), 0, "file source paths remain text");
+  await sourceRows(report).first().waitFor();
+  await report.locator('.source-comments-file [data-line] span[style*="--herdr-code-token"]').first().waitFor();
+  assert.equal(await report.locator(".source-comments-file [data-line] button").count(), 0, "file source paths remain text");
   await report.getByRole("button", { name: "Copy file", exact: true }).waitFor();
-  assert.equal(await report.getByRole("link", { name: "Download", exact: true, includeHidden: true }).getAttribute("download"), "report.html");
-  assert.match(await report.locator(".file-viewer-text").innerText(), /<h1 id="ran">static<\/h1>/);
-  assert.equal(await report.getByRole("link", { name: "Open in a new tab", includeHidden: true }).getAttribute("href").then((href) => href?.includes("render=1")), false, "the source opens as the source");
+  assert.equal(await report.getByRole("link", { name: "Download", exact: true }).getAttribute("download"), "report.html");
+  assert.match(await sourceText(report), /<h1 id="ran">static<\/h1>/);
+  assert.equal(await report.getByRole("link", { name: "Open in a new tab" }).getAttribute("href").then((href) => href?.includes("render=1")), false, "the source opens as the source");
   if (process.env.UI_EVIDENCE_DIR) await page.screenshot({ path: join(process.env.UI_EVIDENCE_DIR, "tool-output-html-source.png") });
   await report.getByRole("button", { name: "Page", exact: true }).click();
   await frame.getByText("script ran", { exact: true }).waitFor();
@@ -1489,13 +1125,14 @@ try {
   await report.locator(".file-viewer-text[data-line-numbers]").waitFor();
   assert.equal(await report.getByRole("button", { name: "Source", exact: true }).getAttribute("aria-pressed"), "true");
   assert.match(await page.evaluate(() => window.getSelection()?.toString() ?? ""), /<h1 id="ran">static<\/h1>/);
-  await report.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await report.waitFor({ state: "hidden" });
   console.log("PASS An HTML file a command names opens as its page, sandboxed with no network or storage, and as its source");
   // the same under the dialog: a page the reader navigated inside its frame still closes on Close
   // file and on the scrim (#1203)
-  const contents = page.getByRole("dialog", { name: "toc.html", exact: true });
-  for (const close of ["Close file", "scrim"]) {
+  const contents = preview;
+  const contentsLink = page.getByRole("button", { name: "contents page", exact: true });
+  for (const close of ["Close files", "scrim"]) {
     await contentsLink.tap();
     await frame.getByText("contents ran", { exact: true }).waitFor();
     // the sheet is still rising when the page shows: a click aimed into the frame meanwhile lands beside the anchor
@@ -1503,8 +1140,8 @@ try {
     const opened = await page.evaluate(() => history.length);
     await frame.locator("#toc").click();
     await page.waitForFunction((length) => history.length === length + 1, opened);
-    if (close === "scrim") await page.locator(".file-viewer-scrim").evaluate((scrim) => scrim.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
-    else await contents.getByRole("button", { name: "Close file", exact: true }).click();
+    if (close === "scrim") await page.locator(".workspace-files-scrim").evaluate((scrim) => scrim.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+    else await contents.getByRole("button", { name: "Close files", exact: true }).click();
     await contents.waitFor({ state: "hidden" });
     assert.equal(await page.evaluate(() => history.state?.["ovis:file-preview"]), undefined, `${close} consumes the preview entry under a page the reader navigated inside its frame`);
   }
@@ -1513,7 +1150,7 @@ try {
   const log = page.locator(".markdown-code").last();
   await log.getByRole("button", { name: shotPath, exact: true }).tap();
   await shot.locator("img.file-viewer-media").waitFor();
-  await shot.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await shot.waitFor({ state: "hidden" });
   assert.equal(await log.locator(".hl-code").innerText(), `${shotPath} (1600, 1000) -> (1255, 960)`, "a copy of the block is still its text");
   assert.deepEqual(errors, []);
@@ -1523,7 +1160,7 @@ try {
   // JSON must never show as the file's text
   await page.route("**/api/fs/file?**", (route) => route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: { code: "machine_unavailable", message: "The PC connection was interrupted" } }) }), { times: 1 });
   await page.getByRole("button", { name: "notes", exact: true }).click();
-  const refused = page.getByRole("dialog", { name: "notes.txt", exact: true });
+  const refused = preview;
   await refused.getByRole("alert").waitFor();
   assert.equal(await refused.getByRole("alert").innerText(), "The file could not be opened.");
   assert.equal(await refused.getByText("machine_unavailable").count(), 0);
@@ -1867,7 +1504,6 @@ try {
   await browser?.close();
   reportServer.stop(true);
   server?.stop();
-  if (otherWorkspace) await workspaceClose(otherWorkspace);
   if (workspace) await workspaceClose(workspace);
   rmSync(root, { recursive: true, force: true });
 }
