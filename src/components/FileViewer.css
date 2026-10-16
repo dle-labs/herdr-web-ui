@@ -1,6 +1,18 @@
-.file-viewer-scrim {
-  /* above the file browser it may open from */
-  z-index: calc(var(--z-modal) + 1);
+.file-viewer-embedded {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.file-viewer-embedded .file-viewer {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .file-viewer {
@@ -114,50 +126,30 @@
 
 .file-viewer-group { gap: var(--space-1); }
 
-/* a phone's More menu (new tab, raw, download): a small list under its button, inside the viewer */
-.file-viewer-more {
-  display: none;
+/* The counter of this file's comments: an icon button as the header's others, each tap a step of
+   the walk through them (FileComments.tsx `useFileCommentWalk`), with the count as a bubble on the
+   icon's top right, as an app's unread count. The words ("2 comments · 1 outdated") are its name and
+   tooltip. Placed from the button's middle, so the bubble sits on the icon at every button size */
+.file-viewer-comments {
   position: relative;
 }
 
-.file-viewer-more-menu {
+.file-viewer-comments-count {
   position: absolute;
-  top: 100%;
-  right: 0;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: max-content;
-  margin-top: var(--space-1);
-  padding: var(--space-1);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pop);
-}
-
-.file-viewer-more-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--touch-target);
-  padding-inline: var(--space-3);
-  border-radius: var(--radius-md);
-  color: var(--text);
-  font-size: var(--fs-sm);
-  text-decoration: none;
-}
-
-.file-viewer-more-item:focus-visible { background: var(--bg-hover); }
-
-@media (hover: hover) {
-  .file-viewer-more-item:hover { background: var(--bg-hover); }
-}
-
-.file-viewer-more-item svg {
-  width: 16px;
-  height: 16px;
-  flex: none;
+  top: calc(50% - var(--space-4));
+  left: calc(50% + var(--space-1));
+  min-width: var(--space-4);
+  height: var(--space-4);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--primary);
+  color: var(--primary-text);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--space-4);
+  text-align: center;
+  pointer-events: none;
 }
 
 /* an "on" toggle (Show source) carries the accent on its glyph */
@@ -166,7 +158,9 @@
   color: var(--accent);
 }
 
+/* The source's inline annotations scroll with its lines, never over the document. */
 .file-viewer-body {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -232,6 +226,10 @@
   line-height: var(--lh-base);
 }
 
+.source-comments { width: 100%; min-width: 0; }
+.source-comments-file { display: block; min-width: 0; }
+.source-comments-virtual { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
 /* wrapping follows the Wrap setting (data-wrap in HighlightedCode.css); the gutter sits in the code's own padding, inside this one */
 .file-viewer-content {
   align-self: stretch;
@@ -249,6 +247,8 @@
 
 .file-viewer-body-virtual {
   overflow: hidden;
+  /* Put the inset inside the native scroll root, not in an unscrollable outer strip. */
+  padding: 0;
 }
 
 .file-viewer-content-virtual {
@@ -293,30 +293,28 @@
 .file-viewer-markdown-readable { max-width: var(--chat-w); }
 
 /*
- * On a narrow screen the header is one row, so the file keeps the screen: the name (cut inside its
- * stem) gives way to the actions and Close beside it. The size and folder are left out there; a
- * partial-view notice is not, since it says the file is not all shown.
+ * On a narrow screen two or more actions leave the name and its notes no room. The name and Close
+ * keep the first row, so Close stays in its corner for every file; the actions take the second,
+ * under Close, where they are on a wider screen.
  */
 @media (max-width: 600px) {
   .file-viewer-header-stacked {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    grid-template-areas: "title actions close";
-    align-items: center;
-    column-gap: var(--space-1);
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "title close" "actions actions";
+    row-gap: var(--space-2);
   }
 
   .file-viewer-header-stacked .file-viewer-title { grid-area: title; }
-  .file-viewer-header-stacked .file-viewer-meta:not(:has(.file-viewer-notice)) { display: none; }
-  .file-viewer-header-stacked .file-viewer-close { grid-area: close; }
+  /* in the corner, however many lines the name's block takes */
+  .file-viewer-header-stacked .file-viewer-close {
+    grid-area: close;
+    align-self: start;
+  }
   .file-viewer-header-stacked .file-viewer-actions {
     grid-area: actions;
-    gap: 0;
+    justify-content: flex-end;
   }
-  .file-viewer-header-stacked .file-viewer-group { gap: 0; }
-  /* new tab, raw and download move into More, so the name keeps room beside Show source and Copy */
-  .file-viewer-header-stacked .file-viewer-wide { display: none; }
-  .file-viewer-header-stacked .file-viewer-more { display: block; }
 
   /* the reader's header keeps its name and actions on one row here */
   .file-reader-header {
@@ -374,12 +372,48 @@
   .file-viewer-page { height: max(0px, calc(var(--app-height, 100dvh) - 170px)); }
 }
 
-/*
- * Docked (a wide window): the viewer is a column beside the pane, not a dialog over it. Its width
- * is the app's (--file-panel-shown-w, styles.css), dragged from its left edge; the viewer fills
- * it, and media, PDFs and pages fill its height rather than a share of the window's. It is a
- * split of the workspace, on the pane's own background behind one hairline, not a raised card.
- */
+.file-viewer-choices ul {
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-viewer-choices .btn {
+  max-width: 100%;
+  height: auto;
+  min-height: var(--control-h);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+/* a markdown file in a tab of its own (FileReader): the document is the page */
+.file-reader {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.file-reader-header {
+  /* lined up with the document under it: its column, then the body's own padding */
+  padding-inline: max(var(--space-3), calc((100% - 980px) / 2 + var(--space-3)));
+  border-bottom: var(--hairline) solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.file-reader-header .modal-title {
+  margin: 0;
+  font-size: var(--fs-lg);
+}
+
+.file-reader-body .file-viewer-markdown {
+  width: min(100%, 980px);
+  align-self: center;
+}
+
+/* The local web-page panel retains the shared docked preview shell. */
 .file-panel {
   position: relative;
   display: flex;

@@ -384,6 +384,61 @@ export type { DevicePairedEvent, Machine, MachineEvent, MachineRoster, PaneTarge
  *  warning says so). Refusals answer 401 `unauthorized` (403 `other_user` for another Tailscale
  *  login, when no token is configured); the upgrade is refused. Static files are always public.
  */
+/** GET /api/workspace/changes?pane_id=&mode=all|unstaged|staged -> GitChangesResponse.
+ * GET /api/workspace/diff?pane_id=&mode=&path= -> GitFileDiffResponse.
+ * Both accept optional base_commit (full hex commit ID, mode=all only), comparing it to the working tree.
+ * Paths are repository-relative inventory paths; conflicts answer 409 git_conflict.
+ * Full text sides are bounded to 2 MiB each; binary sides retain names with empty contents.
+ * null means the side does not exist. Submodules answer 415 git_submodule.
+ * revision is an opaque snapshot fingerprint, not a commit ID; responses are no-store.
+ */
+export type GitDiffMode = "all" | "unstaged" | "staged";
+export interface GitChangedFile {
+  path: string;
+  old_path?: string;
+  status: "added" | "modified" | "deleted" | "renamed" | "untracked" | "conflicted";
+  binary?: boolean;
+}
+export interface GitChangesResponse {
+  base_commit?: string;
+  root: string;
+  revision: string;
+  files: GitChangedFile[];
+}
+export interface GitFileDiffResponse {
+  base_commit?: string;
+  root: string;
+  revision: string;
+  path: string;
+  old_path?: string;
+  patch: string;
+  binary: boolean;
+  old_file: { name: string; contents: string } | null;
+  new_file: { name: string; contents: string } | null;
+}
+
+/** GET /api/workspace/commits?pane_id=&query= -> latest reachable HEAD commits.
+ * Empty query returns the latest 100; text queries search reachable history using
+ * Git's case-insensitive literal commit-message match (subject or body), not a
+ * newest-history window. Unambiguous hexadecimal commit IDs/prefixes (4+ digits)
+ * resolve only when reachable from HEAD; otherwise they are searched as text.
+ * Reads share a deadline/output budget. truncated means more than 100 matches or
+ * incomplete output; deadline expiry is an error. Responses are no-store.
+ */
+export interface GitCommitsResponse {
+  commits: { id: string; subject: string; author: string; date: string }[];
+  truncated: boolean;
+}
+/** GET /api/workspace/files?pane_id=&query= -> fuzzy filename/path search.
+ * Repository-relative tracked/untracked nonignored files, or cwd-relative bounded
+ * walk outside Git. At most 100 results; truncated includes incomplete inventories.
+ */
+export interface WorkspaceFilesResponse {
+  root: string;
+  files: string[];
+  truncated: boolean;
+}
+
 export interface ApiError {
   error: { code: string; message: string };
 }
@@ -882,6 +937,15 @@ export type ClientMessage =
    * paste marker), at most 20000 characters (32768 with `typed`) once trailing newlines are dropped and CRLF or a
    * lone CR read as LF, and `payload` is that text with each LF a CR, bare or inside exactly one ESC[200~ ESC[201~
    * pair. A queued or held message types `text` only, and `payload` is not read.
+   * `agent_only` (servers listing "submit-agent-only"): only an agent gets it, never the pane's
+   * input, so a message quoting a reply never reaches a shell; refused, nothing typed, with a code named
+   * for the pane's condition: agent_not_found (no agent in front), agent_not_ready (an agent whose input
+   * state is not known) or agent_queue_busy (a Codex blocked by its own queue). Bridges before these
+   * names answered agent_only, agent_only_not_ready and agent_only_busy. With `delivery:queue` the flag
+   * needs no record of its own: a message is queued only with an agent in front (else agent_not_found;
+   * agent_not_ready on older bridges), and it is bound to the agent, terminal
+   * and session that accepted it, so one whose agent left before its turn is refused with
+   * pending_target_changed, nothing typed (server/pending-input.contract.test.ts).
    * `delivery:queue` requires "pending-input" and a live interact attachment: while the agent
    * works the bridge keeps the message until its next turn, or the owner explicitly steers it.
    * `delivery:hold` (feature "pending-hold") is the same, except the message is kept as held, also
@@ -906,12 +970,8 @@ export type ClientMessage =
    * `pending_uncertain`, including other generations of the same stable ID.
    * Not with `send_anyway`:
    * that combination returns invalid_delivery before reserving or replaying an ID. No `clear_draft`.
-   * Older peers ignore it.
-   * `agent_only` (feature "agent-only"): the message is for an agent alone (a chat message carrying comments on
-   * a reply, #511, whose `> quote` lines a shell would read as redirects). The server refuses it with
-   * agent_not_ready, typing nothing, when no agent is in front of the pane as it would type it; a queued or held
-   * one keeps the rule until it is typed. Not with `typed`; anything but true is invalid_delivery. */
-  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue" | "hold"; clear_draft?: string; send_anyway?: true; resend_id?: string; resend_generation?: number; agent_only?: true }
+   * Older peers ignore it. */
+  | { type: "submit"; id: number; pane_id: string; text: string; payload: string; typed?: boolean; delivery?: "immediate" | "queue" | "hold"; clear_draft?: string; send_anyway?: true; agent_only?: boolean; resend_id?: string; resend_generation?: number }
   /** `withdrawal_only`: Edit's discard may withdraw only queued/held input; uncertain text stays
    * with its owner and returns pending_uncertain, rather than being dismissed. Older servers ignore
    * this optional field and retain their existing discard behaviour, without this protection.
@@ -985,7 +1045,7 @@ export interface ClientConnectionTrace {
 }
 
 /** What a server supports beyond the base protocol, listed in its `features` frame and its first snapshot; older bridges list nothing. */
-export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only";
+export type ServerFeature = "submit" | "pending-input" | "pending-hold" | "secret-input" | "input-ready" | "take-over" | "watch" | "conversation-watch" | "ping" | "terminal-insert" | "agent-only" | "submit-agent-only";
 
 export type ServerMessage =
   /** the first frame of a connection, before the snapshot that can wait seconds on herdr: what this server
@@ -1020,8 +1080,8 @@ export type ServerMessage =
    * only when a send with `send_anyway` may follow; an older server never sends it.
    * `submit_partial`: the explicitly confirmed terminal draft was cleared, but the send's
    * deadline then expired before the message was sent; never a nothing-typed receipt. */
-  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; code?: string; message?: string; draft?: string; box?: string }
-  | { type: "pending-result"; id: number; pane_id: string; pending_id: string; ok: boolean; code?: string; message?: string }
+  | { type: "submit-result"; id: number; pane_id: string; ok: boolean; pending?: PendingMessage; code?: string; message?: string; draft?: string; box?: string; typed?: false }
+  | { type: "pending-result"; id: number; pane_id: string; pending_id: string; ok: boolean; code?: string; message?: string; typed?: false }
   /** ok once herdr accepted the inserted bytes (`pane.send_text` answered), never that the program
    * took or ran them; a refusal names why and nothing was typed, except `insert_failed`, whose bytes
    * may or may not have arrived. Older bridges never send it. */

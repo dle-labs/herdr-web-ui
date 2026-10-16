@@ -29,6 +29,15 @@ const BASE: Record<string, string> = {
   "Goal": "目標",
   "Waiting for your answer": "回答待ち",
   "Back": "戻る",
+  "Find files…": "ファイルを検索…",
+  "Search commits…": "コミットを検索…",
+  "Working changes": "作業中の変更",
+  "Could not load files": "ファイルを読み込めませんでした",
+  "Could not load commits": "コミットを読み込めませんでした",
+  "More results available. Refine your search.": "ほかにも結果があります。検索を絞り込んでください。",
+  "Compare with…": "比較対象…",
+  "Working tree": "作業ツリー",
+  "All files": "すべてのファイル",
   "Scroll pane up": "ペインを上にスクロール",
   "Scroll pane down": "ペインを下にスクロール",
   "Find in terminal": "ターミナル内を検索",
@@ -162,9 +171,11 @@ const BASE: Record<string, string> = {
 
   // ---- files ----
   "Files": "ファイル",
+  "Reveal in file tree": "ファイルツリーで表示",
   "This image is {size}; download it to view.": "この画像は {size} です。表示するにはダウンロードしてください。",
   "Download": "ダウンロード",
   "Open {path}": "{path} を開く",
+  "Preview": "プレビュー",
 
   // ---- PC dialog ----
   "Continue": "続行",
@@ -187,6 +198,7 @@ const BASE: Record<string, string> = {
   "Pairing code": "ペアリングコード",
   "Open this address on your phone": "スマートフォンでこのアドレスを開いてください",
   "{agent} is ready": "{agent} の準備ができました",
+
 
 
   // ---- composer ----
@@ -239,6 +251,7 @@ const BASE: Record<string, string> = {
 
   // ---- devices ----
   "Loading…": "読み込んでいます…",
+  "Select a file to view.": "表示するファイルを選択してください。",
   "Done": "完了",
 
   // ---- phone ----
@@ -298,6 +311,7 @@ const BASE: Record<string, string> = {
   "This pane can't be shown.": "このペインを表示できません。",
   "The sidebar can't be shown.": "サイドバーを表示できません。",
   "Diff layout": "差分の表示形式",
+  "Changed files": "変更されたファイル",
   "Unified": "1列",
   "Split": "並べて表示",
   // t3code ports (a)
@@ -328,6 +342,34 @@ const BASE: Record<string, string> = {
   "Weekly": "週次",
   "Open terminal": "ターミナルを開く",
   "Sign in to {agent}": "{agent} にサインイン",
+  "Add comment": "コメントを追加",
+  "Binary files cannot be displayed as a text diff.": "バイナリファイルはテキスト差分として表示できません。",
+  "Close comment": "コメントを閉じる",
+  "Comment": "コメント",
+  "Delete comment": "コメントを削除",
+  "Discard comment": "コメントを破棄",
+  "File diff": "ファイル差分",
+  "Markdown view": "Markdown 表示",
+  "Diff": "差分",
+  "Files changed while this diff was loading. Refresh to review the latest changes.": "差分の読み込み中にファイルが変更されました。更新して最新の変更を確認してください。",
+  "Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs.": "Git の変更を読み込めませんでした。このペインが Git リポジトリ内にあり、ブリッジが差分に対応していることを確認してください。",
+  "Go to the next comment": "次のコメントへ移動",
+  "Line {line}": "{line} 行目",
+  "Lines {first}–{last}": "{first}–{last} 行目",
+  "New": "新しい版",
+  "No changes in this comparison.": "この比較には変更がありません。",
+  "Old": "以前の版",
+  "Outdated comments": "古い版のコメント",
+  "Save comment": "コメントを保存",
+  "Saved comments are included with your next chat message.": "保存したコメントは次のチャットメッセージに含まれます。",
+  "This diff could not be displayed.": "この差分を表示できませんでした。",
+  "This diff could not be loaded. The file may have changed, be too large, or have unresolved conflicts.": "差分を読み込めませんでした。ファイルが変更された、大きすぎる、または未解決の競合がある可能性があります。",
+  "This folder listing is incomplete.": "このフォルダーの一覧は一部のみ表示されています。",
+  "Too long to send. Shorten the message or remove comments.": "長すぎて送信できません。メッセージを短くするか、コメントを削除してください。",
+  "Write a comment…": "コメントを書く…",
+  "{count} comment": "コメント {count} 件",
+  "{count} comments": "コメント {count} 件",
+  "Wrap long lines": "長い行を折り返す",
 };
 
 /** The parts JA is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */

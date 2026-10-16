@@ -126,6 +126,8 @@ run_script scripts/file-preview-text-browser-qa.ts
 run_script scripts/virtual-source-browser-qa.ts
 run_script scripts/repo-diff-browser-qa.ts
 run_script scripts/diff-find-demo-regression.ts
+run_script scripts/file-viewer-comments-regression.ts
+run_script scripts/git-diff-demo-regression.ts
 run_script scripts/keyboard-viewport-regression.ts
 run_script scripts/file-viewer-mobile-regression.ts
 run_script scripts/droplet-demo-regression.ts
@@ -143,6 +145,7 @@ run_script scripts/replay-clipboard-demo-regression.ts
 run_script scripts/todo-snapshots-demo-regression.ts
 run_script scripts/command-outcome-demo-regression.ts
 run_script scripts/chat-outcome-note-browser-qa.ts
+run_script scripts/block-comments-regression.ts
 run_script scripts/sidebar-activity-demo-regression.ts
 run_script scripts/sidebar-filter-demo-regression.ts
 run_script scripts/sidebar-declutter-demo-regression.ts

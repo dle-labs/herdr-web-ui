@@ -1,7 +1,7 @@
 import { afterEach, expect, it, jest } from "bun:test";
 import { MAX_ATTACHMENT_BYTES } from "../../shared/attachments.ts";
 import { NOTICE_VERSION } from "../../shared/telemetry.ts";
-import { AttachmentTooLargeError, ApiError, cancelUsageLogin, changeTelemetry, fetchAgentKinds, fetchTelemetry, swapPaneWith, uploadPaneImage, verifySourceBoot } from "./api.ts";
+import { AttachmentTooLargeError, ApiError, cancelUsageLogin, changeTelemetry, fetchGitChanges, fetchGitDiff, fetchGitCommits, fetchWorkspaceFiles, fetchAgentKinds, fetchTelemetry, swapPaneWith, uploadPaneImage, verifySourceBoot } from "./api.ts";
 import { movingHerdrFocusOn } from "./followFocus.ts";
 import { DEFAULT_SETTINGS, telemetrySettingsSnapshot } from "./settings.ts";
 
@@ -58,6 +58,26 @@ it("offers Copilot from an older remote bridge without installation metadata", a
 
   expect(await fetchAgentKinds("remote-pc")).toEqual([copilot]);
   expect(requests).toEqual(["/api/machines/remote-pc/agents"]);
+});
+
+it("keeps machine arguments in place and URL-encodes commit/file search and selected bases", async () => {
+  const urls: URL[] = [];
+  globalThis.fetch = (async (url: string) => { urls.push(new URL(url, "http://local")); return Response.json({}); }) as typeof fetch;
+  const base = "a".repeat(40);
+  await fetchGitChanges("p&1", "all", "remote", base);
+  await fetchGitDiff("p&1", "all", "src/a&b.ts", "remote", base);
+  await fetchGitCommits("p&1", "fix & test", "remote");
+  await fetchWorkspaceFiles("p&1", "src/a&b", "remote");
+  expect(urls.map((url) => url.pathname)).toEqual(["/api/machines/remote/workspace/changes", "/api/machines/remote/workspace/diff", "/api/machines/remote/workspace/commits", "/api/machines/remote/workspace/files"]);
+  expect(urls.every((url) => url.searchParams.get("pane_id") === "p&1")).toBe(true);
+  expect(urls[0]!.searchParams.get("base_commit")).toBe(base);
+  expect(urls[1]!.searchParams.get("base_commit")).toBe(base);
+  expect(urls[1]!.searchParams.get("path")).toBe("src/a&b.ts");
+  expect(urls[2]!.searchParams.get("query")).toBe("fix & test");
+  expect(urls[3]!.searchParams.get("query")).toBe("src/a&b");
+  await fetchGitChanges("p", "all");
+  expect(urls[4]!.pathname).toBe("/api/workspace/changes");
+  expect(urls[4]!.searchParams.has("base_commit")).toBe(false);
 });
 
 it("refuses a file over the attachment limit before any of it is sent, and sends one at the limit", async () => {

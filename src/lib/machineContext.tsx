@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo } from "react";
 import * as api from "./api.ts";
-import type { CreateWorktreeRequest, OpenWorktreeRequest, PaneDirection, PluginActionRequest, RemoveWorktreeRequest, SessionHistoryAgent, SessionResumeRequest, SplitPaneDirection } from "../../shared/protocol.ts";
+import type { CreateWorktreeRequest, OpenWorktreeRequest, PaneDirection, GitDiffMode, PluginActionRequest, RemoveWorktreeRequest, SessionHistoryAgent, SessionResumeRequest, SplitPaneDirection } from "../../shared/protocol.ts";
 import type { ZoomMode } from "./layoutMap.ts";
 import { ReorderCoordinator } from "./workspaceOrder.ts";
 export const MachineContext = createContext("local");
@@ -25,6 +25,10 @@ export function useMachineApi() {
     findPane: (request: Parameters<typeof api.findPane>[0]) => api.findPane(request, id),
     fetchPaneScroll: (pane: string) => api.fetchPaneScroll(pane, id),
     scrollPane: (pane: string, offset: number) => api.scrollPane(pane, offset, id),
+    fetchGitChanges: (pane: string, mode: GitDiffMode, baseCommit?: string) => api.fetchGitChanges(pane, mode, id, baseCommit),
+    fetchGitDiff: (pane: string, mode: GitDiffMode, path: string, baseCommit?: string) => api.fetchGitDiff(pane, mode, path, id, baseCommit),
+    fetchGitCommits: (pane: string, query = "") => api.fetchGitCommits(pane, query, id),
+    fetchWorkspaceFiles: (pane: string, query = "") => api.fetchWorkspaceFiles(pane, query, id),
     fetchPaneOmoActivity: (pane: string) => api.fetchPaneOmoActivity(pane, id),
     fetchPaneBackgroundAgent: (pane: string, agent: string) => api.fetchPaneBackgroundAgent(pane, agent, id),
     fetchPanePlan: (pane: string) => api.fetchPanePlan(pane, id),

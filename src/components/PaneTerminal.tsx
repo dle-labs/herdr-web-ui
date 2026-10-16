@@ -2,7 +2,7 @@ import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, us
 import { fontSettled } from "../lib/fontFamily.ts";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { ArrowLeft, ArrowUp, ChevronRight, ClipboardCheck, Clock, Eye, Quote, SendHorizontal, SquareTerminal, Trash2, TriangleAlert, Unplug, X } from "lucide-react";
+import { ArrowLeft, ArrowUp, ChevronRight, ClipboardCheck, Clock, Eye, MessageSquare, Quote, SendHorizontal, SquareTerminal, Trash2, TriangleAlert, Unplug, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import "./PaneTerminal.css";
 
@@ -14,7 +14,7 @@ import { paneLifetimes } from "../lib/paneLifetime.ts";
 import { PaneCachedContext, PaneWatchedContext, PanePresentedContext, PaneFollowContext, PaneShownContext, PaneSubmitContext } from "../lib/paneSubmitContext.ts";
 import { NO_STICKY_MODIFIERS, type StickyModifiers } from "../lib/keys.ts";
 import { EMPTY_DRAFT, draftIsEmpty, restoreDraft, type InputDraft } from "../lib/draft.ts";
-import { messageQueues } from "../lib/messageQueue.ts";
+import { heldAgentOnly, heldMessageText, messageQueues } from "../lib/messageQueue.ts";
 import { pendingMessages } from "../lib/pendingMessages.ts";
 import { heldCountShown, heldOpenAtFold, heldOpenOnFocus, heldRefocusDue, heldRowError, heldRowsFold, heldRowsHidden, heldToggleShown, SHORT_PHONE_QUERY } from "../lib/heldRows.ts";
 import { arrangeNotices, dismissNotice, NO_DISMISSALS, settleDismissed, type DismissedNotices } from "../lib/composerNotices.ts";
@@ -106,6 +106,8 @@ export interface PaneTerminalProps {
   workspaceId?: string | null;
   /** that workspace is a linked worktree of this repository (its name, as herdr gives it); null: it is not one */
   worktreeRepo?: string | null;
+  /** Directory used by file actions; a foreground process can differ from the greeting's cwd. */
+  filesCwd?: string | null;
   machineName?: string;
   /** the lens over the pane: the chat transcript, or the live xterm grid (App remembers it per pane) */
   view: PaneView;
@@ -171,6 +173,7 @@ export function PaneTerminal({
   cwd = null,
   workspaceId = null,
   worktreeRepo = null,
+  filesCwd = cwd,
   machineName = "",
   view,
   findRequest = 0,
@@ -1231,7 +1234,8 @@ export function PaneTerminal({
               id={`queued-${message.id}`}
               className="composer-queue-text"
               value={message.text}
-              rows={Math.min(4, message.text.split("\n").length)}
+              rows={Math.max(1, Math.min(4, message.text.split("\n").length))}
+              placeholder={message.comments?.length ? t("Comments only") : undefined}
               aria-label={t("Queued message {n}", { n: index + 1 })}
               maxLength={MAX_COMPOSER_CHARS}
               disabled={queueStore.isSending(message.id)}
@@ -1239,18 +1243,29 @@ export function PaneTerminal({
               onChange={(event) => { queueStore.edit(queueOwner, message.id, event.target.value); }}
             />
             <div className="composer-queue-actions">
+              {message.comments?.length ? (() => {
+                const count = t("Comments with this message: {count}", { count: message.comments.length });
+                return <span className="composer-comments-chip composer-queue-comments" role="img" aria-label={count} title={count}><MessageSquare aria-hidden="true" />{message.comments.length}</span>;
+              })() : null}
               <button type="button" className="composer-queue-send"
-                disabled={!connected || held || secretActive || queueSending !== null || queued.some((item) => queueStore.isSending(item.id)) || heldByOpenQueue || message.text.trim().length === 0}
+                disabled={!connected || held || secretActive || queueSending !== null || queued.some((item) => queueStore.isSending(item.id)) || heldByOpenQueue || heldMessageText(message).trim().length === 0}
                 title={heldByOpenQueue ? t("Codex has a question open in the terminal: answer it above first") : undefined}
                 onClick={() => {
+                  // composed now, as the composer does: the comments and what is typed here
+                  const outgoing = heldMessageText(message);
+                  if (outgoing.length > MAX_COMPOSER_CHARS) {
+                    setQueueError({ owner: queueOwner, id: message.id, text: t("Too long to send. Shorten the message or remove comments.") });
+                    return;
+                  }
                   if (sendingRef.current || !queueStore.beginSend(queueOwner, message.id)) return;
                   sendingRef.current = true;
                   const owner = queueOwner;
                   setQueueSending(message.id); setQueueError(null); heldRowNotes.delete(owner);
-                  void Promise.resolve(sendComposerText(message.text))
+                  void Promise.resolve(sendComposerText(outgoing, { agentOnly: heldAgentOnly(message) }))
                     .then((result) => {
                       if (result === true) { queueStore.remove(owner, message.id); }
-                      else setQueueError({ owner, id: message.id, text: typeof result === "string" ? result : t("Not sent. Reconnect and try again.") });
+                      else setQueueError({ owner, id: message.id, text: typeof result === "string" ? result
+                        : t("Not sent. Reconnect and try again.") });
                     })
                     .catch(() => setQueueError({ owner, id: message.id, text: t("Not confirmed. Check the terminal before sending again.") }))
                     .finally(() => { queueStore.endSend(owner, message.id); sendingRef.current = false; setQueueSending(null); });
@@ -1293,7 +1308,7 @@ export function PaneTerminal({
           key={paneId}
           paneId={paneId}
           inert={peek !== null}
-          cwd={cwd}
+          cwd={filesCwd}
           branch={branchWord === DETACHED ? t("Detached HEAD") : branchWord}
           worktreeRepo={worktreeRepo}
           autoFocus={active && !autoSelected && !coarse}

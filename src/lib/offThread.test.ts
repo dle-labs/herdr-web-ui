@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import { HIGHLIGHT_BUDGET_MS, highlightKnown, highlightOffThread, LinesCache } from "./highlightOffThread.ts";
 import { normalizeCode, type Lines } from "./highlight.ts";
-import { createOffThreadQueue, type OffThreadAnswer, type OffThreadRequest, type WorkerLike } from "./offThread.ts";
+import { createOffThreadQueue, serveOffThread, type OffThreadAnswer, type OffThreadRequest, type WorkerLike } from "./offThread.ts";
 
 /** A worker that answers only when the test says so, and remembers what it was sent and whether it was ended. */
 class FakeWorker implements WorkerLike {
@@ -90,6 +90,39 @@ describe("createOffThreadQueue", () => {
   });
 });
 
+describe("serveOffThread", () => {
+  it("awaits async results, transfers buffers and catches synchronous and async failures", async () => {
+    const scope = globalThis as unknown as {
+      onmessage: ((event: MessageEvent) => Promise<void>) | null;
+      postMessage: (message: unknown, transfer?: Transferable[]) => void;
+    };
+    const previousMessage = scope.onmessage;
+    const previousPost = scope.postMessage;
+    const sent: { message: unknown; transfer?: Transferable[] }[] = [];
+    const buffer = new Uint8Array([1]).buffer;
+    try {
+      scope.postMessage = (message, transfer) => { sent.push({ message, transfer }); };
+      serveOffThread<string, string>(async (request) => {
+        if (request === "reject") throw new Error("grammar initialization failed");
+        await Promise.resolve();
+        return { result: request.toUpperCase(), transfer: [buffer] };
+      });
+      await scope.onmessage!({ data: { id: 1, request: "ok" } } as MessageEvent);
+      await scope.onmessage!({ data: { id: 2, request: "reject" } } as MessageEvent);
+      serveOffThread<string, string>(() => { throw new Error("tokenizer failed"); });
+      await scope.onmessage!({ data: { id: 3, request: "throw" } } as MessageEvent);
+      expect(sent).toEqual([
+        { message: { id: 1, result: "OK" }, transfer: [buffer] },
+        { message: { id: 2, result: null }, transfer: [] },
+        { message: { id: 3, result: null }, transfer: [] },
+      ]);
+    } finally {
+      scope.onmessage = previousMessage;
+      scope.postMessage = previousPost;
+    }
+  });
+});
+
 describe("LinesCache", () => {
   const lines = (text: string): Lines => [[{ text, role: null }]];
   it("keeps texts up to its size in characters, dropping the least recently used", () => {
@@ -116,13 +149,21 @@ describe("LinesCache", () => {
 });
 
 describe("highlightKnown", () => {
-  it("highlights short code at once, and asks for the worker past the limit until it answered", () => {
-    expect(highlightKnown("const a = 1;", "ts")?.lines[0]![0]).toEqual({ text: "const", role: "keyword" });
+  it("never tokenizes even short code while the caller waits for the worker", () => {
+    expect(highlightKnown("const uncached = 1;", "ts")).toBeNull();
     expect(highlightKnown(normalizeCode("const b = 2;\n".repeat(400)), "ts")).toBeNull();
   });
 });
 
 describe("highlightOffThread", () => {
+  it("also sends short code to the worker and caches that result", async () => {
+    const source = "const shortWorkerOnly = 42;";
+    expect(highlightKnown(source, "ts")).toBeNull();
+    const lines = await highlightOffThread(source, "ts").promise;
+    expect(lines).not.toBeNull();
+    expect(lines![0]![0]).toEqual({ text: "const", role: "keyword" });
+    expect(highlightKnown(source, "ts")?.lines).toBe(lines!);
+  });
   it("highlights in a real worker and keeps the result", async () => {
     const source = normalizeCode("const a = 1;\n// done\n".repeat(400));
     const lines = await highlightOffThread(source, "ts").promise;

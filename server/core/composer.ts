@@ -9,6 +9,7 @@ import type { HerdrPane } from "../../shared/protocol.ts";
 import { secretPrompt } from "../../shared/secret-prompt.ts";
 import { NO_AGENT_MESSAGE } from "../../shared/submit-outcome.ts";
 import { agentPrompt, HerdrError, paneGet, paneProcessInfo, paneRead, paneScrollInfo, paneSendKeys, paneSendText, type ProcessInfo } from "../herdr/client.ts";
+import { submitRoute } from "../submit-route.ts";
 import { mirrorInput } from "../mirror-input.ts";
 import { paneAgentOf, resolveAgent, typingRoots } from "../pane-context.ts";
 import { paneProcessRoots } from "../conversation.ts";
@@ -370,7 +371,7 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
     // the terminal's input line stands in for the keyboard: it types what the user wrote, an
     // answer into an open menu included, where agent.prompt would refuse
     try {
-      if (!fromTerminal) {
+      if (!fromTerminal || agentOnly) {
         let pane = await paneGet(paneId).catch((error: unknown) => {
           if (error instanceof HerdrError && error.code === "pane_not_found") return undefined;
           throw error;
@@ -596,11 +597,10 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
           if (refused !== undefined) throw refused;
           if (!(error instanceof HerdrError)) throw error;
           if (clearDraft !== undefined || sendAnyway) throw error;
-          // a message for an agent alone (#511) is never typed into what is there once the agent has gone
-          if (agentOnly && (error.code === "agent_not_found" || error.code === "agent_not_ready")) throw new HerdrError("agent_not_ready", NO_AGENT_MESSAGE);
-          // nor typed past a collapsed queue: herdr cannot type only if the agent still runs, and Codex may exit first
-          const queuedOnly = !agentOnly && error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
-          if (error.code !== "agent_not_found" && error.code !== "agent_not_ready" && !queuedOnly) throw error;
+          const queuedOnly = error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
+          const route = submitRoute(error.code, queuedOnly, agentOnly);
+          if (route === "rethrow") throw error;
+          if (route !== "type") throw new HerdrError(route.refuse.code, route.refuse.message);
         }
       }
       // one long line from the input line: herdr's agent.prompt pastes it in the agent's own paste mode and
