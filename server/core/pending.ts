@@ -26,7 +26,8 @@ type Frame<T extends ClientMessage["type"]> = Extract<ClientMessage, { type: T }
 
 type PendingLease = { sighting: TerminalSighting; authority: object };
 type PendingItem = PendingRecord<Client, PendingLease>;
-type SubmitReply = { ok: boolean; pending?: PendingMessage; code?: string; message?: string };
+/** `typed: false` means neither typing nor clearing changed the pane. */
+type SubmitReply = { ok: boolean; pending?: PendingMessage; code?: string; message?: string; draft?: string; box?: string; typed?: false };
 
 /**
  * The server's pending messages. `authorizeSocket`, `clientSnapshot` and `omo` belong to the
@@ -146,6 +147,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   async function dispatchPendingText(owner: Client, paneId: string, text: string, lease: PendingLease, identity: PendingIdentity,
     automatic: boolean, arrivedAt: number, committing: (working: boolean, restarting?: boolean) => void = () => {}, interruptWorkingCodex = false): Promise<SubmitReply> {
     let wrote = false;
+    let clearedDraft = false;
     // what the checks below read is older than a status event that arrives while they run
     let mark = pending.mark(paneId);
     try {
@@ -161,7 +163,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       // a draft typed in the terminal is the user's: the paste would join it and the Enter send both (#609).
       // The box is the live screen's; only the viewport read tells Claude's grey text from a draft. The live
       // read comes after the colors, so text typed between the two is in the box and holds the message.
-      if (context.identity.agent === "claude") await freeClaudeBox(paneId, context.working, () => authorizePending(owner, paneId, lease), arrivedAt + (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS));
+      if (context.identity.agent === "claude") await freeClaudeBox(paneId, context.working, () => authorizePending(owner, paneId, lease), arrivedAt + (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS), () => { clearedDraft = true; });
       else if (context.identity.agent === "hermes") await freeHermesInput(paneId, context.identity);
       if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "The pending message waited too long; nothing was typed");
       authorizePending(owner, paneId, lease);
@@ -203,9 +205,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       noteSubmitted(paneId, text);
       return { ok: true };
     } catch (error) {
-      const fault = wrote ? { code: "submit_changed", message: "Pending-message delivery could not be confirmed. Check the terminal before sending again." } : pendingFault(error);
-      if (automatic && !wrote && fault.code === "agent_blocked") pending.observe(paneId, "blocked", mark);
-      return { ok: false, ...fault };
+      if (wrote || clearedDraft) return { ok: false, code: "submit_changed", message: "Pending-message delivery could not be confirmed. Check the terminal before sending again." };
+      const fault = pendingFault(error);
+      if (automatic && fault.code === "agent_blocked") pending.observe(paneId, "blocked", mark);
+      return { ok: false, ...fault, typed: false };
     }
   }
   async function dispatchPending(item: PendingItem, automatic: boolean, arrivedAt: number, interruptWorkingCodex = false): Promise<SubmitReply> {
@@ -237,10 +240,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
   /** The pending frames a connection sends, each handled as its `case` in the socket's frame switch was. */
   const pendingFrames = {
     async submit(client: Client, message: Frame<"submit">): Promise<void> {
-      // every submit is answered: the composer keeps its text until it hears back
-      const result = (ok: boolean, code?: string, text?: string, accepted?: PendingMessage, draft?: string | null, box?: string | null) => send(client, {
-        type: "submit-result", id: message.id, pane_id: message.pane_id, ok, ...(accepted ? { pending: accepted } : {}), ...(code ? { code, message: text } : {}),
-        ...(draft ? { draft } : {}), ...(!draft && typeof box === "string" ? { box } : {}),
+      // every submit is answered: the composer keeps its text until it hears back. `typed: false`
+      // only where neither typing nor clearing may have changed the pane
+      const result = (reply: SubmitReply) => send(client, {
+        type: "submit-result", id: message.id, pane_id: message.pane_id, ...reply,
       });
       if (!Number.isSafeInteger(message.id) || typeof message.pane_id !== "string" || !message.pane_id
         || typeof message.text !== "string" || typeof message.payload !== "string") {
@@ -250,38 +253,40 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       const waits = message.delivery === "queue" || message.delivery === "hold";
       if ((message.delivery !== undefined && message.delivery !== "immediate" && !waits)
         || (waits && message.typed !== undefined && message.typed !== false)) {
-        result(false, "invalid_delivery", "Use immediate delivery, or queue or hold a chat message");
+        result({ ok: false, code: "invalid_delivery", message: "Use immediate delivery, or queue or hold a chat message", typed: false });
         return;
       }
       if (message.clear_draft !== undefined && (typeof message.clear_draft !== "string" || !message.clear_draft
         || waits || (message.typed !== undefined && message.typed !== false))) {
-        result(false, "invalid_delivery", "Clear a terminal draft only for a chat message sent at once");
+        result({ ok: false, code: "invalid_delivery", message: "Clear a terminal draft only for a chat message sent at once", typed: false });
         return;
       }
       if (message.send_anyway !== undefined && (message.send_anyway !== true || waits || message.clear_draft !== undefined
         || (message.typed !== undefined && message.typed !== false))) {
-        result(false, "invalid_delivery", "Send anyway only a chat message sent at once, without clearing a draft");
+        result({ ok: false, code: "invalid_delivery", message: "Send anyway only a chat message sent at once, without clearing a draft", typed: false });
         return;
       }
       if (message.resend_id !== undefined && (typeof message.resend_id !== "string" || !message.resend_id || message.resend_id.length > 128
         || waits || message.typed === true || message.clear_draft !== undefined || message.send_anyway !== undefined)) {
-        result(false, "invalid_delivery", "Use a held-copy resend id only for an immediate chat message");
+        result({ ok: false, code: "invalid_delivery", message: "Use a held-copy resend id only for an immediate chat message", typed: false });
         return;
       }
       if (message.resend_generation !== undefined && (!Number.isSafeInteger(message.resend_generation) || message.resend_generation < 0 || message.resend_id === undefined)) {
-        result(false, "invalid_delivery", "A resend generation must be a nonnegative integer with a held-copy id");
+        result({ ok: false, code: "invalid_delivery", message: "A resend generation must be a nonnegative integer with a held-copy id", typed: false });
         return;
       }
       if (connectionOf(client).mode === "observe") {
-        result(false, "read_only", "this connection is in observe mode");
+        result({ ok: false, code: "read_only", message: "this connection is in observe mode", typed: false });
         return;
       }
       // another web bridge has this pane's terminal: its user types there, not this one
       if (attachments.get(message.pane_id)?.held) {
-        result(false, "attach_held", ATTACH_HELD_MESSAGE);
+        result({ ok: false, code: "attach_held", message: ATTACH_HELD_MESSAGE, typed: false });
         return;
       }
       const arrivedAt = Date.now();
+      // true once something of the message may have reached the pane (submitText sets it)
+      const progress = { typing: false };
       try {
         if (waits) {
           let book = pendingRequests.get(client);
@@ -297,7 +302,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             if (Date.now() - arrivedAt > (options.submitDeadlineMs ?? SUBMIT_DEADLINE_MS)) throw new HerdrError("submit_timeout", "This pending message waited too long; nothing was typed");
             if (!context.working) {
               // the agent left while the message was on its way: a chat follow-up is not typed into what is there now
-              if (context.identity.agent === null) throw new HerdrError("agent_not_ready", "No agent is in front of this pane now; nothing was typed");
+              if (context.identity.agent === null) throw new HerdrError("agent_not_found", "No agent is in front of this pane now; nothing was typed");
               // A request that raced the turn's finish still needs cancellable
               // paste + Enter; agent.prompt commits its key inside herdr. With a message
               // already waiting its turn here, this one takes its place behind it instead.
@@ -308,11 +313,14 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             // hold: kept for the owner's Send now, never sent by the turn's end
             const item = pending.enqueue(client, message.pane_id, message.id, text, lease!, context.identity, message.delivery === "hold");
             return { ok: true, pending: item.message };
-          }).catch((error): SubmitReply => ({ ok: false, ...pendingFault(error) })));
+            // dispatchPendingText answers its own failures: what is thrown here came before any typing
+          }).catch((error): SubmitReply => ({ ok: false, ...pendingFault(error), typed: false })));
           const answer = await reply;
+          // the answer says what was typed; a failure after it is not known to be untyped
+          progress.typing = true;
           const accepted = answer.pending ? pending.get(client, message.pane_id, answer.pending.id)?.message : undefined;
           if (answer.pending && !accepted) replayPendingOutcome(client, message.pane_id, answer.pending.id);
-          result(answer.ok, answer.code, answer.message, accepted);
+          result({ ...answer, pending: accepted });
           drainPending(message.pane_id);
           return;
         }
@@ -320,21 +328,21 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
           // held while this waited its turn (the attach was refused after the check above)
           if (attachments.get(message.pane_id)?.held) throw new HerdrError("attach_held", ATTACH_HELD_MESSAGE);
           return submitText(message.pane_id, message.text, message.payload, arrivedAt, message.typed === true, () => authorizeSocket(client), message.clear_draft,
-            draftConfirmations.get(client)?.get(message.pane_id), message.send_anyway === true);
+            draftConfirmations.get(client)?.get(message.pane_id), message.send_anyway === true, message.agent_only === true, progress);
         };
         if (message.resend_id !== undefined) {
           authorizeSocket(client);
           const answer = await serialize(message.pane_id, () => pending.resend(message.pane_id, message.resend_id!,
-            new Bun.CryptoHasher("sha256").update(message.text).digest("hex"), async () => {
+            new Bun.CryptoHasher("sha256").update(message.text).digest("hex"), async (): Promise<SubmitReply> => {
               try { await dispatch(); return { ok: true }; }
-              catch (error) { return { ok: false, ...pendingFault(error) }; }
+              catch (error) { return { ok: false, ...pendingFault(error), ...(progress.typing ? {} : { typed: false as const }) }; }
             }, message.resend_generation));
-          result(answer.ok, answer.code, answer.message);
+          result(answer);
           return;
         }
         await serialize(message.pane_id, dispatch);
         if (message.clear_draft !== undefined || message.send_anyway) draftConfirmations.get(client)?.delete(message.pane_id);
-        result(true);
+        result({ ok: true });
       } catch (error) {
         if (message.clear_draft !== undefined || message.send_anyway) draftConfirmations.get(client)?.delete(message.pane_id);
         // a refusal naming a draft confirms it for Clear it and send; one naming none, for Send anyway
@@ -344,8 +352,10 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
           confirmations.set(message.pane_id, { draft: error.draft, identity: error.identity, box: error.box });
         }
         const fault = pendingFault(error);
-        result(false, fault.code, fault.message, undefined, error instanceof InputDraftError ? error.draft : null,
-          error instanceof InputDraftError && error.identity && error.box !== null ? shownInputBox(error.box) : null);
+        result({ ok: false, ...fault,
+          ...(error instanceof InputDraftError && error.draft ? { draft: error.draft } : {}),
+          ...(error instanceof InputDraftError && !error.draft && error.identity && error.box !== null ? { box: shownInputBox(error.box) } : {}),
+          ...(progress.typing || fault.code === "submit_partial" ? {} : { typed: false as const }) });
       }
       return;
     },
@@ -353,7 +363,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       const result = (reply: SubmitReply) => send(client, { type: "pending-result", id: message.id, pane_id: message.pane_id, pending_id: message.pending_id, ...reply });
       if (!Number.isSafeInteger(message.id) || typeof message.pane_id !== "string" || !message.pane_id
         || typeof message.pending_id !== "string" || !message.pending_id || !["steer", "discard"].includes(message.action)) {
-        result({ ok: false, code: "invalid_pending_action", message: "Use steer or discard with a pending-message id" }); return;
+        result({ ok: false, code: "invalid_pending_action", message: "Use steer or discard with a pending-message id", typed: false }); return;
       }
       if (message.resend_generation !== undefined && (!Number.isSafeInteger(message.resend_generation) || message.resend_generation < 0)) {
         result({ ok: false, code: "invalid_pending_action", message: "A resend generation must be a nonnegative integer" }); return;
@@ -379,7 +389,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
                 item.lease = lease!;
                 dispatched = true;
                 return await dispatchPending(item, false, arrivedAt, true);
-              } catch (error) { return { ok: false, ...pendingFault(error) }; }
+              } catch (error) { return { ok: false, ...pendingFault(error), ...(item.inFlight ? {} : { typed: false as const }) }; }
             }, message.resend_generation);
           // A saved copy may already have completed this ID on another connection.
           if (!dispatched && pending.get(client, item.paneId, item.message.id) === item && pending.claim(item, false))

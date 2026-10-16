@@ -610,7 +610,12 @@ export function CommandPalette({ open, initialQuery = "", onClose, machines, onS
 
   let rowIndex = 0;
   return (
-    <div className="modal-scrim palette-scrim" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="modal-scrim palette-scrim" onMouseDown={(event) => {
+      if (event.target !== event.currentTarget) return;
+      // Do not let the backdrop's default focus run after the trap restores its opener.
+      event.preventDefault();
+      onClose();
+    }}>
       {machines.filter((machine) => machine.state === "connected").map((machine) => <MachineContext.Provider key={machine.id} value={machine.id}><PaletteBranchReader machine={machine} onChange={onInventory} /></MachineContext.Provider>)}
       <section ref={surface} className="menu command-palette" role="dialog" aria-modal="true" aria-label={t("Command palette")} onKeyDown={onSurfaceKeyDown} onFocus={onSurfaceFocus}>
         <div className="palette-search">

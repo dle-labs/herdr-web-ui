@@ -38,12 +38,18 @@
   font-size: var(--fs-md);
 }
 
-.chat-view {
+.chat-frame.chat-surface-layout {
   position: absolute;
   inset: 0;
   /* up under a phone's glass header (styles.css), into the room the stack keeps for it */
   top: calc(-1 * var(--header-over, 0px));
   z-index: 1;
+}
+
+.chat-view {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   /* at its top, a drag down for older messages is still the transcript's: handed on to the
      page, Android Chrome takes it for pull-to-refresh and reloads the app */

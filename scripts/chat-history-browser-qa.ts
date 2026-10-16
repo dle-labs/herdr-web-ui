@@ -4,8 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
-import { VOICE_DEFAULTS, type VoiceStatus } from "../shared/voice.ts";
 import type {} from "./chat-history-fixture.tsx";
+import { VOICE_DEFAULTS, type VoiceStatus } from "../shared/voice.ts";
 import { parseAgyTranscript } from "../server/agy.ts";
 import { chromePath } from "./chrome-path.ts";
 
@@ -25,7 +25,8 @@ function nextRoute(name: string): Promise<void> {
   });
 }
 try {
-  const build = await Bun.build({ entrypoints: ["scripts/chat-history-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"development"' } });
+  // Vite emits the worklet in production; this non-capture fixture never loads it.
+  const build = await Bun.build({ external: ["*?worker&url"], entrypoints: ["scripts/chat-history-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"development"' } });
   assert.ok(build.success, String(build.logs));
   server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
     const path = new URL(request.url).pathname;
@@ -34,7 +35,7 @@ try {
     if (path === "/api/connection-diagnostics") return new Response(null, { status: 204 });
     if (path.endsWith("/pane/commands")) return Response.json({ commands: [] });
     if (path.endsWith("/pane/omo-tasks")) return Response.json({ tasks: [], runs: [] });
-    // a desktop's composer asks whether dictation can work here before it shows the mic
+    // Capture is unavailable in this transcript-only fixture; no private speech requests.
     if (path === "/api/voice") return Response.json({ configured: false, source: null, ...VOICE_DEFAULTS } satisfies VoiceStatus);
     return path === "/" ? new Response('<html><head><link rel="stylesheet" href="/chat-history-fixture.css"></head><body><div id="root"></div><script type="module" src="/chat-history-fixture.js"></script></body></html>', { headers: { "Content-Type": "text/html" } }) : new Response(Bun.file(join(root, path.slice(1))));
   } });

@@ -84,9 +84,10 @@ function fadedScrim(color: string, keep: number): string | null {
  * A finger dragging the sheet down moves it, and a sheet let go far enough or fast enough
  * closes through `onDismiss` (the same close its scrim or Escape would run), dropping from where
  * the finger left it. Pass null while the sheet must stay (a dialog busy with its deed).
- * `surface` is the sheet itself, the scrim's child.
+ * `surface` is the sheet itself, the scrim's child. With `startSelector`, only that region
+ * starts dismissal; the rest of the sheet can use native panning, including at content edges.
  */
-export function useSheetSwipe(surface: RefObject<HTMLElement | null>, onDismiss: (() => void) | null): void {
+export function useSheetSwipe(surface: RefObject<HTMLElement | null>, onDismiss: (() => void) | null, startSelector?: string): void {
   const dismiss = useLatest(onDismiss);
   useEffect(() => {
     const sheets = media(SHEET_QUERY);
@@ -104,6 +105,7 @@ export function useSheetSwipe(surface: RefObject<HTMLElement | null>, onDismiss:
       drag = null;
       if (!node || !touch || event.touches.length !== 1 || !sheets.matches || dismiss.current === null) return;
       if (!node.contains(event.target as Node) || ownsStroke(event.target, node)) return;
+      if (startSelector !== undefined && (!(event.target instanceof Element) || event.target.closest(startSelector) === null)) return;
       stroke = { x: touch.clientX, y: touch.clientY, scrolled: scrolledUnder(event.target, node), node };
     };
 
@@ -163,7 +165,7 @@ export function useSheetSwipe(surface: RefObject<HTMLElement | null>, onDismiss:
       document.removeEventListener("touchend", onEnd, { capture: true });
       document.removeEventListener("touchcancel", onEnd, { capture: true });
     };
-  }, [surface, dismiss]);
+  }, [surface, dismiss, startSelector]);
 }
 
 /** Springs a sheet that was let go back to its place, then hands its look back to the stylesheet. */

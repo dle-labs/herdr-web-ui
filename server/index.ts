@@ -323,7 +323,7 @@ export function createServer(
       // (names and sizes are the shape of a repository the terminals never print), plus
       // every mutation except the two below.
       const fileRead = /^\/api\/(?:machines\/[^/]+\/)?fs\//.test(pathname);
-      const directoryListing = /^\/api\/(?:machines\/[^/]+\/)?workspace\/directories$/.test(pathname);
+      const directoryListing = /^\/api\/(?:machines\/[^/]+\/)?workspace\/(?:directories|changes|diff|commits|files)$/.test(pathname);
       // Signing a device's own alerts in is a preference of that device, so `watch` keeps
       // it. The endpoint it registers is https-only (server/push.ts), and that is the
       // protection: a watch device's subscription is delivered every status change anyway.

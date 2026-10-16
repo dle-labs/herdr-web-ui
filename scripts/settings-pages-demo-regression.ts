@@ -531,24 +531,24 @@ try {
         assert.deepEqual(errors, []);
         console.log("PASS a window that changes width with Settings open keeps Back to the steps it shows");
 
-        // a link to a file and Settings opens the preview (a panel beside the pane at this width) under
+        // a link to a file and Settings opens the preview in Files under
         // Settings; a reload there closes Settings and keeps the file, and Back then steps out of both
         const infra = panes.omp;
         await page.goto(`${url}?ws=${infra.split(":")[0]}&pane=${encodeURIComponent(infra)}&file=README.md&settings=about`);
         await dialogOf(page).getByRole("tabpanel", { name: "About", exact: true }).waitFor();
-        await page.locator("aside.file-panel .file-viewer").waitFor();
+        await page.locator(".files-dialog .file-viewer").waitFor();
         await historyHolds(page, "a link to a file and Settings", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:file-preview"] !== undefined);
         await page.reload();
         await page.locator(".conn-live").waitFor({ state: "attached" });
-        await page.locator("aside.file-panel .file-viewer").waitFor();
+        await page.locator(".files-dialog .file-viewer").waitFor();
         await historyHolds(page, "the reload on a preview over Settings", () => {
           const address = new URLSearchParams(window.location.search);
           return address.get("file") === "README.md" && !address.has("settings") && (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined;
         });
         assert.equal(await page.locator(".settings-dialog").count(), 0, "a reload on a preview over Settings closes Settings");
-        assert.equal(await page.locator("aside.file-panel .file-viewer").count(), 1, "a reload on a preview over Settings keeps the file open");
+        assert.equal(await page.locator(".files-dialog .file-viewer").count(), 1, "a reload on a preview over Settings keeps the file open");
         await page.goBack();
-        await page.locator("aside.file-panel .file-viewer").waitFor({ state: "detached" });
+        await page.locator(".files-dialog .file-viewer").waitFor({ state: "detached" });
         await historyHolds(page, "Back from the reloaded preview", () => (history.state as Record<string, unknown> | null)?.["herdr-web-ui:settings"] === undefined);
         assert.equal(await page.locator(".settings-dialog").count(), 0, "Back from the reloaded preview does not reopen Settings");
         assert.deepEqual(errors, []);

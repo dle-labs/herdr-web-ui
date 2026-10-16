@@ -174,6 +174,7 @@ export function createConnections<Lease>({ clients, present, pending, devices, d
       case "stalled": {
         if (state.closing) return;
         state.closing = true;
+        present.delete(client);
         killWatches(client);
         pending.close(client);
         clients.delete(client);

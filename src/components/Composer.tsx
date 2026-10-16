@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -12,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { flushSync } from "react-dom";
-import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, Minimize2, Package, Plus, Puzzle, Square, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
+import { ArrowUp, FileText, Folder, FolderGit2, GitBranch, LoaderCircle, MessageSquare, Minimize2, Package, Plus, Puzzle, Square, TriangleAlert, UserRound, X, type LucideIcon } from "lucide-react";
 
 import "./Composer.css";
 
@@ -63,6 +64,15 @@ import { useT } from "../lib/i18n.ts";
 import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
 import { AttachmentTooLargeError } from "../lib/api.ts";
 import { modalOpen } from "../lib/focus.ts";
+import { blockComments, outgoingMessage, useBlockComments, type PaneComment } from "../lib/blockComments.ts";
+import { changedField, revealField } from "../lib/commentDom.ts";
+import { lastFileStop } from "../lib/commentWalk.ts";
+import { FileCommentNavContext } from "../lib/fileCommentNav.ts";
+import { WorkspaceFilesContext } from "../lib/workspaceFiles.ts";
+import { useWorkspaceChanges } from "../lib/useWorkspaceChanges.ts";
+import { BrowseFilesIcon } from "./BrowseFilesIcon.tsx";
+import { sortFileComments } from "../lib/fileComments.ts";
+import { composerFileComments } from "../lib/composerComments.ts";
 
 export interface ComposerProps {
   connected: boolean;
@@ -70,6 +80,8 @@ export interface ComposerProps {
    *  (`connectedBefore`), else Connecting (omitted, as the fixtures do, a wait reads as the first connection) */
   connectedBefore?: boolean;
   paneId: string;
+  /** Current file-browser directory, including a foreground process's cwd. */
+  cwd?: string | null;
   /** false: appearing must not take the keyboard (App switched to this pane on its own) */
   autoFocus?: boolean;
   active?: boolean;
@@ -92,8 +104,6 @@ export interface ComposerProps {
   greeting?: ReactNode;
   /** the pane's notices over the input card (PaneTerminal builds them): rows of its own, above the replies */
   notices?: ReactNode;
-  /** the pane's working folder, named in the strip tucked under the card; nothing is drawn for it while absent */
-  cwd?: string | null;
   /** the pane's branch, beside the folder in that strip; nothing is drawn for it while absent */
   branch?: string | null;
   /** the workspace is a linked worktree of this repository: the strip names the repository in the folder's
@@ -101,8 +111,10 @@ export interface ComposerProps {
   worktreeRepo?: string | null;
   /** true: sent, clear the box; a string: keep the text and say why; a DraftRefusal: the same, and the
    * note offers to send again with `clearDraft`, which clears that draft from the terminal first, or,
-   * where it named none, with `sendAnyway`; a promise settles to any of them */
-  onSend: (text: string, clearDraft?: string, sendAnyway?: boolean) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
+   * where it named none, with `sendAnyway`. `comments` quote files, so with them the
+   * message goes to an agent only, never typed into a shell. The receiver composes them with
+   * `text` (composeWithComments). A promise settles to any of these results. */
+  onSend: (text: string, options?: { comments?: readonly PaneComment[]; clearDraft?: string; sendAnyway?: boolean }) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
   onAbort: () => void;
   onUploadImage: (file: File) => Promise<string>;
 }
@@ -245,8 +257,10 @@ export function Composer({
   const activeRef = useRef(active);
   activeRef.current = active;
   const machineId = useMachineId();
+  const openFiles = useContext(WorkspaceFilesContext);
   const { fetchPaneCommands, fetchPaneFiles } = useMachineApi();
   const { settings } = useSettings();
+  const filesChanged = useWorkspaceChanges(paneId, cwd ?? "", connected && active && openFiles !== null && settings.showBrowseFilesShortcut, paneStatus({ agent_status: agentStatus, background_wait: backgroundWait ? true : undefined }));
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
   const usageEnabled = settings.showUsage && !mobile && machineId === "local" && providerForAgent(agent) !== null;
   const { report: usageReport } = useUsage(usageEnabled);
@@ -275,6 +289,37 @@ export function Composer({
   const draftKey = `herdr-web-ui:composer-draft:${paneStorageId(machineId, paneId)}`;
   const { text, sending } = useSyncExternalStore(composerDrafts.subscribe, () => composerDrafts.read(draftKey));
   const setText = useCallback((value: string | ((previous: string) => string)) => composerDrafts.set(draftKey, value), [draftKey]);
+  // Only file comments go out with the next message. Ignore legacy persisted reply comments.
+  const commentOwner = paneStorageId(machineId, paneId);
+  const storedComments = useBlockComments(commentOwner);
+  const comments = useMemo(() => composerFileComments(storedComments), [storedComments]);
+  // an open question reads the text as its answer, and without an agent the text is typed into
+  // whatever runs in the pane (a shell, perhaps): the comments wait for a message to the agent
+  const outgoing = outgoingMessage(comments, text, { answering: answerHint !== null, agent: agent !== null });
+  // The context bar walks file comments, each opened in the file viewer.
+  const nextComment = useRef(0);
+  const openFileComment = useContext(FileCommentNavContext);
+  const goToComment = (): void => {
+    // this pane's own chat: several panes can be mounted, each with a chat view in its stack
+    const view = surfaceRef.current?.closest(".terminal-stack");
+    if (!view) return;
+    // a comment being written in this pane keeps its place: the walk gives the focus back to it, as the Send does
+    const unsaved = changedField(view);
+    if (unsaved !== null) {
+      revealField(unsaved);
+      return;
+    }
+    const files = sortFileComments(comments);
+    const stops = files.length;
+    if (stops === 0) return;
+    // the viewer walked its file's comments since (its counter, or a stop of this walk): this walk goes on after the one it showed last
+    const last = lastFileStop.get(commentOwner);
+    lastFileStop.delete(commentOwner);
+    const shownLast = last === undefined ? -1 : files.findIndex((comment) => comment.id === last);
+    const stop = (shownLast >= 0 ? shownLast + 1 : nextComment.current) % stops;
+    nextComment.current = (stop + 1) % stops;
+    openFileComment?.(paneId, machineId, files[stop]!);
+  };
   const mounted = useRef(true);
   const [caret, setCaret] = useState(text.length);
   const textRef = useRef(text);
@@ -313,9 +358,31 @@ export function Composer({
   const trigger = useMemo(() => activeTrigger(text, caret, { skills: syntax.skillTriggers.includes("$"), namespaced: syntax.namespaced }), [syntax, caret, text]);
   /** a command the agent runs but the chat cannot finish, while it is what the box holds */
   const terminalOnly = useMemo(() => terminalOnlyCommand(agent, text), [agent, text]);
+  // a note from the last send comes first; then what the comments have to say
+  const shownNote = note ?? (outgoing.tooLong ? t("Too long to send. Shorten the message or remove comments.")
+    : settings.comments && blockComments.isUnsaved(commentOwner) ? t("Comments could not be saved. They are lost on reload.") : null);
   const uploading = attachments.some((attachment) => attachment.state === "uploading");
   /** a finished upload whose path waits for the message to be shortened: Send waits with it */
   const roomless = attachments.find((attachment) => attachment.state === "no-room");
+  /** the comments that go with the next message: on the send buttons, where it is sent from */
+  const goingComments = outgoing.sentIds.length;
+  const withComments = (label: string): string => goingComments > 0 ? `${label} · ${t("Comments to send: {count}", { count: goingComments })}` : label;
+  /** why the comments stay in the pane instead of going with the next send */
+  const commentsStayNote = (held: NonNullable<typeof outgoing.commentsHeld>): string => held === "no-agent" ? t("Comments stay here: they are only sent to an agent.")
+    : held === "answer" ? t("Comments stay here: they are not sent with an answer.") : t("Comments stay here: they are not sent with a command.");
+  /** the context bar is drawn while comments are stored: the message below it gives up part of its top padding */
+  const hasCommentBar = comments.length > 0;
+  /**
+   * The bar's X: every file comment of this pane goes, and the bar with them. Removed is removed:
+   * there is no undo and no dialog. The X leaves with the focus on it: the message box takes it, except on a touch
+   * screen, where that would raise the keyboard unasked (PaneTerminal tells touch apart by the same query).
+   */
+  const removeAllComments = (): void => {
+    if (comments.length === 0) return;
+    blockComments.remove(commentOwner, comments.map((comment) => comment.id));
+    nextComment.current = 0;
+    if (!window.matchMedia("(pointer: coarse)").matches) textareaRef.current?.focus();
+  };
   const agentLabel = agentDisplayLabel(agent);
   // the agent's suggestion stands in the empty box as it does in its own input, until anything is typed
   const offered = connected && answerHint === null && suggestion !== null ? suggestion : null;
@@ -408,7 +475,8 @@ export function Composer({
   }, []);
 
   // A suggestion or prompt hint changes only the placeholder of a populated draft.
-  useLayoutEffect(sizeTextarea, [sizeTextarea, text, text.length === 0 ? placeholder : null, boxWidth, facesLoaded]);
+  // Collapsing it to measure unused placeholder text can scroll iOS's focused caret.
+  useLayoutEffect(sizeTextarea, [sizeTextarea, text, text.length === 0 ? placeholder : null, boxWidth, facesLoaded, hasCommentBar]);
 
   // SettingsProvider writes --chat-scale in a passive effect. Measure on the next frame,
   // after that CSS is applied, so a draft rewraps without waiting for another keystroke.
@@ -791,12 +859,19 @@ export function Composer({
   /** `clearDraft`: the terminal draft a DraftRefusal named, which the user asked to clear and send over;
    * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it. False: nothing went out */
   const send = useCallback((clearDraft?: string, sendAnyway = false): boolean => {
-    if (composingRef.current) return false;
-    if (!connected || uploading || roomless || sending || text.trim().length === 0) return false;
+    if (composingRef.current || !connected || uploading || roomless || sending || !outgoing.sendable) return false;
+    // A comment still being written would not go with this message: reveal it instead.
+    const unsaved = changedField(surfaceRef.current?.closest(".terminal-stack") ?? null);
+    if (unsaved !== null) {
+      revealField(unsaved);
+      return false;
+    }
     const sent = text;
     const sentAttachments = attachments;
+    const { sent: sentComments, sentIds, commentsHeld } = outgoing;
     const settle = (result: boolean | string | DraftRefusal): void => {
       const acknowledged = result === true ? composerDrafts.settle(draftKey, sent) : null;
+      if (result === true) blockComments.remove(commentOwner, sentIds);
       if (!mounted.current) return;
       if (typeof result !== "boolean") setNote(result);
       if (acknowledged === null) return;
@@ -806,7 +881,8 @@ export function Composer({
       setCaret(rest.length);
       textRef.current = rest;
       caretRef.current = rest.length;
-      setNote(edited ? t("Sent as it was. Your changes made while it was sending stayed here and were not sent.") : null);
+      setNote(edited ? t("Sent as it was. Your changes made while it was sending stayed here and were not sent.")
+        : commentsHeld !== null ? commentsStayNote(commentsHeld) : null);
       for (const attachment of sentAttachments) { URL.revokeObjectURL(attachment.previewUrl); placedMentions.current.delete(attachment.id); }
       setAttachments((current) => current.filter((attachment) => !sentAttachments.includes(attachment)));
     };
@@ -814,7 +890,7 @@ export function Composer({
     // a polish landing before the acknowledgement would count as an edit and keep the sent message here
     dictation.forget();
     try {
-      const result = onSend(text, clearDraft, sendAnyway);
+      const result = onSend(sent, { comments: sentComments, ...(clearDraft !== undefined ? { clearDraft } : {}), ...(sendAnyway ? { sendAnyway } : {}) });
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey); return true; }
       void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey));
     } catch {
@@ -822,7 +898,7 @@ export function Composer({
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
     return true;
-  }, [attachments, connected, dictation.forget, draftKey, onSend, roomless, sending, text, uploading]);
+  }, [attachments, commentOwner, connected, dictation.forget, draftKey, onSend, outgoing, roomless, sending, text, uploading]);
   const sendRef = useRef(send);
   sendRef.current = send;
   const connectedRef = useRef(connected);
@@ -892,7 +968,7 @@ export function Composer({
     setNote(null);
     // a quick reply is not the box's text, so its note offers no send over a draft
     const settle = (result: boolean | string | DraftRefusal): void => {
-      if (mounted.current && typeof result !== "boolean") setNote(typeof result === "string" ? result : submitNote("input_draft", result.note));
+      if (mounted.current && typeof result !== "boolean") setNote(typeof result === "string" ? result : submitNote("input_draft", result.note, agent));
     };
     if (!composerDrafts.begin(draftKey)) return;
     try {
@@ -903,7 +979,7 @@ export function Composer({
       composerDrafts.end(draftKey);
       if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again."));
     }
-  }, [connected, draftKey, onSend, sending]);
+  }, [agent, connected, draftKey, onSend, sending]);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -996,7 +1072,8 @@ export function Composer({
   // what the status line says; what may be sent, queued or stopped goes by the agent's own status
   const shownStatus = paneStatus({ agent_status: agentStatus, ...(backgroundWait ? { background_wait: true as const } : {}) });
   const statusCompact = composerStatusCompact(cardWidth);
-  const sendShown = sending || composerSendShown({ working: isWorking, text });
+  // Comments alone are a message too; a send in progress keeps its progress indicator.
+  const sendShown = sending || composerSendShown({ working: isWorking, text }) || (isWorking && goingComments > 0);
   const hint = composerStatusHint({ uploading, connected, text, noRoom: roomless !== undefined });
   const model = metadata?.model ? modelLabel(metadata.model) : null;
   const modelShown = Boolean(metadata?.model || metadata?.reasoning_effort);
@@ -1014,6 +1091,7 @@ export function Composer({
   const noteLine = note === null ? null : typeof note === "string" ? note : "failure" in note
     ? [note.failure.cause === null ? t("{name} could not be attached", { name: note.attachment.file.name }) : t("{name} could not be attached: {reason}", { name: note.attachment.file.name, reason: note.failure.cause }), note.attachment.leftOut].filter((part) => part !== null).join(" ")
     : note.note;
+  const shownNoteLine = shownNote === note ? noteLine : typeof shownNote === "string" ? shownNote : null;
   /** the strip under the card: the folder and the branch the caller knows; none, or a phone's screen, no strip */
   const strip = mobile ? null : composerStrip({ cwd, branch, repo: worktreeRepo });
   const worktree = worktreeRepo !== null;
@@ -1069,23 +1147,23 @@ export function Composer({
       )}
 
       {/* why the message in the box did not go: on the box's top edge, read with it, its one way on beside it */}
-      {note !== null && noteLine !== null && (
-        <div className={`composer-note${typeof note === "object" && !("failure" in note) ? " composer-note-offer" : ""}`} role="alert">
+      {shownNote !== null && shownNoteLine !== null && (
+        <div className={`composer-note${typeof shownNote === "object" && !("failure" in shownNote) ? " composer-note-offer" : ""}`} role="alert">
           <TriangleAlert className="composer-note-icon" aria-hidden="true" />
           <div className="composer-note-text">
-            {noteLine}
-            {typeof note === "object" && "failure" in note && (note.failure.advice !== null || note.failure.detail !== null) && <details className="composer-note-details">
+            {shownNoteLine}
+            {typeof shownNote === "object" && "failure" in shownNote && (shownNote.failure.advice !== null || shownNote.failure.detail !== null) && <details className="composer-note-details">
               <summary>{t("Details")}</summary>
-              {note.failure.advice !== null && <p>{note.failure.advice}</p>}
-              {note.failure.detail !== null && <code>{note.failure.detail}</code>}
+              {shownNote.failure.advice !== null && <p>{shownNote.failure.advice}</p>}
+              {shownNote.failure.detail !== null && <code>{shownNote.failure.detail}</code>}
             </details>}
           </div>
           {/* the draft named above, never what has replaced it since: the server checks; a box it could
               not tell empty, sent over only in the same Claude terminal the refusal was for */}
-          {typeof note === "object" && ("failure" in note
-            ? offersRetry(note.failure) && <button type="button" className="composer-note-action" disabled={!connected} onClick={() => retryUpload(note.attachment)}>{t("Try again")}</button>
-            : <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
-              onClick={() => "draft" in note ? send(note.draft) : send(undefined, true)}>{"draft" in note ? t("Clear it and send") : t("Send anyway")}</button>)}
+          {typeof shownNote === "object" && ("failure" in shownNote
+            ? offersRetry(shownNote.failure) && <button type="button" className="composer-note-action" disabled={!connected} onClick={() => retryUpload(shownNote.attachment)}>{t("Try again")}</button>
+            : <button type="button" className="composer-note-action" disabled={!connected || uploading || roomless !== undefined || sending || !outgoing.sendable}
+              onClick={() => "draft" in shownNote ? send(shownNote.draft) : send(undefined, true)}>{"draft" in shownNote ? t("Clear it and send") : t("Send anyway")}</button>)}
         </div>
       )}
 
@@ -1224,6 +1302,35 @@ export function Composer({
           </div>
         )}
 
+        {/* The file comments stored for this pane, a row between the attachments and the message: their count, and
+            whether they go with the next send (accent icon) or wait (dim; the name says why). The text walks to them, the X drops
+            them all. Without comments the row takes no space */}
+        {hasCommentBar && (() => {
+          const held = outgoing.commentsHeld;
+          const waiting = held !== null;
+          const count = comments.length;
+          const label = waiting ? t(count === 1 ? "{count} comment waiting" : "{count} comments waiting", { count })
+            : t(count === 1 ? "{count} comment" : "{count} comments", { count });
+          const why = held !== null ? commentsStayNote(held) : "";
+          return (
+            <div className={`composer-comments-bar ${waiting ? "is-waiting" : "is-going"}`}>
+              <button
+                type="button"
+                className="composer-comments-walk"
+                aria-label={waiting ? `${label}. ${why}` : label}
+                title={`${waiting ? `${label}\n${why}` : label}\n${t("Go to the next comment")}`}
+                onClick={goToComment}
+              >
+                <MessageSquare aria-hidden="true" />
+                <span className="composer-comments-text">{label}</span>
+              </button>
+              <button type="button" className="icon-button composer-comments-remove" aria-label={t("Remove all comments")} title={t("Remove all comments")} onClick={removeAllComments}>
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          );
+        })()}
+
         <textarea
           ref={textareaRef}
         onCompositionStart={() => { composingRef.current = true; }}
@@ -1305,6 +1412,19 @@ export function Composer({
             <Plus aria-hidden="true" />
           </button>
           {dictation.shown && <MicButton dictation={dictation} />}
+          {openFiles && settings.showBrowseFilesShortcut && <button
+            type="button"
+            className="icon-button composer-browse"
+            aria-label={t("Browse files")}
+            title={filesChanged ? `${t("Browse files")} · ${t("Changed files")}` : t("Browse files")}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              openFiles(paneId);
+            }}
+          >
+            <BrowseFilesIcon changed={filesChanged} />
+          </button>}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} claude={agent === "claude"} plan={plan} />
         </div>
         {/* between the two control groups of the card's last row. The agent's name, its separator and the
@@ -1371,10 +1491,10 @@ export function Composer({
             <button
               type="button"
               className="composer-action composer-send"
-              aria-label={t("Send message")}
-              title={sending ? t("Sending…") : t("Send message")}
+              aria-label={withComments(t("Send message"))}
+              title={sending ? t("Sending…") : withComments(t("Send message"))}
               aria-busy={sending || undefined}
-              disabled={!connected || uploading || roomless !== undefined || sending || text.trim().length === 0}
+              disabled={!connected || uploading || roomless !== undefined || sending || !outgoing.sendable}
               // focus stays in the text box: leaving it closes the soft keyboard and moves the button
               // out from under the tap before the click lands
               onPointerDown={(event) => event.preventDefault()}
@@ -1405,7 +1525,7 @@ export function Composer({
       {/* said while typing, before the send: after it the browser is already open and the reader is
           already in the state the words describe. Not a block — the text still goes, and pi runs the
           command in the terminal the way its own palette would */}
-      {!note && terminalOnly !== null && (
+      {!shownNote && terminalOnly !== null && (
         <div className="composer-hint" role="status">{t("{command} opens a tree the chat cannot show. It runs in the terminal — tap the terminal button at the top of the screen to choose a branch.", { command: `/${terminalOnly}` })}</div>
       )}
       {/* above the whole composer: inside the surface it would cover the text being dictated */}

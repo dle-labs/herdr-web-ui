@@ -214,7 +214,7 @@ A pane's plan is the task list a Claude Code agent keeps (`TaskCreate` / `TaskUp
 | **Compose** | `/` commands and `@` file mentions, any file or image up to 32 MB attached by path, and a draft per pane. Send during work schedules a next-turn message; use its ↑ Send now action to send it now. A strip under the input card names the pane's working folder (the whole path on hover) and, for a workspace of a repository with a worktree open, its branch at the other end; a phone leaves it out. |
 | **Follow every agent** | Live RUN / INPUT / DONE / READY status for all panes, and alerts when an agent needs input, finishes or its terminal ends. |
 | **Open what agents make** | A file path in an answer opens in a viewer (images, video, audio, PDF, text), or find it with **Browse files**, and download it to your phone. A source file opens whole up to 8 MB and 200,000 lines; past 2,000 lines it scrolls as a window of rows, colored up to 256 KB and 5,000 lines and plain beyond. A link with `:line` or `#L12` opens at that line. |
-| **See what changed** | **Browse files → Changes** lists what changed in the git repository the pane sits in: the **Working tree**, what is **Staged**, or two **Commits** you name, as a folder tree with git's status letter and the added and removed lines. A row opens its diff, **Unified** or **Split** (Settings → Chat → File viewer → Diff layout; a phone shows one column), with **Copy path**, **Copy patch** and **Open file**. The files a turn's edit tools changed, listed in its work block, open the same diff. It only reads; a remote PC's repository is read on that PC. |
+| **See what changed** | **Browse files** shows the file tree and current Git changes in one browser, including staged, unstaged and untracked files. **Compare with…** searches commits to compare against the working tree, for all files or one file's context-menu selection. **Unified** or **Split** shares Settings → Chat → File viewer → Diff layout; a phone shows one column. Inline comments join your next chat message. Everything is read-only and a remote repository is read on its own PC. |
 | **Manage sessions** | Start an agent in a folder you type or pick with **Browse**. In New workspace, Browse filters the currently loaded folders as you type (case-insensitive); opening a folder updates Directory, so **Start** uses that path even without **Use this folder** (which closes Browse), and a folder under home stays written as `~/…`. **New folder** (the folder-plus button in Browse's bar) makes a folder inside the one shown and opens it. It does not search subfolders or folders beyond the displayed 500. Add a tab to a workspace (as herdr's prefix+c), switch tabs from the strip over the pane, rename workspaces from their ⋯/right-click menu and panes from their own menu, reorder workspaces (drag a row, or on a phone long-press it and drag; Alt+Up/Down moves a focused row one step), and jump anywhere from the command palette. |
 | **Speak instead of typing** | A mic beside Attach in the composer and beside Send in the terminal input line. Hold to talk or tap twice; the words land at the caret and are never sent by themselves. See [Voice input](#voice-input). |
 | **Watch your plan limits** | Beside the Settings gear, how much of each AI subscription signed in on the PC is left, or used: the session's or the week's limit per account, and every limit with its reset time on a tap. See [Subscription usage](#subscription-usage). |
@@ -232,6 +232,18 @@ discarded after checking the terminal. Previously held browser messages still ne
 or **Discard**. A message is never pasted over text typed in Claude Code's own input box: while
 that box holds a draft the message stays in the list with the reason, and **Send now** delivers it
 once the draft is sent or cleared in the terminal.
+
+### Commenting on files
+
+Source files and Git diffs share line-number gutters: use **+** for a line, or select a gutter
+range, then write in the inline editor below it. Phones have touch-friendly line and range
+controls too. Plain text clicks and selections do not create comments. In Preview, switch to
+**Source** to reveal the gutter; existing Preview notes are retained and editable on their source
+lines. Notes whose source changed remain available in outdated cards with their saved quotes.
+
+The composer's comment bar counts and visits file comments only, and sends them with your next
+message to the agent. Comments wait during commands or prompt answers and never go to a shell.
+Chat messages are ordinary selectable, copyable text, without comment pins or editors.
 
 ## Subscription usage
 

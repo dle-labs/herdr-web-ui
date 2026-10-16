@@ -706,6 +706,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
   const copyError = copyFailed && <p className="chat-copy-error" role="alert">{t("Couldn't copy. Select the text and copy it manually.")}</p>;
   const copied = (ok: boolean): void => setCopyFailed(!ok);
   const time = turn.ts === null ? null : <TurnTime ts={turn.ts} />;
+  const { work, answer } = splitTurn(turn.parts);
   const compact = turn.parts.find((part): part is Extract<ConversationPart, { kind: "compact" }> => part.kind === "compact");
   if (compact !== undefined) {
     return <ChatDetails memoryKey="compact" className="chat-compact">
@@ -753,7 +754,6 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
       <SkillActivityList parts={turn.parts} />
     </article>;
   }
-  const { work, answer } = splitTurn(turn.parts);
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
   return <article className="chat-turn chat-turn-agent">
@@ -772,6 +772,7 @@ const Turn = memo(function Turn({ paneId, turn, live, waiting, showThinking, ski
   </article>;
 });
 
+/** A scrollback message drawn as a turn when no agent runs in the pane. */
 function FallbackTurn({ paneId, message }: { paneId: string; message: TranscriptMessage }) {
   if (message.role === "status") return null;
   const turn: ConversationTurn = { role: message.role === "user" ? "user" : "assistant", ts: null, parts: [{ kind: "text", text: message.text }] };
@@ -817,8 +818,8 @@ function TerminalFallback({ paneId, visible }: { paneId: string; visible: boolea
 export const ChatView = memo(function ChatView({ paneId, presentationKey, finishEpoch, finishId, active = true, visible: paneVisible = true, pageScroll, refreshKey, invalidationKey = 0, onConversationWatch, conversationPushes = false, onTerminalOutput, sentKey = 0, connected, ended, agent, agentStatus, onMetadata, onRead, greeted = false, onPrompt, onSuggestion, onRestored, promptRefreshKey = 0, pendingAnswer = null, onPendingAnswerDone, promptDock = null, onPromptAnswered, title = null }: ChatViewProps) {
   const t = useT();
   const { fetchPaneConversation, peekPaneConversation, fetchPanePromptState, fetchPaneTranscript } = useMachineApi();
-  const { settings } = useSettings();
   const machineId = useMachineId();
+  const { settings } = useSettings();
   const skillMatcher = useSkillMatcher(paneId, agent);
   // polls pause while the page or the pane is hidden and pick up at once when it is back
   const pageVisible = usePageVisible();
@@ -881,9 +882,16 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   sentKeyRef.current = sentKey;
   const [promptPollKey, setPromptPollKey] = useState(0);
   const scroller = useRef<HTMLDivElement>(null);
+  // LegendList owns the actual scrolling element. Publish it after commit so the pin portal
+  // mounts even on the first lazy-list render, and rebinds if the fallback replaces the list.
   const timeline = useRef<LegendListRef>(null);
   const ChatTimeline = useChatTimeline();
   const stickToBottom = useRef(true);
+  // LegendList also follows row-size changes and glide completion. Guard those paths as well
+  // as ChatView's explicit scrolls: reserving editor space is never new-output follow intent.
+  const timelineFollowing = useMemo(() => ({ get current() {
+    return stickToBottom.current;
+  } }), []);
   // Explicit paging stays away even inside the ordinary near-bottom tolerance.
   const pagingAway = useRef(false);
   const lastScrollTop = useRef(0);
@@ -1612,7 +1620,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
   return <ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}>
     {/* a reader away from the end has not seen the answer a finish lands there: presented only at the end */}
-    <div className="chat-frame" data-pane-content={active && visible && connected && !ended && loaded && error === null && !away && !newMessages
+    <div className="chat-frame chat-surface-layout" data-pane-content={active && visible && connected && !ended && loaded && error === null && !away && !newMessages
       && endPresentation?.state === state && endPresentation.key === presentationKey
       && (agentStatus !== "done" || conversationFinishPresented({ source: state.conversationSource, turns: state.turns }))
       && readPresentation === presentationKey && (state.source === "conversation" ? ChatTimeline !== null : agent === null) ? presentationKey : undefined}>
@@ -1631,7 +1639,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       source={state.conversationSource}
       scroller={scroller}
       listRef={timeline}
-      following={stickToBottom}
+      following={timelineFollowing}
       smoothFollow={smoothFollow}
       memories={rowMemories}
       header={header}
