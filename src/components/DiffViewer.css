@@ -23,10 +23,13 @@
 .diff-comment-actions, .diff-comment-heading { display: flex; align-items: center; gap: var(--space-2); }
 .diff-comment-heading { font-size: var(--fs-xs); overflow-wrap: anywhere; justify-content: space-between; }
 .diff-comment-actions { justify-content: space-between; font-size: var(--fs-xs); color: var(--text-dim); }
+.diff-comment-info { display: none; }
 .diff-outdated { margin-block-start: var(--space-4); }
 .diff-outdated h3 { font-size: var(--fs-sm); color: var(--text-dim); }
 @media (max-width: 768px) {
   .diff-comment-plus { width: var(--touch-target); height: var(--touch-target); }
   .diff-comment-actions { flex-wrap: wrap; }
-  .diff-comment-actions > span { flex: 1; min-width: 0; }
+  .diff-comment-info { display: inline-flex; }
+  .diff-comment-hint { display: none; }
+  .diff-comment-hint[data-expanded="true"] { display: block; order: 1; flex-basis: 100%; min-width: 0; }
 }

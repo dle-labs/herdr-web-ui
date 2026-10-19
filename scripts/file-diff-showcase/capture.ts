@@ -182,6 +182,32 @@ try {
     checks.push('result: composer link reopens exact saved source and comment');
     mark('result:result'); await hold(400); // fixed wait: pacing the recorded showcase for the viewer
     const recording = await hand.end();
+    // Check the disclosure after filming so the two device timelines stay matched.
+    const hint = page.locator('.diff-comment-hint');
+    const info = page.locator('.diff-comment-info');
+    assert.equal(await hint.isVisible(), device === 'desktop');
+    assert.equal(await info.isVisible(), device === 'mobile');
+    if (device === 'mobile') {
+      const actions = page.locator('.diff-comment-actions');
+      const compactHeight = (await actions.boundingBox())!.height;
+      assert.ok(compactHeight <= 48, 'mobile comment actions fit on one touch-height row');
+      await field.fill('Keep this unsaved edit.');
+      await info.tap();
+      assert.equal(await info.getAttribute('aria-expanded'), 'true');
+      assert.equal(await hint.isVisible(), true);
+      assert.equal(await hint.innerText(), 'Saved comments are included with your next chat message.');
+      await info.tap();
+      assert.equal(await info.getAttribute('aria-expanded'), 'false');
+      assert.equal(await hint.isVisible(), false);
+      assert.equal(await field.inputValue(), 'Keep this unsaved edit.');
+      assert.equal((await actions.boundingBox())!.height, compactHeight);
+      await info.focus();
+      await info.press('Enter');
+      assert.equal(await hint.isVisible(), true, 'keyboard activation expands help');
+      await info.press('Space');
+      assert.equal(await hint.isVisible(), false, 'keyboard activation collapses help');
+    }
+    checks.push('comment hint: desktop text or compact touch and keyboard disclosure; draft preserved');
     assert.deepEqual(errors, [], 'no application exceptions');
     const framesDir = join(dest, 'frames'); mkdirSync(framesDir, { recursive: true });
     recording.frames.forEach((frame, i) => writeFileSync(join(framesDir, `${String(i).padStart(6, '0')}.jpg`), frame.jpeg));
