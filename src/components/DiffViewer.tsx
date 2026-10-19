@@ -57,7 +57,7 @@ export function DiffCommentEditor({ open, connected, text, onSave, onClose, onDe
       <button type="button" className="icon-button diff-comment-info" aria-label={t("Saved comments are included with your next chat message.")}
         aria-expanded={hintExpanded} aria-controls={hintId} onClick={() => setHintExpanded((expanded) => !expanded)}><Info aria-hidden="true" /></button>
       <span id={hintId} className="diff-comment-hint" data-expanded={hintExpanded}>{t("Saved comments are included with your next chat message.")}</span>
-      <button type="button" className="icon-button" aria-label={t("Save comment")} disabled={!draft.canSave} onClick={draft.save}><ArrowUp aria-hidden="true" /></button>
+      <button type="button" className="icon-button diff-comment-save" aria-label={t("Save comment")} disabled={!draft.canSave} onClick={draft.save}><ArrowUp aria-hidden="true" /></button>
     </div>
     {draft.note !== null && <p className="comment-dictation-note" role="alert">{draft.note}</p>}
     {showDictation && <VoiceRecordingPill dictation={draft.dictation} align="end" />}
