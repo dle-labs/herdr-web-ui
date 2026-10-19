@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, MessageSquarePlus, Trash2, X } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { ArrowUp, Info, MessageSquarePlus, Trash2, X } from "lucide-react";
 import { FileDiff, useStableCallback, type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs/react";
 import type { DiffLineEventBaseProps } from "@pierre/diffs";
 import { diffMetadata } from "../lib/diffMetadata.ts";
@@ -22,6 +22,8 @@ export function DiffCommentEditor({ open, connected, text, onSave, onClose, onDe
   onSave: (text: string) => void; onClose: () => void; onDelete: () => void; reveal?: boolean;
 }) {
   const t = useT();
+  const hintId = useId();
+  const [hintExpanded, setHintExpanded] = useState(false);
   const draft = useCommentDraft(open.initialComment, onSave, onClose, {
     owner: open.owner, connected, inline: true, fallback: () => null, startValue: text.read(), onText: text.write,
   });
@@ -52,7 +54,9 @@ export function DiffCommentEditor({ open, connected, text, onSave, onClose, onDe
       <button type="button" className="icon-button" aria-label={open.commentId === null ? t("Discard comment") : t("Delete comment")} title={open.commentId === null ? t("Discard comment") : t("Delete comment")}
         onClick={() => { draft.dictation.cancel(); onDelete(); }}><Trash2 aria-hidden="true" /></button>
       {showDictation && <MicButton dictation={draft.dictation} />}
-      <span>{t("Saved comments are included with your next chat message.")}</span>
+      <button type="button" className="icon-button diff-comment-info" aria-label={t("Saved comments are included with your next chat message.")}
+        aria-expanded={hintExpanded} aria-controls={hintId} onClick={() => setHintExpanded((expanded) => !expanded)}><Info aria-hidden="true" /></button>
+      <span id={hintId} className="diff-comment-hint" data-expanded={hintExpanded}>{t("Saved comments are included with your next chat message.")}</span>
       <button type="button" className="icon-button" aria-label={t("Save comment")} disabled={!draft.canSave} onClick={draft.save}><ArrowUp aria-hidden="true" /></button>
     </div>
     {draft.note !== null && <p className="comment-dictation-note" role="alert">{draft.note}</p>}
