@@ -2202,6 +2202,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
     Cmd/Ctrl+Enter saves. A dirty editor blocks replacement, navigation, walking or Send rather
     than silently losing a draft. There is no per-comment cap; the combined outgoing message is
     limited to 20,000 characters.
+  - On phones, the saved-comment explanation is collapsed behind an info button; tapping it
+    toggles the text on a full-width row beneath the actions. Desktop keeps the inline hint.
+    Like [Zed's informational hovers](https://zed.dev/docs/reference/all-settings#hover-popover-enabled),
+    this keeps secondary help out of the way, but uses an explicit disclosure for touch access.
   - Preview notes remain stored, counted and sendable, and reopen in their rendered view.
   - File references show filename and line/range, preserving extension and lines when shortened,
     with the full path available. Source and diff views use the same comment identity and store.
