@@ -22,7 +22,9 @@
 .diff-comment-editor { width: 100%; min-width: 0; margin-block: var(--space-2); box-shadow: none; }
 .diff-comment-actions, .diff-comment-heading { display: flex; align-items: center; gap: var(--space-2); }
 .diff-comment-heading { font-size: var(--fs-xs); overflow-wrap: anywhere; justify-content: space-between; }
-.diff-comment-actions { justify-content: space-between; font-size: var(--fs-xs); color: var(--text-dim); }
+.diff-comment-actions { font-size: var(--fs-xs); color: var(--text-dim); }
+.diff-comment-save { margin-inline-start: auto; }
+.diff-comment-hint { flex: 1; text-align: center; }
 .diff-comment-info { display: none; }
 .diff-outdated { margin-block-start: var(--space-4); }
 .diff-outdated h3 { font-size: var(--fs-sm); color: var(--text-dim); }
@@ -31,5 +33,5 @@
   .diff-comment-actions { flex-wrap: wrap; }
   .diff-comment-info { display: inline-flex; }
   .diff-comment-hint { display: none; }
-  .diff-comment-hint[data-expanded="true"] { display: block; order: 1; flex-basis: 100%; min-width: 0; }
+  .diff-comment-hint[data-expanded="true"] { display: block; order: 1; flex-basis: 100%; min-width: 0; text-align: start; }
 }
