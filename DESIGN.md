@@ -2217,6 +2217,8 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
     toggles the text on a full-width row beneath the actions. Desktop keeps the inline hint.
     Like [Zed's informational hovers](https://zed.dev/docs/reference/all-settings#hover-popover-enabled),
     this keeps secondary help out of the way, but uses an explicit disclosure for touch access.
+    The actions follow the chat composer's T3 Code-inspired layout: secondary icons together
+    at the start with the same gap, and Save at the far end, on one vertical centerline.
   - Preview notes remain stored, counted and sendable, and reopen in their rendered view.
   - File references show filename and line/range, preserving extension and lines when shortened,
     with the full path available. Source and diff views use the same comment identity and store.
