@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useLayoutEffect, useState } from "react";
 import { LOCAL_MACHINE } from "../../shared/machines.ts";
 import type { Machine } from "../../shared/protocol.ts";
-import { changedField, revealField } from "./commentDom.ts";
+import { CHANGED_ATTR, changedField, revealField } from "./commentDom.ts";
 import type { FileComment } from "./fileComments.ts";
 import type { Settings } from "./settings.ts";
 import { useFileViewer } from "./useFileViewer.ts";
@@ -37,6 +37,27 @@ export function useFilePanels({ machines, settings, selectedPaneId, selectedMach
   const [filesIntent, setFilesIntent] = useState<WorkspaceFileIntent>("browse");
   const [diffCommentView, setDiffCommentView] = useState<{ paneId: string; machineId: string; comment: FileComment } | null>(null);
   const { viewing, openFile, closeFile, releaseFile } = useFileViewer(canLeaveFiles);
+  // Match upstream's Files list: a pane/PC switch starts at the newly selected pane.
+  // An explicit preview retains its own history owner. A dirty editor must finish before
+  // its browser can be replaced; observe the editor so saving/discarding catches up at once.
+  useLayoutEffect(() => {
+    if (!filesOpen || viewing !== null || diffCommentView !== null) return;
+    if (filesTarget?.machineId === selectedMachineId && filesTarget.paneId === selectedPaneId) return;
+    const follow = (): boolean => {
+      if (changedField(document.querySelector(".files-dialog")) !== null) return false;
+      const pane = machines.find((machine) => machine.id === selectedMachineId)?.snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId);
+      setFilesTarget(pane ? { machineId: selectedMachineId, paneId: pane.pane_id, start: pane.foreground_cwd ?? pane.cwd ?? "" } : null);
+      setDiffCommentView(null);
+      setFilesIntent("browse");
+      return true;
+    };
+    if (follow()) return;
+    const surface = document.querySelector(".files-dialog");
+    if (surface === null) return;
+    const observer = new MutationObserver(() => { if (follow()) observer.disconnect(); });
+    observer.observe(surface, { childList: true, subtree: true, attributes: true, attributeFilter: [CHANGED_ATTR] });
+    return () => observer.disconnect();
+  }, [filesOpen, filesTarget, viewing, diffCommentView, selectedMachineId, selectedPaneId, machines]);
   const viewFile = useCallback((path: string) => {
     openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
   }, [openFile, selectedPaneId, selectedMachineId]);
@@ -46,6 +67,7 @@ export function useFilePanels({ machines, settings, selectedPaneId, selectedMach
   const viewFileComment = useCallback((paneId: string, machineId: string, comment: FileComment) => {
     if (!canLeaveFiles()) return;
     if (comment.diff !== undefined) {
+      setFilesTarget({ paneId, machineId, start: comment.diff.repository });
       setDiffCommentView({ paneId, machineId, comment });
       setFilesIntent("changes");
       setFilesOpen(true);
