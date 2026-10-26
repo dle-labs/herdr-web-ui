@@ -487,8 +487,9 @@ blocks of `src/styles.css`.
   reopen the closed document. Compact wrapping headers sit above a generous phone file viewport.
   **Close files**, Escape without an open comment, the scrim and
   system Back dismiss the whole browser. Close buttons and repeated browser/system Back protect
-  dirty comment drafts. A browser retains the machine, pane and folder it opened on even when
-  pane selection changes. Initial file-comment navigation is consumed when selecting another file.
+  dirty comment drafts. A browser follows the selected machine and pane, starting at its folder when
+  pane selection changes, after any dirty comment is saved or discarded. Explicit file and
+  diff-comment previews keep their opening pane. Initial file-comment navigation is consumed when selecting another file.
   Tree and document gestures use native overflow scrolling from padding, icons, labels, gutters
   and code alike. Only actual scroll regions contain overscroll; truncated labels and horizontal
   code blocks let vertical gestures reach their enclosing scroller. Virtual source padding lives
