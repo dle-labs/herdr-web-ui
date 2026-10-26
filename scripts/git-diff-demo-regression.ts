@@ -23,6 +23,29 @@ async function openChanges(page: Page): Promise<Locator> {
   await dialog.locator(".changes-view").waitFor();
   return dialog;
 }
+async function checkPaneFollowing(page: Page): Promise<void> {
+  const original = await page.evaluate(() => new URLSearchParams(location.search).get("pane"));
+  assert.ok(original, "the demo selected its first pane");
+  const files = await openChanges(page);
+  await files.getByRole("button", { name: "Refresh changes", exact: true }).focus();
+  await page.keyboard.press("Control+Shift+ArrowDown");
+  const switched = await page.waitForFunction((previous) => {
+    const pane = new URLSearchParams(location.search).get("pane");
+    return pane && pane !== previous ? pane : false;
+  }, original);
+  const next = await switched.jsonValue() as string;
+  await page.waitForFunction((pane) => (window as unknown as { gitRequests: string[] }).gitRequests.some((url) => {
+    const read = new URL(url, location.href);
+    return read.pathname.endsWith("/workspace/changes") && read.searchParams.get("pane_id") === pane;
+  }), next);
+  assert.equal(await files.count(), 1, "switching panes keeps Files open");
+  await files.getByRole("button", { name: "Refresh changes", exact: true }).focus();
+  await page.keyboard.press("Control+Shift+ArrowUp");
+  await page.waitForFunction((pane) => new URLSearchParams(location.search).get("pane") === pane, original);
+  await files.getByRole("button", { name: "Close files", exact: true }).click();
+  await files.waitFor({ state: "detached" });
+  console.log("PASS Files follows Next/Previous pane without closing the browser");
+}
 const treeFile = (dialog: Locator, file: string) => dialog.locator(`.workspace-tree-row[title="${file}"]`);
 const section = (dialog: Locator, path = "src/greeting.ts") => dialog.locator(`[data-diff-path="${path}"]`);
 const number = (dialog: Locator, side: "old" | "new", line: number) => dialog.locator(
@@ -514,6 +537,7 @@ try {
         page.on("console", (message) => { if (message.type() === "error") console.error(message.text()); });
         await page.goto(url);
         await page.locator(".conn-live").waitFor({ state: "attached" });
+        await checkPaneFollowing(page);
         if (mobile) await checkNativeFileScroll(page);
         if (mobile) await page.locator(".tab-strip-menu").first().click();
         else await page.locator(".pane-frame.is-current").first().click({ button: "right", position: { x: 12, y: 12 } });
