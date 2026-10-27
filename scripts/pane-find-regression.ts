@@ -134,9 +134,7 @@ export async function checkPaneFind(browser: Browser, origin: string): Promise<v
     };
     await staleNavigation("desktop");
     await page.getByRole("button", { name: "Chat", exact: true }).click();
-    const chatGeometry = resized();
     await page.keyboard.press("ControlOrMeta+Shift+F");
-    await chatGeometry;
     await page.waitForFunction(() => document.querySelector(".find-bar input") === document.activeElement);
     await page.keyboard.type("find_browser_marker");
     assert.equal(await field.inputValue(), "find_browser_marker", "Find from Chat must own query focus, not xterm");
