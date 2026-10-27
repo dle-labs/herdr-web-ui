@@ -429,10 +429,11 @@ function BlockView({ block }: { block: MarkdownBlock }): ReactNode {
             <tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex} {...rowLine(rowIndex + 1)}>{row.map((cell, cellIndex) => <td key={cellIndex}><Inline nodes={cell} /></td>)}</tr>)}</tbody>
           </table>
         </div>;
-      // Keep a stable host so a code block the reader unfolded stays unfolded.
+      // BlockView already keeps the component identity stable. An extra code wrapper
+      // changes the browser's native selection newline at the block boundary.
       // A formula's host carries its range. Diagrams carry theirs only once rendered;
       // fallback code and tables instead expose their individual source lines.
-      return <div className="markdown-block" {...(block.type === "math" ? sourceAttributes(block.source) : {})}>{body}</div>;
+      return block.type === "code" ? body : <div className="markdown-block" {...(block.type === "math" ? sourceAttributes(block.source) : {})}>{body}</div>;
     }
   }
 }

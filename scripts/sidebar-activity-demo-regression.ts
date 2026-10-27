@@ -743,6 +743,12 @@ try {
           }
           await page.locator(".file-viewer").getByRole("button", { name: "Close file", exact: true }).click();
           await page.locator(".file-viewer").waitFor({ state: "detached" });
+          const files = page.getByRole("dialog", { name: "Files", exact: true });
+          assert.ok(await files.isVisible(), "closing the embedded document keeps Files over the pane");
+          assert.equal(await page.evaluate((key) => localStorage.getItem(key), key), null,
+            "the Files browser still does not acknowledge the finish underneath");
+          await files.getByRole("button", { name: "Close files", exact: true }).click();
+          await files.waitFor({ state: "detached" });
           await agent(page, INFRA).locator('.sidebar-status[data-status="idle"]').waitFor({ state: "attached" });
         }, true);
         console.log("PASS a phone file viewer preserves an underlying finish until the pane is uncovered");

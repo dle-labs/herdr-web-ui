@@ -1,5 +1,5 @@
 /**
- * Find in a file's diff on the static demo (Files → Changes → src/money.ts): Ctrl/Cmd+F or the
+ * Find in a unified Files diff on the static demo with repository patch fixtures: Ctrl/Cmd+F or the
  * header's Find opens a bar of the dialog's own; a query is matched literally over the loaded patch,
  * context included, with its count, the active match's kind and line in words, its row ringed and
  * its text painted; Enter, Shift+Enter, Next and Previous step across both sides and wrap; an absent
@@ -26,7 +26,7 @@ type Language = keyof typeof HINT;
 async function bar(page: Page): Promise<{ count: string; place: string; hint: string; ringed: string[]; painted: string[] }> {
   return page.evaluate(() => {
     const status = document.querySelector(".repo-diff-find .find-bar-count");
-    const shadow = document.querySelector(".repo-diff diffs-container")?.shadowRoot;
+    const shadow = document.querySelector(".changes-diff-section[data-find-owner='true'] diffs-container")?.shadowRoot;
     const highlight = CSS.highlights.get("repo-diff-find");
     return {
       count: [...(status?.childNodes ?? [])].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent).join(""),
@@ -42,7 +42,7 @@ async function settled(page: Page, count: string, place: string, step: string): 
   try {
     await page.waitForFunction(([count, place]) => {
       const status = [...(document.querySelector(".repo-diff-find .find-bar-count")?.childNodes ?? [])].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent).join("");
-      const ringed = document.querySelector(".repo-diff diffs-container")?.shadowRoot?.querySelectorAll("[data-line][data-find-active]").length ?? 0;
+      const ringed = document.querySelector(".changes-diff-section[data-find-owner='true'] diffs-container")?.shadowRoot?.querySelectorAll("[data-line][data-find-active]").length ?? 0;
       return status === count && (document.querySelector(".repo-diff-find-place")?.textContent ?? "") === place && ringed === (place === "" ? 0 : 1) && (CSS.highlights.get("repo-diff-find")?.size ?? 0) === (place === "" ? 0 : 1);
     }, [count, place] as const);
   } catch (error) {
@@ -69,22 +69,24 @@ async function pastDemoTurn(page: Page): Promise<void> {
   await page.clock.runFor(5_000);
   await page.addStyleTag({ content: ".droplet { visibility: hidden !important; }" });
 }
-/** Files → Changes → a file's diff, from the header on a computer or More on a phone. */
+/** Open a real unified Files comparison from its tree. */
 async function openDiff(page: Page, phone: boolean, path: string): Promise<void> {
-  if (!(await page.getByRole("dialog", { name: "Files", exact: true }).isVisible())) {
+  const files = page.getByRole("dialog", { name: /^(Files|파일)$/, exact: true });
+  if (!await files.isVisible()) {
     if (phone) {
       await page.locator(".header-more-button").tap();
-      await page.getByRole("dialog", { name: "More", exact: true }).getByRole("button", { name: "Browse files", exact: true }).tap();
+      await page.getByRole("dialog", { name: /^(More|더 보기)$/, exact: true }).getByRole("button", { name: /^(Browse files|파일 찾아보기)$/, exact: true }).tap();
     } else await page.locator(".header-files-button").click();
-    await page.getByRole("dialog", { name: "Files", exact: true }).waitFor();
-    await page.getByRole("button", { name: "Changes", exact: true }).click();
   }
-  await page.locator(".repo-changes:not([aria-busy='true']) .repo-change").first().waitFor();
-  await page.locator(".repo-change").filter({ has: page.locator(".repo-change-path", { hasText: path }) }).first().click();
-  await page.locator(".repo-diff-viewer").waitFor();
+  await files.waitFor();
+  await files.locator(".file-compare-button").click();
+  await files.getByRole("option", { name: /^(Working changes|작업 중인 변경 사항)$/, exact: true }).click();
+  const section = files.locator(`.changes-diff-section[data-diff-path="${path}"]`);
+  await section.locator(".changes-diff-title").click();
+  await section.locator(".diff-find-button").waitFor();
 }
 async function rows(page: Page): Promise<void> {
-  await page.waitForFunction(() => (document.querySelector(".repo-diff diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0);
+  await page.waitForFunction(() => (document.querySelector(".changes-diff-section[data-find-owner='true'] diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0);
 }
 
 async function check(browser: Browser, origin: string, width: 390 | 1440, theme: "light" | "dark", language: Language): Promise<void> {
@@ -101,6 +103,36 @@ async function check(browser: Browser, origin: string, width: 390 | 1440, theme:
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("console", (message) => { if (message.type() === "error") errors.push(`console: ${message.text()}`); });
     await page.clock.install();
+    // Adapt the demo's rich legacy patch fixtures to the unified endpoint contract. The UI,
+    // transport boundary and renderer are production; these are deterministic repository data.
+    await context.addInitScript(() => {
+      const install = () => {
+        const original = window.fetch;
+        const root = "/home/demo/checkout-api";
+        const revision = "find-fixture";
+        const wanted = ["src/money.ts", "docs/checkout-flow.png", "src/money-copy.ts"];
+        window.fetch = async (input, init) => {
+          const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+          if (url.pathname === "/api/workspace/changes") {
+            const legacy = await (await original("/api/workspace/diff/files?scope=workspace")).json();
+            legacy.files.push({ ...legacy.files.find((entry: {path: string}) => entry.path === "src/money.ts"), path: "src/money-copy.ts" });
+            return Response.json({ root, revision, files: legacy.files.filter((entry: {path: string}) => wanted.includes(entry.path)).map((entry: {path: string; status: string}) => ({ path: entry.path, status: entry.status })) });
+          }
+          if (url.pathname === "/api/workspace/diff") {
+            const path = url.searchParams.get("path")!;
+            const legacy = await (await original(`/api/workspace/diff/file?scope=workspace&path=${encodeURIComponent(path === "src/money-copy.ts" ? "src/money.ts" : path)}`)).json();
+            const patch = legacy.patch ?? "";
+            const body = patch.split("\n").filter((line: string) => /^[ +\-]/.test(line) && !line.startsWith("---") && !line.startsWith("+++"));
+            return Response.json({ root, revision, path, patch, binary: legacy.file.binary,
+              old_file: { name: path, contents: body.filter((line: string) => !line.startsWith("+")).map((line: string) => line.slice(1)).join("\n") + "\n" },
+              new_file: { name: path, contents: body.filter((line: string) => !line.startsWith("-")).map((line: string) => line.slice(1)).join("\n") + "\n" } });
+          }
+          return original(input, init);
+        };
+      };
+      // The demo transport installs itself during script evaluation before the app's load.
+      window.addEventListener("DOMContentLoaded", install, { once: true });
+    });
     await page.goto(origin);
     await pastDemoTurn(page);
     await openDiff(page, phone, "src/money.ts");
@@ -108,10 +140,10 @@ async function check(browser: Browser, origin: string, width: 390 | 1440, theme:
       await page.evaluate((theme) => localStorage.setItem("ovis:settings", JSON.stringify({ language: "ko", theme })), theme);
       await page.reload();
       await pastDemoTurn(page);
-      await page.locator(".repo-diff-viewer").waitFor();
+      await openDiff(page, phone, "src/money.ts");
     }
     await rows(page);
-    const findButton = page.locator(".repo-diff-group .repo-diff-action").first();
+    const findButton = page.locator(".changes-diff-section[data-find-owner='true'] .diff-find-button");
     const query = page.locator(".repo-diff-find input");
     const [previous, next] = [page.locator(".repo-diff-find .find-bar-controls button").nth(0), page.locator(".repo-diff-find .find-bar-controls button").nth(1)];
     assert.equal(await findButton.getAttribute("aria-label"), language === "ko" ? "변경 내용에서 찾기" : "Find in diff", `${label}: the header's first action is Find`);
@@ -128,7 +160,7 @@ async function check(browser: Browser, origin: string, width: 390 | 1440, theme:
       const own = window.fetch;
       window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input instanceof Request ? input.url : input);
-        if (/\/workspace\/diff\/|\/fs\//.test(url)) record.findRequests.push(url);
+        if (/\/workspace\/diff|\/fs\//.test(url)) record.findRequests.push(url);
         return own(input, init);
       }) as typeof window.fetch;
     });
@@ -143,7 +175,7 @@ async function check(browser: Browser, origin: string, width: 390 | 1440, theme:
       assert.equal(await query.count(), 0, `${label}: Find stays closed under the palette`);
       await page.keyboard.press("Escape");
       await palette.waitFor({ state: "detached" });
-      await page.locator(".repo-diff-viewer").waitFor();
+      await page.locator(".files-dialog").waitFor();
     }
     if (phone) await findButton.tap();
     else await page.keyboard.press("ControlOrMeta+f");
@@ -229,9 +261,9 @@ async function check(browser: Browser, origin: string, width: 390 | 1440, theme:
         await settled(page, "1 of 4", "Unchanged line 4", `${label} split first`);
         await query.press("Enter");
         await page.getByRole("button", { name: "Split", exact: true }).click();
-        await page.waitForFunction(() => document.querySelector(".repo-diff diffs-container")?.shadowRoot?.querySelector("pre")?.getAttribute("data-diff-type") === "split");
+        await page.waitForFunction(() => document.querySelector(".changes-diff-section[data-find-owner='true'] diffs-container")?.shadowRoot?.querySelector("pre")?.getAttribute("data-diff-type") === "split");
         at = await settled(page, "2 of 4", "Removed line 4", `${label} split`);
-        assert.equal(await page.evaluate(() => document.querySelector(".repo-diff diffs-container")!.shadowRoot!.querySelector("[data-find-active]")!.closest("code")!.hasAttribute("data-deletions")), true, `${label}: split rings the old side`);
+        assert.equal(await page.evaluate(() => document.querySelector(".changes-diff-section[data-find-owner='true'] diffs-container")!.shadowRoot!.querySelector("[data-find-active]")!.closest("code")!.hasAttribute("data-deletions")), true, `${label}: split rings the old side`);
         await shot(page, name, "split-deleted");
         await query.press("Enter");
         await settled(page, "3 of 4", "Added line 5", `${label} split added`);
@@ -240,18 +272,39 @@ async function check(browser: Browser, origin: string, width: 390 | 1440, theme:
         await settled(page, "3 of 4", "Added line 5", `${label} unified again`);
       }
       assert.deepEqual(await page.evaluate(() => (window as unknown as { findRequests: string[] }).findRequests), [], `${label}: searching sent no request`);
+      if (!phone) {
+        const sibling = page.locator('.changes-diff-section[data-diff-path="src/money-copy.ts"]');
+        await sibling.locator(".diff-find-button").click();
+        await query.fill("amount");
+        await settled(page, "1 of 4", "Unchanged line 4", `${label} sibling`);
+        assert.equal(await page.locator(".repo-diff-find").count(), 1, "only the chosen patch owns Find");
+        assert.equal(await page.locator('.changes-diff-section[data-diff-path="src/money.ts"]').getAttribute("data-find-owner"), "false");
+        await page.locator('.changes-diff-section[data-diff-path="src/money.ts"] .diff-find-button').click();
+        await settled(page, "3 of 4", "Added line 5", `${label} returns to original patch`);
+        assert.equal(await page.locator(".repo-diff-find").count(), 1, "returning preserves one owner");
+        const original = page.locator('.changes-diff-section[data-diff-path="src/money.ts"]');
+        await original.locator('[data-code][data-unified] [data-column-number="5"][data-line-type="change-addition"]').first().click();
+        const comment = original.locator(".diff-comment-editor textarea");
+        await comment.fill("Keep this draft while finding");
+        await comment.press("ControlOrMeta+f");
+        assert.equal(await comment.evaluate(node => node === document.activeElement), true, "a comment editor keeps Mod+F and its draft");
+        assert.equal(await comment.inputValue(), "Keep this draft while finding");
+        await original.getByRole("button", { name: "Discard comment", exact: true }).click();
+        await comment.waitFor({ state: "detached" });
+        await settled(page, "3 of 4", "Added line 5", `${label} comment selection preserves Find`);
+      }
       // Escape closes Find and gives the focus back, then the viewer
       await page.keyboard.press("Escape");
       await query.waitFor({ state: "detached" });
-      await page.locator(".repo-diff-viewer").waitFor();
-      assert.equal(await page.evaluate(() => document.activeElement?.closest(".repo-diff-viewer") !== null), true, `${label}: the focus stays in the viewer`);
+      await page.locator(".files-dialog").waitFor();
+      assert.equal(await page.evaluate(() => document.activeElement?.closest(".files-dialog") !== null), true, `${label}: the focus stays in the viewer`);
       assert.deepEqual((await bar(page)).ringed, [], `${label}: no row stays ringed`);
       assert.equal(await findButton.getAttribute("aria-pressed"), "false", `${label}: Find shows as off`);
       await page.keyboard.press("Escape");
-      await page.locator(".repo-diff-viewer").waitFor({ state: "detached" });
+      await page.locator(".files-dialog").waitFor({ state: "detached" });
       // a binary file has no lines to search: Find is off, and Ctrl/Cmd+F opens nothing
       await openDiff(page, phone, "docs/checkout-flow.png");
-      await page.locator(".repo-diff-note").filter({ hasText: "This is a binary file; there are no lines to compare." }).waitFor();
+      await page.getByRole("status").filter({ hasText: "Binary files cannot be displayed as a text diff." }).waitFor();
       assert.equal(await findButton.isDisabled(), true, `${label}: Find is off for a binary file`);
       assert.equal(await findButton.getAttribute("title"), "There is no loaded patch to search.", `${label}: and says why`);
       if (!phone) {
