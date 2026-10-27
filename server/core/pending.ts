@@ -18,6 +18,7 @@
  * First messages live in memory: a restart of the bridge loses those not sent yet.
  */
 import { closeBackslash, closeMention, type createSubmitText, freeClaudeBox, freeHermesInput, InputDraftError, modelSwitchText, pendingFault, pendingIdentity, pendingText, submitFraming } from "./composer.ts";
+import { untypedSubmitRefusal } from "../submit-route.ts";
 import { type Client, connectionOf, send } from "./connections.ts";
 import { ATTACH_HELD_MESSAGE } from "./terminal-process.ts";
 import type { AttachmentView, TerminalSighting } from "./terminals.ts";
@@ -916,6 +917,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
       const result = (ok: boolean, code?: string, text?: string, accepted?: PendingMessage, draft?: string | null, box?: string | null) => send(client, {
         type: "submit-result", id: message.id, pane_id: message.pane_id, ok, ...(accepted ? { pending: accepted } : {}), ...(code ? { code, message: text } : {}),
         ...(draft ? { draft } : {}), ...(!draft && typeof box === "string" ? { box } : {}),
+        ...(!ok && untypedSubmitRefusal(code) ? { typed: false as const } : {}),
       });
       if (!Number.isSafeInteger(message.id) || typeof message.pane_id !== "string" || !message.pane_id
         || typeof message.text !== "string" || typeof message.payload !== "string") {
@@ -990,7 +992,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             const held = queueHeld(message.pane_id);
             if (!context.working && !held) {
               // the agent left while the message was on its way: a chat follow-up is not typed into what is there now
-              if (context.identity.agent === null) throw new HerdrError(AGENT_NOT_READY.code, AGENT_NOT_READY.message);
+              if (context.identity.agent === null) throw new HerdrError("agent_not_found", "No agent is in front of this pane now; nothing was typed");
               // A request that raced the turn's finish still needs cancellable
               // paste + Enter; agent.prompt commits its key inside herdr. With a message
               // already waiting its turn here, this one takes its place behind it instead.
@@ -1058,7 +1060,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     async "pending-action"(client: Client, message: Frame<"pending-action">): Promise<void> {
       // a client that does not tell a launch that ended apart takes its code as maybe typed: it gets the code it knows
       const known = (reply: SubmitReply): SubmitReply => reply.code === LAUNCH_GONE.code && message.launch_ended !== true ? { ...reply, code: TARGET_CHANGED.code } : reply;
-      const result = (reply: SubmitReply) => send(client, { type: "pending-result", id: message.id, pane_id: message.pane_id, pending_id: message.pending_id, ...known(reply) });
+      const result = (reply: SubmitReply) => send(client, { type: "pending-result", id: message.id, pane_id: message.pane_id, pending_id: message.pending_id, ...known(reply),
+        ...(!reply.ok && untypedSubmitRefusal(reply.code) ? { typed: false as const } : {}) });
       if (!Number.isSafeInteger(message.id) || typeof message.pane_id !== "string" || !message.pane_id
         || typeof message.pending_id !== "string" || !message.pending_id || !["steer", "discard"].includes(message.action)) {
         result({ ok: false, code: "invalid_pending_action", message: "Use steer or discard with a pending-message id" }); return;
