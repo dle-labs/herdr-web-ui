@@ -1457,13 +1457,13 @@ describe("WebSocket submit", () => {
       // the quoted reply of a comment: a shell would take "> " for a redirect and run $(…)
       const comment = "> quoted $(touch pwned)\nlooks wrong";
       const from = chunks(shell).length;
-      socket.send({ type: "submit", id: 13, pane_id: shell.pane, text: comment, payload: paste(comment), agent_only: true });
+      socket.send({ type: "submit", id: 13, pane_id: shell.pane, text: comment, payload: paste(comment.replace(/\n/g, "\r")), agent_only: true });
       expect(await socket.result(13)).toMatchObject({ ok: false, code: "agent_not_found", typed: false });
       // fixed wait: prove the refused comment never reaches the shell after the submit delay.
       await Bun.sleep(SUBMIT_DELAY_MS * 3);
       expect(chunks(shell).slice(from)).toEqual([]);
       const sent = chunks(agent).length;
-      socket.send({ type: "submit", id: 14, pane_id: agent.pane, text: comment, payload: "unused", agent_only: true });
+      socket.send({ type: "submit", id: 14, pane_id: agent.pane, text: comment, payload: paste(comment.replace(/\n/g, "\r")), agent_only: true });
       const delivered = await socket.result(14);
       expect(delivered).toMatchObject({ ok: true });
       expect(delivered.typed).toBeUndefined();
