@@ -4,6 +4,13 @@ export type SubmitRefusal = { code: "agent_not_found" | "agent_not_ready" | "age
 /** What submitText does with a message agent.prompt refused: type it, pass the error on, or refuse it with its own reason. */
 export type SubmitRoute = "type" | "rethrow" | { refuse: SubmitRefusal };
 
+/** These refusals precede input. A cleared draft or partial paste is reported as
+ * submit_partial/submit_changed instead, and must never earn a nothing-typed receipt. */
+export function untypedSubmitRefusal(code: string | undefined): boolean {
+  return code !== undefined && ["invalid_submit_text", "input_draft", "agent_blocked", "agent_not_found",
+    "agent_not_ready", "agent_queue_busy", "pending_target_changed"].includes(code);
+}
+
 /**
  * Decides the fate of a message after agent.prompt failed with `code`.
  * `queuedOnly`: the agent is a Codex "blocked" only by questions waiting in its queue.
