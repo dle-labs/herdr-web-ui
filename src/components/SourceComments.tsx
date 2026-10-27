@@ -15,6 +15,12 @@ import { type FileComments, type FileCommentScope } from "./FileComments.tsx";
 import { useCommentPopover } from "./useCommentPopover.ts";
 import VirtualSource from "./VirtualSource.tsx";
 
+// Contextual ligatures make very long wrapped operator runs expensive to shape.
+// Independent source glyphs retain wrapping, selection and annotation geometry.
+const SOURCE_SHADOW_CSS = `${SHADOW_CSS}
+[data-overflow=wrap] [data-line] { font-variant-ligatures: none; }
+`;
+
 export type SourceInteraction = Pick<FileProps<ReactNode, undefined>, "lineAnnotations" | "selectedLines" | "renderGutterUtility"> & {
   options: Pick<NonNullable<FileProps<ReactNode, undefined>["options"]>, "enableLineSelection" | "enableGutterUtility" | "onLineSelected" | "onLineSelectionStart" | "onLineSelectionChange" | "onLineSelectionEnd" | "onLineEnter">;
 };
@@ -103,7 +109,7 @@ export function SourceComments({ scope, comments, text, virtual, markedLine, con
       ? <VirtualSource name={scope.path} text={text} colored={virtual.colored} wrap={settings.wrapCode} theme={resolvedTheme} markedLine={revealedLine ?? markedLine} interaction={interaction} />
       : <DiffWorkerPool><File className="source-comments-file" file={file} lineAnnotations={interaction.lineAnnotations} selectedLines={selected ?? (markedLine === null ? null : { start: markedLine, end: markedLine })}
         renderAnnotation={({ metadata }) => metadata} renderGutterUtility={interaction.renderGutterUtility} options={{
-          disableFileHeader: true, theme: SOURCE_THEME, themeType: resolvedTheme, overflow: settings.wrapCode ? "wrap" : "scroll", unsafeCSS: SHADOW_CSS, onPostRender,
+          disableFileHeader: true, theme: SOURCE_THEME, themeType: resolvedTheme, overflow: settings.wrapCode ? "wrap" : "scroll", unsafeCSS: SOURCE_SHADOW_CSS, onPostRender,
           ...interaction.options,
         }} /></DiffWorkerPool>)}
     {comments.outdated.length > 0 && <section className="diff-outdated"><h3>{t("Outdated comments")}</h3>{comments.outdated.map(card)}</section>}
