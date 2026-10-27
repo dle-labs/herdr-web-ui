@@ -271,6 +271,8 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     setJump(mode === "diff" ? selectedChanged : null);
     onShowFile();
   }
+  // Canonical navigation must not replace the document opened by the initial link.
+  const readerPath = initialRequestActive && initialPath ? initialPath : preview;
   const owner = paneId === null ? null : paneStorageId(machineId, paneId);
   return <div ref={surface} data-show-file={showFile || undefined} className={`changes-view${narrow && showFile ? " is-showing-file" : ""}`}>
     {paneId !== null && toolsHost !== null && createPortal(
@@ -294,7 +296,7 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
       <aside className="changes-navigation"><WorkspaceFileTree root={root} paneId={paneId} files={inventory?.files ?? []} refreshToken={refreshToken} revealToken={revealToken} selected={preview ?? (path ? absolutePath(root, path) : null)} onSelect={select} onCompare={paneId === null ? undefined : (relative) => setCompareTarget(relative)} /></aside>
       {/* Scrolling a comment into view (or collapsing it after Save) is not file navigation. */}
       <div className="changes-detail" ref={documentRef} aria-label={t("File diff")}>
-        {documentClosed ? <p className="changes-note" role="status">{t("Select a file to view.")}</p> : preview ? <FileViewer key={`${preview}:${refreshToken}`} keyboardActive={keyboardActive} path={preview} paneId={paneId} machineId={machineId} paneFolder={start} connected={connected}
+        {documentClosed ? <p className="changes-note" role="status">{t("Select a file to view.")}</p> : preview ? <FileViewer key={`${readerPath}:${refreshToken}`} keyboardActive={keyboardActive} path={readerPath!} paneId={paneId} machineId={machineId} paneFolder={start} connected={connected}
           commentId={!initialRequestActive || initialComment?.diff ? null : initialComment?.id ?? initialCommentId} onOpen={(absolute) => select(absolute, "preview")} onClose={closeDocument} /> : <>
           {loading && !inventory && <p className="changes-note" role="status">{t("Loading…")}</p>}
           {error !== null && <p className="changes-note" role="alert">{error}</p>}

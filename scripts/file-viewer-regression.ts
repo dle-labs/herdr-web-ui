@@ -1158,10 +1158,30 @@ try {
 
   // the file found, then its body refused (the file gone since, a remote PC dropped): the error's
   // JSON must never show as the file's text
-  await page.route("**/api/fs/file?**", (route) => route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: { code: "machine_unavailable", message: "The PC connection was interrupted" } }) }), { times: 1 });
+  let releaseInventory!: () => void;
+  const inventoryGate = new Promise<void>((resolve) => { releaseInventory = resolve; });
+  const drainInventory = await routeDrained(page, "**/api/workspace/changes?**", async (route) => {
+    const response = await route.fetch();
+    await inventoryGate;
+    await route.fulfill({ response });
+  });
+  let refusedBodyRequests = 0;
+  const drainRefusedBody = await routeDrained(page, "**/api/fs/file?**", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("path") !== join(root, "notes.txt")) { await route.continue(); return; }
+    refusedBodyRequests += 1;
+    if (refusedBodyRequests === 1) await route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: { code: "machine_unavailable", message: "The PC connection was interrupted" } }) });
+    else await route.continue();
+  });
   await page.getByRole("button", { name: "notes", exact: true }).click();
   const refused = preview;
   await refused.getByRole("alert").waitFor();
+  const refusedDocument = await refused.locator(".file-viewer").elementHandle();
+  releaseInventory();
+  await refused.locator('.workspace-tree-row[title="notes.txt"][aria-current="true"]').waitFor({ state: "attached" });
+  assert.equal(await refusedDocument!.evaluate((element) => element.isConnected), true, "resolving the initial path preserves the document");
+  assert.equal(refusedBodyRequests, 1, "resolving the initial path does not read its body again");
+  await drainInventory();
+  await drainRefusedBody();
   assert.equal(await refused.getByRole("alert").innerText(), "The file could not be opened.");
   assert.equal(await refused.getByText("machine_unavailable").count(), 0);
   assert.equal(await refused.locator(".file-viewer-text").count(), 0);
@@ -1180,10 +1200,10 @@ try {
     if (live.size === 0) allClosed?.();
   };
   try {
-    await refused.getByRole("button", { name: "Close file", exact: true }).click();
+    await refused.getByRole("button", { name: "Close files", exact: true }).click();
     await refused.waitFor({ state: "hidden" });
     const mediaLink = page.getByRole("button", { name: "page media", exact: true });
-    const mediaPage = page.getByRole("dialog", { name: "page-media.html", exact: true });
+    const mediaPage = preview.getByRole("region", { name: "page-media.html", exact: true });
     const recording = mediaPage.frameLocator(".file-viewer-page").locator("#take");
     /** "loaded" once the recording's metadata came, "error" when its address was refused; with `query`, asked again by a new URL first, so no cache answers for the server */
     const loads = (query: string | null = null) => recording.evaluate((element: HTMLAudioElement, query) => new Promise<string>((done) => {
@@ -1212,7 +1232,7 @@ try {
       return address;
     };
     const closePage = async () => {
-      await mediaPage.getByRole("button", { name: "Close file", exact: true }).click();
+      await preview.getByRole("button", { name: "Close files", exact: true }).click();
       await mediaPage.waitFor({ state: "hidden" });
     };
     const first = await openPage();
