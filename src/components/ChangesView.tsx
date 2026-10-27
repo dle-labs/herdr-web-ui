@@ -40,10 +40,10 @@ function createDiffQueue() {
   return (job: () => Promise<void>) => { waiting.push(job); pump(); };
 }
 
-function DiffSection({ paneId, inventory, path, owner, connected, split, scrollRoot, queue, selected, onActive, onReveal, initialId }: {
+function DiffSection({ paneId, inventory, path, owner, connected, split, scrollRoot, queue, selected, onActive, onReveal, initialId, findActive, keyboardActive }: {
   paneId: string; inventory: GitChangesResponse; path: string; owner: string;
   connected: boolean; split: boolean; scrollRoot: RefObject<HTMLDivElement | null>;
-  queue: ReturnType<typeof createDiffQueue>; selected: boolean; onActive: (path: string) => void; onReveal: (path: string) => void; initialId?: string;
+  queue: ReturnType<typeof createDiffQueue>; selected: boolean; onActive: (path: string) => void; onReveal: (path: string) => void; initialId?: string; findActive: boolean; keyboardActive: boolean;
 }) {
   const t = useT();
   const { fetchGitDiff } = useMachineApi();
@@ -83,7 +83,7 @@ function DiffSection({ paneId, inventory, path, owner, connected, split, scrollR
     return () => { live = false; };
   }, [near, queue, fetchGitDiff, paneId, path, inventory.revision, inventory.root, inventory.base_commit, attempt, t]);
   const fallbackComments = <DiffOrphanComments owner={owner} connected={connected} root={inventory.root} mode="all" paths={[]} onlyPaths={[path, ...inventory.files.filter((entry) => entry.path === path && entry.old_path).map((entry) => entry.old_path!)]} initialId={initialId} />;
-  return <section ref={surface} className="changes-diff-section" aria-label={path} data-diff-path={path} onPointerDown={() => onActive(path)}>
+  return <section ref={surface} className="changes-diff-section" aria-label={path} data-diff-path={path} data-find-owner={findActive} onPointerDown={() => onActive(path)}>
     <header className="changes-diff-header">
       <h3 className="changes-diff-title" title={path} aria-label={path}>
         {path.includes("/") && <span className="changes-diff-directory" aria-hidden="true">{path.slice(0, path.lastIndexOf("/") + 1)}</span>}
@@ -95,7 +95,7 @@ function DiffSection({ paneId, inventory, path, owner, connected, split, scrollR
     {!file && !error && <p className="changes-diff-placeholder changes-note" role="status">{t("Loading…")}</p>}
     {error && fallbackComments}
     {file && <RenderBoundary resetKey={`${file.revision}:${file.path}`} fallback={(retry) => <><p role="alert">{t("This diff could not be displayed.")} <button type="button" className="btn" onClick={retry}>{t("Retry")}</button></p>{fallbackComments}</>}>
-      <DiffViewer file={file} mode="all" owner={owner} connected={connected} split={split} initialId={initialId} />
+      <DiffViewer file={file} mode="all" owner={owner} connected={connected} split={split} initialId={initialId} findActive={findActive} keyboardActive={keyboardActive} onFindActive={() => onActive(path)} />
     </RenderBoundary>}
   </section>;
 }
@@ -135,6 +135,21 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
   const narrow = useMediaQuery("(max-width: 768px)");
   const surface = useRef<HTMLDivElement>(null);
   const documentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!keyboardActive || preview || compareTarget !== undefined || searchOpen) return;
+    const key = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.altKey || event.shiftKey || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f") return;
+      const focused = document.activeElement;
+      if (focused instanceof Element && (focused.closest(".comment-popover, .command-palette, .commit-picker, dialog") || focused.closest("[aria-modal='true']") !== surface.current?.closest("[aria-modal='true']"))) return;
+      const section = surface.current?.querySelector<HTMLElement>('.changes-diff-section[data-find-owner="true"]');
+      const button = section?.querySelector<HTMLButtonElement>(".diff-find-button");
+      if (!button) return;
+      event.preventDefault(); event.stopPropagation();
+      if (!button.disabled) button.click();
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [keyboardActive, preview, compareTarget, searchOpen]);
   const canLeave = useCallback(() => {
     const field = changedField(surface.current);
     if (field !== null) { revealField(field); return false; }
@@ -167,7 +182,7 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     const direct = changedWorkspacePath(inventory, candidate);
     if (direct && !initialComment && !initialCommentId && canLeave()) {
       resolvedInitial.current = true;
-      const document = workspacePreviewPath(inventory, candidate, initialIntent);
+      const document = workspacePreviewPath(inventory, candidate, initialIntent === "browse" ? "preview" : initialIntent);
       setPreview(document); setPath(direct); setJump(document === null ? direct : null);
       return;
     }
@@ -177,7 +192,7 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
       resolvedInitial.current = true;
       const changed = changedWorkspacePath(inventory, info.path);
       if (changed && !initialComment && !initialCommentId) {
-        const document = workspacePreviewPath(inventory, info.path, initialIntent);
+        const document = workspacePreviewPath(inventory, info.path, initialIntent === "browse" ? "preview" : initialIntent);
         setPreview(document); setPath(changed); setJump(document === null ? changed : null);
       } else setPreview(info.path);
     }).catch(() => { /* The embedded reader shows the file error or candidate choices. */ });
@@ -188,7 +203,7 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     const element = [...documentRef.current?.querySelectorAll<HTMLElement>("[data-diff-path]") ?? []].find((node) => node.dataset.diffPath === jump);
     if (element) { element.scrollIntoView({ block: "start" }); setJump(null); }
   }, [jump, inventory, preview, showFile, narrow]);
-  function select(absolute: string) {
+  function select(absolute: string, intent: WorkspaceFileIntent | "preview" = comparisonActive ? "changes" : initialIntent) {
     if (!canLeave()) return;
     resolvedInitial.current = true;
     initialRequest.current = false;
@@ -197,7 +212,7 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     setDocumentClosed(false);
     onShowFile();
     const changed = inventory ? changedWorkspacePath(inventory, absolute) : null;
-    const document = inventory ? workspacePreviewPath(inventory, absolute, comparisonActive ? "changes" : initialIntent) : absolute;
+    const document = inventory ? workspacePreviewPath(inventory, absolute, intent) : absolute;
     setComparisonPath(baseCommit ? changed : null);
     setPreview(document); setPath(changed); setJump(document === null ? changed : null);
   }
@@ -280,12 +295,12 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
       {/* Scrolling a comment into view (or collapsing it after Save) is not file navigation. */}
       <div className="changes-detail" ref={documentRef} aria-label={t("File diff")}>
         {documentClosed ? <p className="changes-note" role="status">{t("Select a file to view.")}</p> : preview ? <FileViewer key={`${preview}:${refreshToken}`} keyboardActive={keyboardActive} path={preview} paneId={paneId} machineId={machineId} paneFolder={start} connected={connected}
-          commentId={!initialRequestActive || initialComment?.diff ? null : initialComment?.id ?? initialCommentId} onOpen={select} onClose={closeDocument} /> : <>
+          commentId={!initialRequestActive || initialComment?.diff ? null : initialComment?.id ?? initialCommentId} onOpen={(absolute) => select(absolute, "preview")} onClose={closeDocument} /> : <>
           {loading && !inventory && <p className="changes-note" role="status">{t("Loading…")}</p>}
           {error !== null && <p className="changes-note" role="alert">{error}</p>}
           {inventory && (inventory.files.length === 0 || comparisonPath !== null && !inventory.files.some((file) => file.path === comparisonPath || file.old_path === comparisonPath)) && <p className="changes-note" role="status">{t("No changes in this comparison.")}</p>}
           <WorkerPoolContextProvider poolOptions={poolOptions} highlighterOptions={highlighterOptions}>
-            {paneId !== null && owner !== null && inventory?.files.filter((file) => comparisonPath === null || file.path === comparisonPath || file.old_path === comparisonPath).map((file) => <DiffSection key={`${owner}:${inventory.root}:${inventory.revision}:${file.path}`} paneId={paneId} inventory={inventory} path={file.path} owner={owner} connected={connected} split={settings.diffStyle === "split" && !narrow} scrollRoot={documentRef} queue={queue} initialId={initialRequestActive && (file.path === initialComment?.diff?.path || file.old_path === initialComment?.diff?.path) ? initialComment?.id : undefined} selected={path === file.path} onActive={(next) => { if (!narrow) setPath(next); }} onReveal={revealInTree} />)}
+            {paneId !== null && owner !== null && inventory?.files.filter((file) => comparisonPath === null || file.path === comparisonPath || file.old_path === comparisonPath).map((file, index) => <DiffSection key={`${owner}:${inventory.root}:${inventory.revision}:${file.path}`} paneId={paneId} inventory={inventory} path={file.path} owner={owner} connected={connected} split={settings.diffStyle === "split" && !narrow} findActive={path === file.path || path === null && index === 0} keyboardActive={keyboardActive && compareTarget === undefined && !searchOpen} scrollRoot={documentRef} queue={queue} initialId={initialRequestActive && (file.path === initialComment?.diff?.path || file.old_path === initialComment?.diff?.path) ? initialComment?.id : undefined} selected={path === file.path} onActive={setPath} onReveal={revealInTree} />)}
           </WorkerPoolContextProvider>
         </>}
       </div>

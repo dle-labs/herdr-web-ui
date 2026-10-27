@@ -14,6 +14,7 @@ import type { RepoDiffTarget } from "../src/lib/repoDiff.ts";
 import { nativeModalOver, useFocusTrap } from "../src/lib/useFocusTrap.ts";
 import { useSheetSwipe } from "../src/lib/sheets.ts";
 import { usePhoneSheetBack } from "../src/lib/sheetHistory.ts";
+import { useT } from "../src/lib/i18n.ts";
 
 interface Files { machine: string; paneId: string; directory: string }
 declare global { interface Window { repoDiffQA: { openFiles: (machine: string, paneId: string, directory: string) => void; closeFiles: () => void; settings: (patch: Partial<Settings>) => void; openDiff: (target: RepoDiffTarget) => void } } }
@@ -21,13 +22,14 @@ declare global { interface Window { repoDiffQA: { openFiles: (machine: string, p
 /**
  * Test-only legacy comparison shell. App's FilesDialog is the unified tree/diff browser, not
  * these Browse/Changes tabs. This shell keeps exercising the retained RepoChanges component
- * and the standalone RepoDiffViewer (also reached from chat's edited-file links), with the
+ * and the standalone RepoDiffViewer, with the
  * production focus, sheet and history hooks rather than a second implementation of them.
  */
 function LegacyComparisons({ files, viewing, onOpenFile, onOpenDiff, onClose }: {
   files: Files; viewing: boolean; onOpenFile: (path: string) => void;
   onOpenDiff: RepoChangesProps["onOpenDiff"]; onClose: () => void;
 }) {
+  const t = useT();
   const surface = useFocusTrap<HTMLElement>(true);
   const [tab, setTab] = useState<"browse" | "changes">("browse");
   const [changesVisited, setChangesVisited] = useState(false);
@@ -46,8 +48,8 @@ function LegacyComparisons({ files, viewing, onOpenFile, onOpenDiff, onClose }: 
       <header className="modal-header">
         <h2 className="modal-title">Legacy repository comparisons</h2>
         <div className="segmented" role="group" aria-label="Show">
-          <button type="button" aria-pressed={tab === "browse"} onClick={() => setTab("browse")}>Browse</button>
-          <button type="button" aria-pressed={tab === "changes"} onClick={() => { setTab("changes"); setChangesVisited(true); }}>Changes</button>
+          <button type="button" aria-pressed={tab === "browse"} onClick={() => setTab("browse")}>{t("Browse")}</button>
+          <button type="button" aria-pressed={tab === "changes"} onClick={() => { setTab("changes"); setChangesVisited(true); }}>{t("Changes")}</button>
         </div>
         <button type="button" className="btn" onClick={onClose}>Close comparisons</button>
       </header>

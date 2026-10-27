@@ -1,5 +1,6 @@
 import type { GitChangesResponse } from "../../shared/protocol.ts";
 import { languageForPath } from "./highlight.ts";
+import { fileIconCategory } from "./fileTypeIcon.ts";
 import { workspaceChildPath } from "./workspaceFileTree.ts";
 
 export type WorkspaceFileIntent = "browse" | "changes";
@@ -19,11 +20,16 @@ export function changedMarkdownPreviewPath(inventory: GitChangesResponse, path: 
     ? workspaceChildPath(inventory.root, file.path) : null;
 }
 
-/** Browsing a Markdown document must not turn into source just because Git lists it. */
-export function workspacePreviewPath(inventory: GitChangesResponse, absolute: string, intent: WorkspaceFileIntent): string | null {
+/** Browsing a document or media must not lose its preview just because Git lists it. */
+export function workspacePreviewPath(inventory: GitChangesResponse, absolute: string, intent: WorkspaceFileIntent | "preview"): string | null {
   const changed = changedWorkspacePath(inventory, absolute);
   if (changed === null) return absolute;
   if (intent === "changes") return null;
+  const file = inventory.files.find((file) => file.path === changed);
+  if (intent === "preview" && file?.status !== "deleted"
+    && normalize(workspaceChildPath(inventory.root, changed)) === normalize(absolute)) return absolute;
+  if (file && file.status !== "deleted" && ["image", "video", "audio", "pdf"].includes(fileIconCategory(file.path))
+    && normalize(workspaceChildPath(inventory.root, file.path)) === normalize(absolute)) return absolute;
   const preview = changedMarkdownPreviewPath(inventory, changed);
   // A rename's old link still opens its diff; it must not pretend the new document is the old one.
   return preview !== null && normalize(preview) === normalize(absolute) ? preview : null;

@@ -68,11 +68,11 @@ const rowInView = (row: Element) => {
 
 async function open(page: Page, path: string, machine = "local"): Promise<void> {
   await page.evaluate(([path, machine]) => window.virtualQA.open(path, machine), [path, machine] as const);
-  await page.getByRole("dialog").waitFor();
+  await page.getByRole("region").waitFor();
 }
 async function close(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Close file", exact: true }).click();
-  await page.getByRole("dialog").waitFor({ state: "detached" });
+  await page.getByRole("region").waitFor({ state: "detached" });
 }
 async function waitRows(page: Page): Promise<void> {
   await page.waitForFunction(() => (document.querySelector("diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0);
