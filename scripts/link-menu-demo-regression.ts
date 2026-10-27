@@ -232,7 +232,9 @@ try {
       {
         const { context, page, errors } = await open(browser, origin, `${url}&file=README.md`, { android: true }, ".file-viewer .markdown a");
         try {
-          assert.equal(await page.locator(".file-viewer-scrim").count(), 1, "on a phone the file opens in its dialog");
+          const files = page.getByRole("dialog", { name: "Files", exact: true });
+          await files.waitFor();
+          assert.equal(await files.getAttribute("aria-modal"), "true", "on a phone the file opens in its dialog");
           assert.equal(await longPress(page, ".file-viewer .markdown a", "the draft"), true);
           await page.locator(".row-sheet").waitFor();
           await sheetAtRest(page);
@@ -241,7 +243,7 @@ try {
           await page.locator(".row-sheet-item", { hasText: "Copy link" }).tap({ timeout: 3_000 });
           await page.locator(".row-sheet").waitFor({ state: "detached" });
           assert.equal(await page.evaluate(() => navigator.clipboard.readText()), HREF, "Copy link from a file preview copies its address");
-          assert.equal(await page.locator(".file-viewer-scrim").count(), 1, "the preview stays open under the sheet");
+          assert.equal(await files.isVisible(), true, "the preview stays open under the sheet");
           console.log("PASS android: a link in a file preview opens its sheet over the preview");
           assert.deepEqual(errors, []);
         } finally {
