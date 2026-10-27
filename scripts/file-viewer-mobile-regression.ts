@@ -37,7 +37,7 @@ async function checkLayout(): Promise<void> {
       const [open, setOpen] = React.useState(true);
       return React.createElement(SettingsProvider, null, open
         ? React.createElement(FilesDialog, { start: "/workspace", initialPath: path, paneId: "fixture-pane", connected: true, onClose: () => setOpen(false) })
-        : React.createElement("p", { id: "closed" }, "Viewer closed"));
+        : React.createElement("div", { id: "closed" }, "Viewer closed", React.createElement("button", { type: "button", onClick: () => setOpen(true) }, "Reopen image")));
     }
     createRoot(document.getElementById("root")).render(React.createElement(Demo));
   `);
@@ -210,7 +210,7 @@ async function checkLayout(): Promise<void> {
       const original = new URL(await image.getAttribute("src") ?? "", page.url());
       imageRevision = 2;
       // Reopening already fetches metadata; no file watcher or periodic request is needed.
-      await page.getByRole("button", { name: "Close file", exact: true }).click();
+      await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
       await page.getByRole("button", { name: "Reopen image", exact: true }).click();
       await image.waitFor();
       const updated = new URL(await image.getAttribute("src") ?? "", page.url());
@@ -219,7 +219,7 @@ async function checkLayout(): Promise<void> {
       assert.equal(updated.searchParams.get("path"), original.searchParams.get("path"), "versioning preserves the file path");
       assert.equal(updated.searchParams.get("pane_id"), "fixture-pane", "versioning preserves pane-scoped resolution");
       await page.waitForFunction(() => document.querySelector<HTMLImageElement>("img.file-viewer-media")?.naturalWidth === 128);
-      await page.getByRole("button", { name: "Close file", exact: true }).click();
+      await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
       await page.getByRole("button", { name: "Reopen image", exact: true }).click();
       await image.waitFor();
       assert.equal(new URL(await image.getAttribute("src") ?? "", page.url()).href, updated.href, "unchanged metadata keeps the same image identity");

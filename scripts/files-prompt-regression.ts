@@ -48,20 +48,29 @@ async function openApp(context: BrowserContext, origin: string, pane: string, pa
 
 async function checkFiles(page: Page, label: string, phone: boolean, paneA: string, paneB: string, cwdA: string, cwdB: string): Promise<void> {
   assert.equal(await selectedPane(page), paneA);
+  const listedRoot = (folder: string) => page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname.endsWith("/workspace/directories") && url.searchParams.get("path") === folder && response.ok();
+  }).then((response) => response.json());
+  const firstRoot = listedRoot(cwdA);
   if (phone) await runMoreItem(page, "Browse files");
-  else await page.getByRole("button", { name: "Browse files", exact: true }).click();
-  const dialog = page.locator(".files-dialog");
+  else await page.getByRole("banner").getByRole("button", { name: "Browse files", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Files", exact: true });
   await dialog.waitFor();
-  await page.waitForFunction((folder) => document.querySelector(".files-dialog .dir-browser-path")?.getAttribute("title") === folder, cwdA);
-  await dialog.locator(".dir-browser-item", { hasText: "sub" }).click();
-  await page.waitForFunction((folder) => document.querySelector(".files-dialog .dir-browser-path")?.getAttribute("title") === folder, join(cwdA, "sub"));
+  assert.equal((await firstRoot).path, cwdA);
+  await dialog.locator('.workspace-tree-row[title="sub"][aria-expanded]').click();
+  await dialog.locator('.workspace-tree-row[title="sub"][aria-expanded="true"]').waitFor();
+  await dialog.locator('.workspace-tree-row[title="sub/note.txt"]').waitFor();
   await page.screenshot({ path: join(shots, `files-${label}-before-switch.png`) });
+  const nextRoot = listedRoot(cwdB);
   await page.keyboard.press("Control+Shift+ArrowDown");
   await page.waitForFunction((id) => JSON.parse(sessionStorage.getItem("ovis:selection") ?? "null")?.pane_id === id, paneB);
-  const outcome = await page.waitForFunction((folder) => {
+  const outcome = await page.waitForFunction(() => {
     const current = document.querySelector(".files-dialog");
-    return current === null ? "closed" : current.querySelector(".dir-browser-path")?.getAttribute("title") === folder ? "followed" : false;
-  }, cwdB, { timeout: 3_000 }).then((handle) => handle.jsonValue() as Promise<string>).catch(() => "stuck");
+    return current?.querySelector('.workspace-tree-row[title="other"][aria-expanded]') != null
+      && current.querySelector('.workspace-tree-row[title="sub/note.txt"]') === null ? "followed" : false;
+  }, undefined, { timeout: 3_000 }).then((handle) => handle.jsonValue() as Promise<string>).catch(() => "stuck");
+  assert.equal((await nextRoot).path, cwdB);
   await page.screenshot({ path: join(shots, `files-${label}-after-switch.png`) });
   const pass = outcome !== "stuck";
   results.push({ scenario: "Files follows pane switch", page: label, pass });
