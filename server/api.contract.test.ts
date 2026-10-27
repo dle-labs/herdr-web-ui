@@ -1672,11 +1672,12 @@ describe("workspace and discovery endpoints", () => {
   let paneId: string | null = null;
   const label = `ovis-test-${Math.random().toString(36).slice(2)}`;
   const fileName = `${label}-mention.txt`;
-  const filePath = join(tmpdir(), fileName);
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "ovis-workspace-discovery-"));
+  const filePath = join(workspaceRoot, fileName);
 
   afterAll(async () => {
     if (workspaceId) await herdrRpc("workspace.close", { workspace_id: workspaceId }).catch(() => undefined);
-    rmSync(filePath, { force: true });
+    rmSync(workspaceRoot, { recursive: true, force: true });
   });
 
   it("lists agent kinds with required fallbacks sorted by display label", async () => {
@@ -1906,7 +1907,7 @@ describe("workspace and discovery endpoints", () => {
     const create = await fetch(`${base()}/api/workspace/create`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cwd: tmpdir(), label, agent: null }),
+      body: JSON.stringify({ cwd: workspaceRoot, label, agent: null }),
     });
     expect(create.status).toBe(200);
     const created = (await create.json()) as WorkspaceCreated;

@@ -8,6 +8,7 @@ import { nodeSidecarAvailable } from "./pty/sidecar.ts";
 import { OUTPUT_HARD_BYTES, OUTPUT_HIGH_BYTES, OUTPUT_STALL_MS } from "./output-window.ts";
 import { OUTPUT_STALLED_CLOSE_CODE } from "../shared/terminal-flow.ts";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
+import { nodeSidecarAvailable } from "./pty/sidecar.ts";
 
 const root = mkdtempSync(join(tmpdir(), "herdr-output-contract-"));
 const server = createServer({ port: 0, hostname: "127.0.0.1", token: "", stateDir: root });
