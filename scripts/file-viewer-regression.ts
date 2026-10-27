@@ -1010,6 +1010,15 @@ try {
   await page.getByRole("button", { name: "slow preview", exact: true }).click();
   const slow = preview;
   await slow.locator(".file-viewer-markdown p").first().waitFor({ timeout: 15_000 });
+  // The bundled font's contextual ligatures previously stalled layout for this
+  // 90,000-character operator run. A fallback font or unwrapped source hides it.
+  assert.ok(await page.evaluate(async () => {
+    const faces = await document.fonts.load('12px "JetBrains Mono Web"', "-");
+    return faces.length > 0 && faces.every((face) => face.status === "loaded");
+  }), "the source regression uses the loaded app font");
+  const slowWrap = slow.locator(".files-dialog-header").getByRole("button", { name: "Wrap long lines", exact: true });
+  if (await slowWrap.getAttribute("aria-pressed") !== "true") await slowWrap.click();
+  assert.equal(await slowWrap.getAttribute("aria-pressed"), "true", "the long source line is wrapped");
   await slow.getByRole("button", { name: "Show source", exact: true }).click();
   await sourceRows(slow).first().waitFor();
   assert.match(await sourceText(slow), /Notes on a slow file/);
