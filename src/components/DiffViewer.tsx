@@ -16,6 +16,7 @@ import { CommentField, useCommentDraft } from "./CommentDraft.tsx";
 import { useCommentPopover, type OpenComment } from "./useCommentPopover.ts";
 import { MicButton, VoiceRecordingPill } from "./VoiceInput.tsx";
 import "./DiffViewer.css";
+import { useDiffFind } from "./DiffFind.tsx";
 
 export function DiffCommentEditor({ open, connected, text, onSave, onClose, onDelete, reveal = false }: {
   open: OpenComment<FileTarget>; connected: boolean; text: { read: () => string; write: (value: string) => void };
@@ -165,8 +166,8 @@ export function DiffGutterButton({ hovered, pointerLine, onRange, onPreview }: {
     }}><MessageSquarePlus aria-hidden="true" /></button>;
 }
 
-export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
-  file: GitFileDiffResponse; mode: GitDiffMode; owner: string; connected: boolean; split: boolean; initialId?: string;
+export function DiffViewer({ file, mode, owner, connected, split, initialId, findActive = false, keyboardActive = true, onFindActive = () => {} }: {
+  file: GitFileDiffResponse; mode: GitDiffMode; owner: string; connected: boolean; split: boolean; initialId?: string; findActive?: boolean; keyboardActive?: boolean; onFindActive?: () => void;
 }) {
   const t = useT();
   const { settings, resolvedTheme } = useSettings();
@@ -179,6 +180,7 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
   const popover = useCommentPopover<FileTarget>({ enabled: settings.comments, persist: (owner, target, text) => { blockComments.saveFile(owner, target, text); } });
   const shown = comments.filter((comment) => comment.diff?.revision === file.revision);
   const outdated = comments.filter((comment) => comment.diff?.revision !== file.revision);
+  const find = useDiffFind(file.binary || !file.patch ? null : file.patch, findActive, keyboardActive, surface, onFindActive);
   const metadata = useMemo(() => diffMetadata(file, mode), [file, mode]);
   const [linkedCommentId, setLinkedCommentId] = useState<string | null>(null);
   const [expandLinkedContext, setExpandLinkedContext] = useState(false);
@@ -240,17 +242,19 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId }: {
     </button>
   );
   return <div className="diff-viewer" ref={surface} data-comment-surface="">
+    {find.button}{find.bar}
     {metadata !== null && <FileDiff fileDiff={metadata} lineAnnotations={annotations} selectedLines={selected} options={{
       diffStyle: split ? "split" : "unified", theme: PIERRE_THEME, themeType: resolvedTheme,
       // Explicit links can target collapsed context. Once revealed, keep that
       // context open for this document; ordinary comment edits never expand or
       // collapse the file underneath the selected source line.
-      expandUnchanged: expandLinkedContext,
+      expandUnchanged: expandLinkedContext || find.match !== null,
+      onPostRender: (node) => find.onPostRender(node),
       overflow: settings.wrapCode ? "wrap" : "scroll", disableFileHeader: true, diffIndicators: "classic", enableLineSelection: settings.comments,
       enableGutterUtility: settings.comments, onLineSelected: setSelected,
       onLineSelectionStart: setSelected, onLineSelectionChange: setSelected,
       onLineSelectionEnd, onLineEnter,
-      unsafeCSS: ":host { --diffs-bg: var(--bg-panel); --diffs-fg: var(--text); --diffs-font-family: var(--font-mono); --diffs-font-size: var(--fs-xs); --diffs-line-height: var(--lh-base); }",
+      unsafeCSS: ":host { --diffs-bg: var(--bg-panel); --diffs-fg: var(--text); --diffs-font-family: var(--font-mono); --diffs-font-size: var(--fs-xs); --diffs-line-height: var(--lh-base); } [data-line][data-find-active] { box-shadow: inset 0 0 0 2px var(--accent); } ::highlight(repo-diff-find) { background-color: var(--accent); color: var(--bg); }",
     }} renderAnnotation={renderAnnotation} renderGutterUtility={(hovered) => <DiffGutterButton hovered={hovered} pointerLine={() => pointerLine.current} onRange={onGutterRange} onPreview={setSelected} />} />}
     {file.binary && <p role="status">{t("Binary files cannot be displayed as a text diff.")}</p>}
     {outdated.length > 0 && <section className="diff-outdated"><h3>{t("Outdated comments")}</h3>

@@ -1957,6 +1957,10 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   within the source bounds (256 KB, 5 000 lines), else the rows stay plain and the header says
   `Too long to highlight`. Between hunks nothing expands: the routes serve the patch alone, not
   the files around it; **Open file** is the way to the whole file.
+- **Unified Files patch Find** follows the existing Ovis loaded-patch search, keeping the
+  Codex-style file tree and document column. Each changed document has a Find control; one
+  selected patch owns the keyboard and highlight at a time. Search keeps comment selection
+  intact, yields to palettes and comment editors, and closes before Files on Escape.
 - **Find in diff** (a `Search` icon button first among the actions, `aria-pressed`, and Ctrl/Cmd+F
   while the viewer has the keyboard) opens the terminal find bar's markup and tokens
   (`.find-bar.repo-diff-find`) between the header and the rows: the query with its name `Find in

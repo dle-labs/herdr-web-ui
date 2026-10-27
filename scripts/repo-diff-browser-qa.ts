@@ -1085,7 +1085,7 @@ try {
       await page.keyboard.press("ControlOrMeta+f");
       assert.equal(await query.evaluate((input) => input === document.activeElement), true, `${label}: Ctrl/Cmd+F again keeps the query focused`);
     }
-    assert.equal(await page.getByRole("dialog", { name: "Files", exact: true }).count(), 1, `${label}: the Files list stays beneath`);
+    assert.equal(await page.getByRole("dialog", { name: "Legacy repository comparisons", exact: true }).count(), 1, `${label}: the comparison list stays beneath`);
     const hint = (await found(page)).hint;
     assert.equal(hint, "Searches this loaded patch, including context. Content outside the patch is not searched.", `${label}: the bar says what it searches`);
     // top, middle and end, each a context line the folded rows leave out
@@ -1161,7 +1161,7 @@ try {
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? null), "Find in diff", `${label}: the focus returns to Find, which reopened it`);
     await page.keyboard.press("Escape");
     await page.locator(".repo-diff-viewer").waitFor({ state: "detached" });
-    await page.getByRole("dialog", { name: "Files", exact: true }).waitFor();
+    await page.getByRole("dialog", { name: "Legacy repository comparisons", exact: true }).waitFor();
     console.log(`PASS ${label}: Find reaches folded context at the top, middle and end of 10 000 lines, steps across both sides${phone ? "" : " through split and wrap"}, takes punctuation literally, closes before the viewer${phone ? "" : " with a repeated Ctrl/Cmd+F"} and reopens on the same match`);
 
     // unwrapped rows: a match past the screen's right edge is scrolled into view across, and back for one at the start

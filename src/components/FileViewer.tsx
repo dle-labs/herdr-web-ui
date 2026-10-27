@@ -327,6 +327,12 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
     : { owner, path: filePath ?? target.path, label: pathLabel(filePath ?? target.path, paneFolder), view: "code", lines: commentLines ?? [], loaded: wholeLines, truncated: cutShort },
   [owner, filePath, target.path, paneFolder, commentLines, wholeLines, cutShort]);
   const bodyRef = useRef<HTMLDivElement>(null);
+  // The standalone reader has no modal trap: its scroll box owns keyboard
+  // scrolling on arrival. Preserve any focus the reader already placed inside it.
+  useLayoutEffect(() => {
+    if (!page || surface.current?.contains(document.activeElement)) return;
+    bodyRef.current?.focus({ preventScroll: true });
+  }, [page]);
   const comments = useFileComments(scope);
   const [requestedComment, setRequestedComment] = useState(commentId);
   const [commentRequest, setCommentRequest] = useState(0);

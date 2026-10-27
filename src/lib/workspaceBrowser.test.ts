@@ -58,6 +58,26 @@ it("does not substitute a rename's new Markdown contents for an old-path link", 
   expect(changedMarkdownPreviewPath(markdown, "new.md")).toBe("/repo/new.md");
 });
 
+it("keeps changed media playable when browsing, with changes and deleted paths still opening diffs", () => {
+  for (const path of ["clip.webm", "photo.PNG", "voice.mp3", "manual.pdf"]) {
+    const media: GitChangesResponse = { ...inventory, files: [{ path, status: "untracked", binary: true }] };
+    expect(workspacePreviewPath(media, `/repo/${path}`, "browse")).toBe(`/repo/${path}`);
+    expect(workspacePreviewPath(media, `/repo/${path}`, "changes")).toBeNull();
+    media.files[0]!.status = "deleted";
+    expect(workspacePreviewPath(media, `/repo/${path}`, "browse")).toBeNull();
+    media.files[0] = { path, old_path: "old.webm", status: "renamed", binary: true };
+    expect(workspacePreviewPath(media, "/repo/old.webm", "browse")).toBeNull();
+  }
+});
+
+it("preserves explicit file-link previews for current source, while deleted and old rename links show diffs", () => {
+  expect(workspacePreviewPath(inventory, "/repo/src/modified.ts", "preview")).toBe("/repo/src/modified.ts");
+  expect(workspacePreviewPath(inventory, "/repo/src/new.ts", "preview")).toBe("/repo/src/new.ts");
+  expect(workspacePreviewPath(inventory, "/repo/src/old.ts", "preview")).toBeNull();
+  expect(workspacePreviewPath(inventory, "/repo/src/deleted.ts", "preview")).toBeNull();
+  expect(workspacePreviewPath(inventory, "/repo/src/modified.ts", "browse")).toBeNull();
+});
+
 it("previews Windows Markdown paths without mixing repository prefixes", () => {
   const markdown: GitChangesResponse = { ...inventory, root: "C:\\repo", files: [{ path: "docs/new.md", status: "untracked" }] };
   expect(workspacePreviewPath(markdown, "C:\\repo\\docs\\new.md", "browse")?.replace(/\\/g, "/")).toBe("C:/repo/docs/new.md");
