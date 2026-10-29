@@ -120,6 +120,8 @@ const BASE: Record<string, string> = {
   "On, pushed to this device": "オン、この端末にプッシュ",
   "Alerts on, pushed to this device, even with the app closed. Tap to turn them off": "通知オン。このデバイスにプッシュされます。アプリを閉じていても届きます。タップするとオフになります",
   "Off on this device": "この端末ではオフ",
+  "File view": "ファイル表示",
+  "Source": "ソース",
   "More": "その他",
   "More · alerts are off": "その他 · 通知オフ",
   "Alerts off on this device. Tap to turn them on": "このデバイスでは通知がオフです。タップするとオンになります",

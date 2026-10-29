@@ -1,5 +1,7 @@
+import { fileAction, fileView, fileViewSelected } from "./files-controls.ts";
+import { installGitDiffFixture } from "./git-diff-fixture.ts";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium, type Locator, type Page } from "playwright-core";
@@ -27,7 +29,7 @@ async function checkPaneFollowing(page: Page): Promise<void> {
   const original = await page.evaluate(() => new URLSearchParams(location.search).get("pane"));
   assert.ok(original, "the demo selected its first pane");
   const files = await openChanges(page);
-  await files.getByRole("button", { name: "Refresh changes", exact: true }).focus();
+  await files.getByRole("button", { name: "Close files", exact: true }).focus();
   await page.keyboard.press("Control+Shift+ArrowDown");
   const switched = await page.waitForFunction((previous) => {
     const pane = new URLSearchParams(location.search).get("pane");
@@ -39,7 +41,7 @@ async function checkPaneFollowing(page: Page): Promise<void> {
     return read.pathname.endsWith("/workspace/changes") && read.searchParams.get("pane_id") === pane;
   }), next);
   assert.equal(await files.count(), 1, "switching panes keeps Files open");
-  await files.getByRole("button", { name: "Refresh changes", exact: true }).focus();
+  await files.getByRole("button", { name: "Close files", exact: true }).focus();
   await page.keyboard.press("Control+Shift+ArrowUp");
   await page.waitForFunction((pane) => new URLSearchParams(location.search).get("pane") === pane, original);
   await files.getByRole("button", { name: "Close files", exact: true }).click();
@@ -222,46 +224,32 @@ async function checkStickyReveal(page: Page, dialog: Locator, mobile: boolean): 
   const originalSelection = await selected();
   assert.deepEqual(originalSelection, ["src/greeting.ts"]);
   await number(first, "old", 180).waitFor();
+  if (mobile) {
+    const title = dialog.locator(".files-mobile-title h2[title]");
+    for (const target of [first, next]) {
+      await scrollInside(target, 100);
+      await target.locator("[data-diff-type]").waitFor();
+      await scrollInside(target, 100);
+      assert.equal(await title.getAttribute("title"), await target.getAttribute("data-diff-path"));
+      assert.deepEqual(await selected(), originalSelection, "scrolling does not select a tree row");
+      assert.ok((await dialog.locator(".files-mobile-header").boundingBox())!.y === 0, "toolbar stays at viewport top");
+    }
+    const document = await next.elementHandle();
+    await (await fileAction(dialog, "Reveal in file tree")).click();
+    assert.ok(await dialog.locator(".changes-navigation").isVisible());
+    assert.deepEqual(await selected(), ["src/new.ts"]);
+    await treeFile(dialog, "src/new.ts").click();
+    assert.ok(await document!.evaluate(node => node.isConnected), "Reveal retains diff DOM");
+    await dialog.getByRole("button", {name:"Back to files",exact:true}).click();
+    await treeFile(dialog,"src/greeting.ts").click();
+    await first.locator("[data-diff-type]").waitFor();
+    console.log("PASS Mobile toolbar: continuous filename, explicit Reveal and retained diff");
+    return;
+  }
   for (const offset of [100, 300]) {
     await scrollInside(first, offset);
     await pinned(first);
     assert.deepEqual(await selected(), originalSelection, "ordinary scrolling never changes the selected tree row");
-  }
-  if (mobile) {
-    const viewport = page.viewportSize()!;
-    await page.setViewportSize({ width: 320, height: viewport.height });
-    await frames(page);
-    const title = first.locator(".changes-diff-title");
-    const originalText = await title.locator("span").allTextContents();
-    try {
-      for (const filename of ["greeting.ts", "exceptionally-long-filename-".repeat(12) + ".ts"]) {
-        await title.evaluate((node, filename) => {
-          node.querySelector(".changes-diff-directory")!.textContent = "very-long-directory/".repeat(20);
-          node.querySelector(".changes-diff-filename")!.textContent = filename;
-        }, filename);
-        await frames(page);
-        await pinned(first);
-        assert.ok(await first.locator(".changes-diff-header").evaluate((node) => {
-          const title = node.querySelector<HTMLElement>(".changes-diff-title")!;
-          const directory = node.querySelector<HTMLElement>(".changes-diff-directory")!;
-          const filename = node.querySelector<HTMLElement>(".changes-diff-filename")!;
-          const button = node.querySelector("button")!;
-          const bounds = node.getBoundingClientRect(), action = button.getBoundingClientRect();
-          const name = filename.getBoundingClientRect(), path = directory.getBoundingClientRect();
-          return node.scrollWidth <= node.clientWidth && title.scrollWidth <= title.clientWidth + 1
-            && directory.scrollWidth > directory.clientWidth
-            && getComputedStyle(directory).whiteSpace === "nowrap" && getComputedStyle(filename).whiteSpace === "nowrap"
-            && Math.abs(name.top - path.top) <= 1 && name.right <= action.left + 1
-            && action.left >= bounds.left && action.right <= bounds.right + 1 && action.width > 0
-            && button.contains(document.elementFromPoint(action.x + action.width / 2, action.y + action.height / 2))
-            && (filename.textContent === "greeting.ts" ? filename.scrollWidth <= filename.clientWidth + 1 : filename.scrollWidth > filename.clientWidth);
-        }), "320px: directory truncates first, huge filenames truncate without wrapping or covering Reveal");
-      }
-    } finally {
-      await title.locator("span").evaluateAll((nodes, text) => nodes.forEach((node, i) => { node.textContent = text[i]!; }), originalText);
-      await page.setViewportSize(viewport);
-      await frames(page);
-    }
   }
   await scrollInside(next, 0);
   await next.locator("[data-diff-type]").waitFor();
@@ -290,25 +278,15 @@ async function checkStickyReveal(page: Page, dialog: Locator, mobile: boolean): 
   assert.equal(await page.evaluate(() => window.scrollY), pageTop, "Reveal focus never scrolls the page");
   assert.ok(await document!.evaluate((node) => node.isConnected), "Reveal retains the continuous diff document");
   assert.equal(await dialog.locator("[data-diff-path]").count(), 2);
-  if (mobile) {
-    assert.ok(await dialog.locator(".changes-navigation").isVisible(), "phone Reveal returns to the tree");
-    assert.equal(await detail.isVisible(), false, "phone Reveal hides detail without closing it");
-    await row.click();
-    await detail.waitFor({ state: "visible" });
-    await next.locator("[data-diff-type]").waitFor();
-    assert.ok(await document!.evaluate((node) => node.isConnected), "tree click reopens the retained phone diff");
-    await dialog.getByRole("button", { name: "Back to files", exact: true }).click();
-  } else {
-    assert.ok(Math.abs(await detail.evaluate((node) => node.scrollTop) - before) <= 1, "desktop Reveal focuses with preventScroll, preserving the diff viewport");
-    await treeFile(dialog, "src").click();
-    await row.waitFor({ state: "detached" });
-    assert.equal(await treeFile(dialog, "src").getAttribute("aria-expanded"), "false");
-    await reveal(next).click();
-    await row.waitFor({ state: "visible" });
-    await page.waitForFunction(() => document.activeElement?.matches('.workspace-tree-row[title="src/new.ts"][aria-current="true"]'));
-    assert.equal(await treeFile(dialog, "src").getAttribute("aria-expanded"), "true", "same-selected Reveal reopens manually folded ancestors");
-    assert.ok(Math.abs(await detail.evaluate((node) => node.scrollTop) - before) <= 1, "repeated Reveal does not jump the diff");
-  }
+  assert.ok(Math.abs(await detail.evaluate((node) => node.scrollTop) - before) <= 1, "desktop Reveal focuses with preventScroll, preserving the diff viewport");
+  await treeFile(dialog, "src").click();
+  await row.waitFor({ state: "detached" });
+  assert.equal(await treeFile(dialog, "src").getAttribute("aria-expanded"), "false");
+  await reveal(next).click();
+  await row.waitFor({ state: "visible" });
+  await page.waitForFunction(() => document.activeElement?.matches('.workspace-tree-row[title="src/new.ts"][aria-current="true"]'));
+  assert.equal(await treeFile(dialog, "src").getAttribute("aria-expanded"), "true", "same-selected Reveal reopens manually folded ancestors");
+  assert.ok(Math.abs(await detail.evaluate((node) => node.scrollTop) - before) <= 1, "repeated Reveal does not jump the diff");
   await treeFile(dialog, "src/greeting.ts").click();
   await first.locator("[data-diff-type]").waitFor();
   console.log(`PASS Sticky filenames and Reveal: ${mobile ? "phone" : "desktop"} pinning, section replacement, explicit selection, focus and retained diff`);
@@ -322,7 +300,7 @@ async function checkNestedPickers(page: Page, files: Locator, mobile: boolean, l
     const trigger = files.getByRole("button", { name: folder ? "Browse folders in the palette" : "Find files…", exact: true });
     const picker = page.getByRole("dialog", { name: folder ? "Command palette" : "Find files…", exact: true });
     for (const dismiss of ["close", "escape", "backdrop", ...(mobile ? ["back", "swipe"] : [])]) {
-      await trigger.click();
+      await (await fileAction(files, folder ? "Browse folders in the palette" : "Find files…")).click();
       await picker.waitFor();
       await sheetsSettled(page);
       const entry = await page.evaluate(() => history.state?.["ovis:sheet"]);
@@ -363,11 +341,11 @@ async function checkNestedPickers(page: Page, files: Locator, mobile: boolean, l
       assert.ok(await original!.evaluate((node) => node.isConnected), "nested dismissal preserves the same Files instance");
       assert.deepEqual(await files.locator('.workspace-tree-row[aria-current="true"]').evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))), selected, "selected file survives");
       assert.deepEqual(await files.locator('.workspace-tree-row[aria-expanded="true"]').evaluateAll((rows) => rows.map((row) => row.getAttribute("title"))), expanded, "tree expansion survives");
-      assert.equal(await trigger.evaluate((node) => node === document.activeElement), true, `${folder ? "folder palette" : "finder"} ${dismiss}: focus returns to the opener; active=${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 400))}`);
+      assert.equal(await (mobile ? files.getByRole("button", { name: "More", exact: true }) : trigger).evaluate((node) => node === document.activeElement), true, `${folder ? "folder palette" : "finder"} ${dismiss}: focus returns to the opener; active=${await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 400))}`);
     }
   }
   for (const settings of [true, false]) {
-    await files.getByRole("button", { name: "Find files…", exact: true }).click();
+    await (await fileAction(files, "Find files…")).click();
     const finder = page.getByRole("dialog", { name: "Find files…", exact: true });
     await finder.getByRole("combobox").focus();
     await page.keyboard.press(settings ? "ControlOrMeta+Shift+Comma" : "ControlOrMeta+Shift+k");
@@ -386,136 +364,7 @@ async function checkNestedPickers(page: Page, files: Locator, mobile: boolean, l
 
 try {
   await buildDemoApp(app);
-  const index = join(app, "index.html");
-  writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, '<script src="./demo-transport.js"></script>\n<script src="./regression-patch.js"></script>\n<script type="module"'));
-  // Extend only fictional demo fixtures with readable files, ignored folders and
-  // a long added file for real scrolling. Never use herdr.
-  writeFileSync(join(app, "regression-patch.js"), `(() => {
-    const demoFetch = window.fetch;
-    window.gitRequests = []; window.gitSent = [];
-    const markdownFiles = [
-      { path: "docs/untracked.md", status: "untracked", heading: "Untracked guide" },
-      { path: "docs/added.md", status: "added", heading: "Added guide" },
-      { path: "docs/modified.md", status: "modified", heading: "Modified guide" },
-    ];
-    const markdownBody = (file) => "# " + file.heading + "\\n\\nCurrent **Markdown** content.\\n";
-    const DemoWorker = window.Worker;
-    window.Worker = class extends DemoWorker {
-      constructor(url, options) { super(url, options); this.markdownPreview = String(url).includes("markdownPreview"); }
-      postMessage(message, ...rest) {
-        if (window.gitMarkdownRefuse && this.markdownPreview) {
-          window.gitMarkdownRefusals = (window.gitMarkdownRefusals || 0) + 1;
-          queueMicrotask(() => this.dispatchEvent(new MessageEvent("message", { data: { id: message.id, result: null } })));
-        } else super.postMessage(message, ...rest);
-      }
-    };
-    window.SpeechRecognition = undefined; window.webkitSpeechRecognition = undefined;
-    const DemoSocket = window.WebSocket;
-    window.WebSocket = function(...args) {
-      const socket = new DemoSocket(...args), send = socket.send.bind(socket);
-      socket.send = (raw) => { const message = JSON.parse(raw); if (message.type === "submit") window.gitSent.push(message); return send(raw); };
-      return socket;
-    };
-    Object.assign(window.WebSocket, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3 });
-    window.fetch = async (input, init) => {
-      const url = String(typeof input === "string" ? input : input.url ?? input);
-      if (url.includes("/workspace/changes") || url.includes("/workspace/diff")) window.gitRequests.push(url);
-      if (url.includes("/pane/send") && init?.body) window.gitSent.push(JSON.parse(init.body));
-      const parsed = new URL(url, location.href);
-      if (window.gitDiffFailure && parsed.pathname.endsWith("/workspace/diff") && parsed.searchParams.get("path") === "docs/modified.md") return Response.json({ error: { code: "git_too_large", message: "Fixture diff unavailable" } }, { status: 413 });
-      if (window.gitMarkdownCase) {
-        const path = parsed.searchParams.get("path") || "";
-        const markdown = markdownFiles.find(file => path === file.path || path.endsWith("/" + file.path));
-        if (parsed.pathname.endsWith("/workspace/diff") && markdown) {
-          const changesUrl = new URL(parsed); changesUrl.pathname = changesUrl.pathname.replace(/diff$/, "changes");
-          const changes = await (await demoFetch(changesUrl.href)).json();
-          const body = markdownBody(markdown), modified = markdown.status === "modified";
-          const old = "# " + markdown.heading + "\\n\\nPrevious Markdown content.\\n";
-          return Response.json({ root: changes.root, revision: changes.revision + "-markdown", path: markdown.path, binary: false,
-            old_file: modified ? { name: markdown.path, contents: old } : null,
-            new_file: { name: markdown.path, contents: body },
-            patch: "diff --git a/" + markdown.path + " b/" + markdown.path + "\\n" +
-              (modified ? "--- a/" + markdown.path : "new file mode 100644\\n--- /dev/null") + "\\n+++ b/" + markdown.path + "\\n" +
-              (modified ? "@@ -1,3 +1,3 @@\\n # " + markdown.heading + "\\n \\n-Previous Markdown content.\\n+Current **Markdown** content.\\n"
-                : "@@ -0,0 +1,3 @@\\n" + body.trimEnd().split("\\n").map(line => "+" + line).join("\\n") + "\\n") });
-        }
-        if (markdown && parsed.pathname.endsWith("/fs/stat")) return Response.json({ path, name: markdown.path.split("/").pop(), size: markdownBody(markdown).length, modified: "2026-01-01T00:00:00.000Z", mime: "text/markdown", kind: "text" });
-        if (markdown && parsed.pathname.endsWith("/fs/file")) return new Response(markdownBody(markdown), { headers: { "content-type": "text/markdown" } });
-      }
-      const response = await demoFetch(input, init);
-      if (window.gitManyCommitResults && parsed.pathname.endsWith("/workspace/commits") && response.ok) {
-        const data = await response.json();
-        data.commits = Array.from({ length: 12 }, (_, i) => ({ id: (i + 1).toString(16).padStart(40, "0"), subject: "Overlay commit " + i + " with a long fictional subject", author: "Fictional author", date: "2026-01-01" }));
-        data.truncated = false;
-        return Response.json(data);
-      }
-      if (window.gitManySearchResults && parsed.pathname.endsWith("/workspace/files") && response.ok) {
-        const data = await response.json();
-        data.files = Array.from({ length: 12 }, (_, i) => "src/nested/long-search-result-path-" + String(i).padStart(2, "0") + ".ts");
-        data.truncated = false;
-        return Response.json(data);
-      }
-      if (parsed.pathname === "/api/voice" && response.ok) {
-        const data = await response.json(); data.configured = !!window.gitVoiceConfigured; return Response.json(data);
-      }
-      if (url.includes("/workspace/directories") && response.ok) {
-        const data = await response.json();
-        if (window.gitMarkdownCase && data.path.endsWith("/docs")) {
-          data.directories = []; data.ignored_directories = [];
-          data.files = markdownFiles.map(file => ({ name: file.path.split("/").pop(), size: markdownBody(file).length }));
-          return Response.json(data);
-        }
-        if (window.gitScrollCase) {
-          data.directories = []; data.ignored_directories = [];
-          data.files = Array.from({ length: 80 }, (_, i) => ({ name: "scroll-" + String(i).padStart(3, "0") + ".ts", size: 8000 }));
-          return Response.json(data);
-        }
-        const source = data.path.endsWith("/src"), ignored = data.path.endsWith("/ignored"), nested = data.path.endsWith("/ignored/nested");
-        data.directories = source || nested ? [] : ignored ? ["nested"] : ["src", "ignored"];
-        if (window.gitMarkdownCase && !source && !ignored && !nested) data.directories.push("docs");
-        data.ignored_directories = source || ignored || nested ? [] : ["ignored"];
-        data.files = source ? [{ name: "greeting.ts", size: 90 }, { name: "new.ts", size: 3000 }]
-          : ignored || nested ? [{ name: "hidden.txt", size: 35 }]
-          : [{ name: "unchanged.ts", size: 35 }, { name: "notes.md", size: 35 }, { name: "picture.png", size: 35 }];
-        return Response.json(data);
-      }
-      if (parsed.pathname.endsWith("/fs/stat")) return Response.json({ path: parsed.searchParams.get("path"), name: "unchanged.ts", size: window.gitScrollVirtual ? 600000 : 35, modified: "2026-01-01T00:00:00.000Z", mime: "text/plain", kind: "text" });
-      if (parsed.pathname.endsWith("/fs/file")) return new Response(window.gitScrollCase
-        ? Array.from({ length: window.gitScrollVirtual ? 2500 : 200 }, (_, i) => "export const scrollLine" + i + " = '" + "wide source ".repeat(12) + "';").join("\\n") + "\\n"
-        : "export const unchanged = true;\\n", { headers: { "content-type": "text/plain" } });
-      if ((url.includes("/workspace/changes") || url.includes("/workspace/diff")) && response.ok) {
-        const data = await response.json();
-        if (window.gitMarkdownCase && url.includes("/workspace/changes")) {
-          data.files = markdownFiles.map(({ path, status }) => ({ path, status }));
-          data.revision += "-markdown";
-          window.gitMarkdownRoot = data.root;
-        }
-        if (window.gitNested && url.includes("/workspace/changes")) data.files.push({ path: "deep/inside/nested/changed.ts", status: "modified" });
-        if (window.gitRevision) data.revision += "-follow-" + window.gitRevision;
-        if (window.gitLongContext) {
-          data.revision += "-long-context";
-          if (data.path === "src/greeting.ts") {
-            const oldLines = Array.from({ length: 240 }, (_, i) => "export const context" + (i + 1) + " = " + i + ";");
-            const newLines = oldLines.slice();
-            for (const line of [70, 180]) newLines[line - 1] = "export const context" + line + " = updated;";
-            data.old_file.contents = oldLines.join("\\n") + "\\n";
-            data.new_file.contents = newLines.join("\\n") + "\\n";
-            data.patch = "diff --git a/src/greeting.ts b/src/greeting.ts\\n--- a/src/greeting.ts\\n+++ b/src/greeting.ts\\n" + [70, 180].map(line => {
-              const start = line - 23, end = line + 23;
-              return "@@ -" + start + ",47 +" + start + ",47 @@\\n" + oldLines.slice(start - 1, end).map((text, i) => start + i === line ? "-" + text + "\\n+" + newLines[line - 1] : " " + text).join("\\n") + "\\n";
-            }).join("");
-          }
-        }
-        if (url.includes("/workspace/changes") && window.gitEmpty) data.files = [];
-        if (data.path === "src/new.ts") {
-          data.new_file.contents = Array.from({ length: 90 }, (_, i) => "export const line" + i + " = " + (i + (window.gitRevision || 0)) + ";").join("\\n") + "\\n";
-          data.patch = "diff --git a/src/new.ts b/src/new.ts\\nnew file mode 100644\\n--- /dev/null\\n+++ b/src/new.ts\\n@@ -0,0 +1,90 @@\\n" + data.new_file.contents.trimEnd().split("\\n").map(line => "+" + line).join("\\n") + "\\n";
-        }
-        return Response.json(data);
-      }
-      return response;
-    };
-  })();`);
+  installGitDiffFixture(app);
   // A static-only server makes accidental live API access impossible and needs no
   // dist/index.html from another build running concurrently in this checkout.
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(request) {
@@ -594,8 +443,9 @@ try {
         for (const name of ["Compare", "Follow edits", "Open file", "All changes", "Highlight code"]) {
           assert.equal(await dialog.getByRole("button", { name, exact: true }).count(), 0, `${name} is not a Files control`);
         }
-        assert.equal(await dialog.locator(".modal-header").getByRole("button", { name: "Refresh changes", exact: true }).count(), 1, "refresh is in the modal header");
         const header = dialog.locator(".files-dialog-header");
+        if (!mobile) {
+        assert.equal(await dialog.locator(".modal-header").getByRole("button", { name: "Refresh changes", exact: true }).count(), 1, "refresh is in the modal header");
         const wrap = header.getByRole("button", { name: "Wrap long lines", exact: true });
         assert.equal(await wrap.getAttribute("aria-pressed"), "false");
         assert.equal(await header.getByRole("button", { name: "Find files…", exact: true }).locator(".lucide-folder-search").count(), 1, "Find files reuses the folder-search icon");
@@ -620,6 +470,7 @@ try {
             && Math.abs(closeBounds.right - (node.getBoundingClientRect().right - parseFloat(style.paddingRight))) <= 2;
         }), "action groups have visible gaps, are right-aligned, and end with Close");
         assert.ok(await header.getByRole("button").evaluateAll((buttons) => buttons.every((button) => button.getAttribute("aria-label") && button.getAttribute("title"))), "every header icon has a label and tooltip");
+        } else assert.ok((await header.boundingBox())!.height <= 64, "mobile has one compact toolbar");
         if (mobile) {
           await page.setViewportSize({ width: 320, height: 844 });
           await frames(page);
@@ -628,7 +479,7 @@ try {
         }
         assert.equal(await dialog.locator(".modal-body .workspace-file-search, .workspace-file-tools").count(), 0, "there is no separate search toolbar in the body");
         await frames(page);
-        assert.equal(await dialog.getByRole("button", { name: "Find files…", exact: true }).getAttribute("aria-expanded"), "false", "opening Files never opens the finder over its content");
+        assert.equal(await dialog.getByRole("button", { name: "Find files…", exact: true, includeHidden: true }).getAttribute("aria-expanded"), "false", "opening Files never opens the finder over its content");
         if (mobile) {
           assert.equal(await dialog.locator(".changes-navigation").isVisible(), true, "Browse files starts on the phone tree");
           assert.equal(await dialog.locator(".changes-detail").isVisible(), false, "detail does not cover the initial phone tree");
@@ -677,9 +528,9 @@ try {
         await dialog.locator('.file-viewer-embedded [role="region"]').waitFor();
         await dialog.locator(".file-viewer-embedded").getByText("export const unchanged = true;", { exact: false }).first().waitFor();
         await dialog.locator('.source-comments-file [data-line] span[style*="--herdr-code-token"]').first().waitFor();
-        await dialog.locator(".files-dialog-header").getByRole("button", { name: "Wrap long lines", exact: true }).click();
+        await (await fileAction(dialog, "Wrap long lines")).click();
         await dialog.locator('.source-comments-file pre[data-overflow="wrap"]').waitFor();
-        await dialog.locator(".files-dialog-header").getByRole("button", { name: "Wrap long lines", exact: true }).click();
+        await (await fileAction(dialog, "Wrap long lines")).click();
         await dialog.locator('.source-comments-file pre[data-overflow="scroll"]').waitFor();
         if (mobile) {
           for (const width of [390, 320]) {
@@ -705,9 +556,9 @@ try {
           await treeFile(dialog, "src/new.ts").click();
           await section(dialog, "src/new.ts").locator('[data-diff-type="single"]').waitFor();
           const wrap = dialog.locator(".files-dialog-header").getByRole("button", { name: "Wrap long lines", exact: true });
-          await wrap.click();
+          await (await fileAction(dialog, "Wrap long lines")).click();
           assert.equal(await section(dialog, "src/new.ts").locator("pre").getAttribute("data-overflow"), "wrap");
-          await wrap.click();
+          await (await fileAction(dialog, "Wrap long lines")).click();
           assert.equal(await section(dialog, "src/new.ts").locator("pre").getAttribute("data-overflow"), "scroll");
           await checkTouchComments(page, dialog);
           assert.equal(await dialog.evaluate((node) => node.scrollWidth > node.clientWidth), false, "phone dialog does not overflow");
@@ -750,7 +601,7 @@ try {
           assert.equal(await dialog.locator('[data-diff-path]').count(), 2, "scrolling preserves both diff sections");
           await treeFile(dialog, "src/greeting.ts").click();
           await page.evaluate(() => { (window as any).gitRevision = 1; });
-          await dialog.locator(".modal-header").getByRole("button", { name: "Refresh changes", exact: true }).click();
+          await (await fileAction(dialog, "Refresh changes")).click();
           await section(dialog, "src/new.ts").getByText("export const line0 = 1;", { exact: false }).first().waitFor();
           assert.equal(await dialog.locator('[data-diff-path]').count(), 2, "refresh retains the continuous all-changes document");
           await treeFile(dialog, "src/greeting.ts").click();
@@ -779,7 +630,7 @@ try {
           assert.equal(await treeFile(dialog, "src/new.ts").getAttribute("aria-current"), null);
           assert.equal(await field(dialog).inputValue(), "Preserve this draft", "refused Reveal preserves the draft");
           const requests = await page.evaluate(() => (window as any).gitRequests.length);
-          await dialog.getByRole("button", { name: "Refresh changes", exact: true }).click();
+          await (await fileAction(dialog, "Refresh changes")).click();
           await browserLayout.getByRole("button", { name: "Unified", exact: true }).click();
           assert.equal(await section(dialog).locator('[data-diff-type]').getAttribute("data-diff-type"), "split", "dirty editor blocks layout changes");
           await dialog.getByRole("button", { name: "Close files", exact: true }).click();
@@ -861,7 +712,7 @@ try {
         await treeFile(scrolling, "src/greeting.ts").click();
         await checkStickyReveal(page, scrolling, mobile);
         for (const name of mobile ? ["Unified"] : ["Split", "Unified"]) {
-          await scrolling.locator(".modal-header").getByRole("group", { name: "Diff layout", exact: true }).getByRole("button", { name, exact: true }).click();
+          if (!mobile) await scrolling.locator(".modal-header").getByRole("group", { name: "Diff layout", exact: true }).getByRole("button", { name, exact: true }).click();
           await section(scrolling).locator(`[data-diff-type="${name === "Split" ? "split" : "single"}"]`).waitFor();
           const sourceLine = number(section(scrolling), "old", 180);
           await sourceLine.waitFor();
@@ -936,7 +787,7 @@ try {
         // An empty repository uses the same response contract, mocked only in this page.
         await page.evaluate(() => { (window as any).gitEmpty = true; });
         const empty = await openChanges(page);
-        await empty.getByRole("button", { name: "Compare with…", exact: true }).click();
+        await (await fileAction(empty, "Compare with…")).click();
         await empty.getByRole("option", { name: "Working changes", exact: true }).click();
         await empty.getByText("No changes in this comparison.", { exact: true }).waitFor({ state: "attached" });
         assert.equal(await empty.locator("[data-diff-path]").count(), 0);
@@ -967,9 +818,9 @@ try {
         const findButton = quick.getByRole("button", { name: "Find files…", exact: true });
         const findPalette = page.getByRole("dialog", { name: "Find files…", exact: true });
         const finder = findPalette.getByRole("combobox", { name: "Find files…", exact: true });
-        await quick.locator(".modal-header").getByRole("group", { name: "Diff layout", exact: true }).waitFor();
+        await quick.locator(".files-dialog-header").waitFor();
         const layout = quick.locator(".changes-layout");
-        await findButton.click();
+        await (await fileAction(quick, "Find files…")).click();
         await sheetsSettled(page);
         await page.waitForFunction(() => document.querySelector(".files-dialog")?.getAnimations().every((animation) => animation.playState !== "running"));
         await frames(page);
@@ -1005,7 +856,7 @@ try {
         const layoutClosed = await layout.boundingBox();
         assert.ok(layoutClosed && Math.abs(layoutClosed.y - layoutBefore.y) <= 1 && Math.abs(layoutClosed.height - layoutBefore.height) <= 1, "closing the result overlay does not shift the browser content");
         await page.evaluate(() => { (window as any).gitManySearchResults = false; });
-        await findButton.click();
+        await (await fileAction(quick, "Find files…")).click();
         await finder.fill("greeting");
         await findPalette.getByRole("option", { name: "src/greeting.ts", exact: true }).waitFor();
         await page.keyboard.press("Enter");
@@ -1016,7 +867,7 @@ try {
         await findPalette.getByText("No matches", { exact: true }).waitFor();
         await page.keyboard.press("Escape");
         assert.ok(await quick.isVisible(), "Escape dismisses search results without closing Files");
-        await findButton.click();
+        await (await fileAction(quick, "Find files…")).click();
         await finder.waitFor();
         await page.keyboard.press("Escape");
         await frames(page);
@@ -1024,8 +875,8 @@ try {
         assert.ok(beforeCompare);
         const diffTop = await quick.locator(".changes-detail").evaluate((node) => node.scrollTop);
         await page.evaluate(() => { (window as any).gitManyCommitResults = true; });
-        const compareButton = quick.locator(".modal-header").getByRole("button", { name: "Compare with…", exact: true });
-        await compareButton.click();
+        const compareButton = quick.locator(".modal-header").getByRole("button", { name: "Compare with…", exact: true, includeHidden: true });
+        await (await fileAction(quick, "Compare with…")).click();
         const commitList = quick.getByRole("listbox", { name: "Search commits…", exact: true });
         await commitList.getByRole("option").nth(12).waitFor({ state: "attached" });
         assert.equal(await quick.locator(".modal-header .commit-picker").evaluate((node) => getComputedStyle(node).position), "absolute", "the commit picker floats from the header");
@@ -1040,16 +891,17 @@ try {
         assert.equal(await commitList.getByRole("option").nth(6).getAttribute("aria-selected"), "true");
         assert.ok(await commitList.evaluate((node) => node.scrollTop) > 0);
         assert.equal(await quick.locator(".changes-detail").evaluate((node) => node.scrollTop), diffTop, "commit navigation scrolls only its results");
-        await compareButton.click();
+        if (mobile) await page.keyboard.press("Escape");
+        else await compareButton.click();
         await quick.locator(".commit-picker").waitFor({ state: "detached" });
         assert.equal(await compareButton.getAttribute("aria-expanded"), "false", "the trigger toggles the overlay closed");
-        await compareButton.click();
+        await (await fileAction(quick, "Compare with…")).click();
         await quick.getByRole("combobox", { name: "Search commits…", exact: true }).waitFor();
         await page.keyboard.press("ControlOrMeta+p");
         await quick.locator(".commit-picker").waitFor({ state: "detached" });
         assert.equal(await finder.evaluate((node) => node === document.activeElement), true, "Mod+P dismisses comparison and focuses file search");
         await page.keyboard.press("Escape");
-        await compareButton.click();
+        await (await fileAction(quick, "Compare with…")).click();
         await quick.getByRole("combobox", { name: "Search commits…", exact: true }).waitFor();
         await quick.locator(".files-dialog-header").click({ position: { x: 4, y: 24 } });
         await quick.locator(".commit-picker").waitFor({ state: "detached" });
@@ -1072,9 +924,9 @@ try {
         assert.equal(await quick.locator("[data-diff-path]").count(), 1, "a file context comparison renders only that file");
         const selectedBase = await compareButton.getAttribute("data-base-commit");
         assert.ok((await compareButton.getAttribute("title"))?.includes(selectedBase!), "applied comparison is available in the icon tooltip");
-        assert.equal((await quick.locator(".files-dialog-header").innerText()).trim(), "Files", "historical comparisons retain the browser title");
+        if (!mobile) assert.equal((await quick.locator(".files-dialog-header").innerText()).trim(), "Files", "historical comparisons retain the browser title");
         assert.match(selectedBase!, /^[a-f0-9]{40,64}$/);
-        await quick.getByRole("button", { name: "Compare with…", exact: true }).click();
+        await (await fileAction(quick, "Compare with…")).click();
         await quick.locator(".commit-picker-subject").first().waitFor();
         await quick.locator(".commit-picker-option").nth(1).click();
         await page.waitForFunction(() => document.querySelectorAll("[data-diff-path]").length > 1);
@@ -1105,53 +957,54 @@ try {
           assert.equal(await row.getAttribute("data-status"), file.status);
           await row.click();
           await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
-          assert.equal(await preview.getAttribute("aria-pressed"), "true", `${file.status}: ordinary browsing renders Markdown Preview`);
-          assert.equal(await diff.getAttribute("aria-pressed"), "false");
+          assert.equal(await fileViewSelected(markdown, "preview"), "true", `${file.status}: ordinary browsing renders Markdown Preview`);
+          assert.equal(await fileViewSelected(markdown, "diff"), "false");
           assert.equal(await markdown.locator(".file-viewer-text, .source-comments-file").count(), 0, "preview is not highlighted Markdown source");
-          await diff.click();
+          await fileView(markdown, "diff");
           await section(markdown, file.path).locator("[data-diff-type]").waitFor();
           await number(section(markdown, file.path), "new", 3).waitFor();
-          assert.equal(await diff.getAttribute("aria-pressed"), "true", "Diff renders real selectable Git lines");
+          assert.equal(await fileViewSelected(markdown, "diff"), "true", "Diff renders real selectable Git lines");
           if (file.status === "modified") {
             await number(section(markdown, file.path), "new", 3).click();
             await field(markdown).waitFor();
             await field(markdown).fill("Keep the Markdown diff draft");
-            await preview.click();
+            await fileView(markdown, "preview");
             await frames(page);
-            assert.equal(await diff.getAttribute("aria-pressed"), "true", "dirty diff draft refuses Preview");
+            assert.equal(await fileViewSelected(markdown, "diff"), "true", "dirty diff draft refuses Preview");
             assert.equal(await field(markdown).inputValue(), "Keep the Markdown diff draft");
-            await markdown.getByRole("button", { name: "Compare with…", exact: true }).click();
+            await (await fileAction(markdown, "Compare with…")).click();
             await markdown.getByRole("option", { name: "Working changes", exact: true }).click();
             assert.equal(await field(markdown).inputValue(), "Keep the Markdown diff draft", "changing the comparison preserves a dirty comment");
             await markdown.locator(".commit-picker").waitFor({ state: "detached" });
             await saveComment(markdown, "Saved Markdown diff note");
           }
-          await preview.click();
+          await fileView(markdown, "preview");
           await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
           if (file.status === "modified") {
-            await diff.click();
+            await fileView(markdown, "diff");
             await section(markdown, file.path).getByText("Saved Markdown diff note", { exact: true }).waitFor();
-            await preview.click();
+            await fileView(markdown, "preview");
             await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
           }
           const browserEntry = await page.evaluate(() => history.state);
-          await markdown.getByRole("button", { name: "Close file", exact: true }).click();
+          await (await fileAction(markdown, "Close file")).click();
           await markdown.locator(".file-viewer-embedded").waitFor({ state: "detached" });
           assert.ok(await markdown.isVisible(), "Close file leaves the Files browser open");
           assert.ok(await markdown.locator(".workspace-file-tree").isVisible(), "Close file returns to file navigation on desktop and phone");
           assert.equal(await markdown.locator('.workspace-tree-row[aria-current="true"]').count(), 0, "the closed document is no longer selected");
           assert.equal(await modes.count(), 0, "a closed Markdown document has no Preview/Diff controls");
+          await page.waitForFunction(entry => JSON.stringify(history.state) === JSON.stringify(entry), browserEntry);
           assert.deepEqual(await page.evaluate(() => history.state), browserEntry, "closing only a document preserves the browser's Back entry");
           if (!mobile) await markdown.getByText("Select a file to view.", { exact: true }).waitFor();
-          await markdown.getByRole("button", { name: "Refresh changes", exact: true }).click();
+          await (await fileAction(markdown, "Refresh changes")).click();
           await frames(page);
           assert.equal(await markdown.locator(".file-viewer-embedded, .changes-markdown-mode, [data-diff-path]").count(), 0, "refresh does not reopen or reselect a closed document");
           await row.click();
           await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
           if (file.status === "modified") {
-            await diff.click();
+            await fileView(markdown, "diff");
             await section(markdown, file.path).getByText("Saved Markdown diff note", { exact: true }).waitFor();
-            await preview.click();
+            await fileView(markdown, "preview");
             await markdown.locator(".file-viewer-markdown").getByRole("heading", { name: file.heading, exact: true }).waitFor();
           }
           if (mobile) await markdown.getByRole("button", { name: "Back to files", exact: true }).click();
@@ -1163,7 +1016,7 @@ try {
         await field(section(reopened, "docs/modified.md")).waitFor();
         assert.equal(await field(reopened).inputValue(), "Saved Markdown diff note", "comment navigation opens the requested editor");
         await page.waitForFunction(() => document.activeElement?.matches(".diff-comment-editor textarea") === true);
-        assert.equal(await reopened.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Diff", exact: true }).getAttribute("aria-pressed"), "true", "composer comment navigation forces Diff rather than browse Preview");
+        assert.equal(await fileViewSelected(reopened, "diff"), "true", "composer comment navigation forces Diff rather than browse Preview");
         await reopened.getByRole("button", { name: "Close files", exact: true }).click();
         // A still-inventory file whose diff fails must keep its saved comment editable.
         await page.evaluate(() => { (window as any).gitDiffFailure = true; });
@@ -1176,13 +1029,13 @@ try {
 
         await openPaneChanges();
         const explicit = page.getByRole("dialog", { name: "Files", exact: true });
-        await explicit.getByRole("button", { name: "Compare with…", exact: true }).click();
+        await (await fileAction(explicit, "Compare with…")).click();
         await explicit.getByRole("option", { name: "Working changes", exact: true }).click();
         if (mobile) await explicit.getByRole("button", { name: "Back to files", exact: true }).click();
         if (await treeFile(explicit, "docs").getAttribute("aria-expanded") !== "true") await treeFile(explicit, "docs").click();
         await treeFile(explicit, "docs/added.md").click();
         await section(explicit, "docs/added.md").locator("[data-diff-type]").waitFor();
-        assert.equal(await explicit.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Diff", exact: true }).getAttribute("aria-pressed"), "true", "an explicit comparison keeps changed Markdown in Diff");
+        assert.equal(await fileViewSelected(explicit, "diff"), "true", "an explicit comparison keeps changed Markdown in Diff");
         await explicit.getByRole("button", { name: "Close files", exact: true }).click();
 
         // A plain source file's comments remain separate from Markdown diff cards.
@@ -1217,12 +1070,12 @@ try {
           }
         }
         // Inline source drafts protect Close file on desktop and phone alike.
-        await sourceDialog.getByRole("button", { name: "Close file", exact: true }).click();
+        await (await fileAction(sourceDialog, "Close file")).click();
         assert.ok(await sourceDialog.locator(".file-viewer-embedded").isVisible(), "an unsaved source comment keeps the document open");
         assert.equal(await field(sourceDialog).inputValue(), "Saved ordinary source note", "Close file preserves the unsaved draft");
         await saveComment(sourceDialog, "Saved ordinary source note");
         await sourceDialog.locator(".diff-comment-card").filter({ hasText: "Saved ordinary source note" }).waitFor();
-        await sourceDialog.getByRole("button", { name: "Close file", exact: true }).click();
+        await (await fileAction(sourceDialog, "Close file")).click();
         await sourceDialog.locator(".file-viewer-embedded").waitFor({ state: "detached" });
         assert.ok(await sourceDialog.isVisible(), "closing a plain source file also preserves its browser");
         assert.ok(await sourceDialog.locator(".workspace-file-tree").isVisible());
@@ -1274,9 +1127,16 @@ try {
         await page.goto(deepLink.href);
         const linked = page.getByRole("dialog", { name: "Files", exact: true });
         await linked.locator(".file-viewer-markdown").getByRole("heading", { name: "Modified guide", exact: true }).waitFor();
-        assert.equal(await linked.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Preview", exact: true }).getAttribute("aria-pressed"), "true", "ordinary pane/file deep link defaults to rendered Preview");
+        assert.equal(await fileViewSelected(linked, "preview"), "true", "ordinary pane/file deep link defaults to rendered Preview");
 
         await checkNestedPickers(page, linked, mobile, true);
+        if (mobile) {
+          await linked.getByRole("button", {name:"More", exact:true}).click();
+          await linked.getByRole("button", {name:"Close files", exact:true}).focus();
+          await page.keyboard.press("Enter");
+          await linked.waitFor({state:"detached"});
+          assert.ok(!await page.evaluate(() => history.state?.["ovis:file-preview"]), "Close consumes both More and the linked file entry");
+        }
 
         // Refuse parsing in a fresh document so a cached successful parse cannot
         // hide the worker failure. Highlight/diff workers still run normally.
@@ -1290,7 +1150,7 @@ try {
         assert.match((await sourceRows(refused).allTextContents()).join("\n"), /# Modified guide/);
         assert.equal(await refused.locator(".file-viewer-markdown").count(), 0, "parser refusal shows source, not an empty preview");
         assert.ok(await page.evaluate(() => (window as any).gitMarkdownRefusals > 0), "Markdown worker actually refused a parse");
-        await refused.getByRole("group", { name: "Markdown view", exact: true }).getByRole("button", { name: "Diff", exact: true }).click();
+        await fileView(refused, "diff");
         await section(refused, "docs/modified.md").locator("[data-diff-type]").waitFor();
         assert.deepEqual(errors, [], "Markdown intents, comments and parser refusal have no browser exceptions");
         console.log(`PASS Git Markdown: ${mobile ? "phone" : "desktop"} browse/deep-link Preview, changes/comment Diff, dirty guard, saved comments and explicit parser fallback`);

@@ -122,6 +122,8 @@ const BASE: Record<string, string> = {
   "On, pushed to this device": "已开启，推送到此设备",
   "Alerts on, pushed to this device, even with the app closed. Tap to turn them off": "提醒已开启，推送到此设备。即使关闭应用也会收到。点按可关闭",
   "Off on this device": "此设备已关闭",
+  "File view": "文件视图",
+  "Source": "源代码",
   "More": "更多",
   "More · alerts are off": "更多 · 提醒已关闭",
   "Alerts off on this device. Tap to turn them on": "此设备上的提醒已关闭。点按可开启",

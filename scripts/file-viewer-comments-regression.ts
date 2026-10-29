@@ -1,3 +1,4 @@
+import { fileAction, fileView } from "./files-controls.ts";
 /** Working-file comments use the same gutter/inline editor interaction as Git diffs.
  * Real client + fictional demo files only; never touches herdr. Run:
  *   bun scripts/file-viewer-comments-regression.ts
@@ -202,7 +203,7 @@ async function checkSource(page: Page, files: Locator, mobile: boolean): Promise
   await field(files).fill("Keep equal revisions safe.");
   for (const close of [
     () => editor(files).getByRole("button", { name: "Close comment", exact: true }).click(),
-    () => files.getByRole("button", { name: "Close file", exact: true }).click(),
+    async () => (await fileAction(files, "Close file")).click(),
     () => files.getByRole("button", { name: "Close files", exact: true }).click(),
     () => page.keyboard.press("Escape"),
   ]) {
@@ -218,7 +219,7 @@ async function checkSource(page: Page, files: Locator, mobile: boolean): Promise
   assert.equal((await counter.locator(".file-viewer-comments-count").innerText()).trim(), "2");
   const visited = new Set<string>();
   for (let i = 0; i < 2; i++) {
-    await counter.click(); await field(files).waitFor();
+    await (await fileAction(files, (await counter.getAttribute("aria-label"))!)).click(); await field(files).waitFor();
     visited.add(await field(files).inputValue());
     await editor(files).getByRole("button", { name: "Close comment", exact: true }).click();
     await editor(files).waitFor({ state: "detached" });
@@ -249,7 +250,7 @@ async function checkMarkdown(page: Page, files: Locator, mobile: boolean): Promi
   assert.deepEqual(note.quoteLines, ["Keep the newest revision."]);
   assert.ok(note.selection, "preview retains the selected text coordinates");
   await page.waitForFunction(() => (CSS.highlights.get("block-comment")?.size ?? 0) > 0);
-  await files.locator(".file-viewer-comments").click();
+  await (await fileAction(files, (await files.locator(".file-viewer-comments").getAttribute("aria-label"))!)).click();
   assert.equal(await files.locator(".file-viewer-markdown").count(), 1, "comment navigation keeps rendered Markdown visible");
   assert.equal(await field(files).inputValue(), note.comment);
   await editor(files).getByRole("button", { name: "Close comment", exact: true }).click();
@@ -259,7 +260,7 @@ async function checkMarkdown(page: Page, files: Locator, mobile: boolean): Promi
   await editor(files).getByRole("button", { name: "Delete comment", exact: true }).click();
   assert.equal((await stored(page)).length, 1, "preview delete preserves source notes");
   await page.evaluate(() => window.getSelection()?.removeAllRanges());
-  await files.getByRole("button", { name: "Show source", exact: true }).click();
+  await fileView(files, "source");
   await number(files, 3).click();
   await assertRange(files, 3);
   await save(files, "Explain how conflicts are retried.");
@@ -284,7 +285,7 @@ async function checkLarge(page: Page, files: Locator, mobile: boolean): Promise<
   }
   await files.locator(".virtual-source-scroll").evaluate((node) => { node.scrollTop = node.scrollHeight; });
   await frames(page);
-  await files.locator(".file-viewer-comments").click();
+  await (await fileAction(files, (await files.locator(".file-viewer-comments").getAttribute("aria-label"))!)).click();
   await field(files).waitFor();
   assert.equal(await field(files).inputValue(), "Keep the virtual source range.", "counter reveals a saved virtual annotation after scrolling away");
   assert.ok(await field(files).isVisible());
