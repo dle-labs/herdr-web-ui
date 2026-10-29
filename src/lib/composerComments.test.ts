@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { outgoingMessage, type BlockComment } from "./blockComments.ts";
 import { composerFileComments } from "./composerComments.ts";
 import { fileAnchor, type FileComment } from "./fileComments.ts";
-import { parseMarkdown } from "./markdown.ts";
+import { parseMarkdown } from "../../shared/markdown.ts";
 
 const legacy: BlockComment = { id: "old-reply", anchor: "turn:0:0", block: parseMarkdown("Old reply")[0]!, order: [1, 0, 0], comment: "Do not send this." };
 const file: FileComment = {

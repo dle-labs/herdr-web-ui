@@ -11,7 +11,7 @@
  * geometry is lib/commentPins.ts.
  */
 import type { CommentTarget, PartLookup } from "./blockComments.ts";
-import type { MarkdownBlock } from "./markdown.ts";
+import type { MarkdownBlock } from "../../shared/markdown.ts";
 import { PINS_SELECTOR } from "./commentDom.ts";
 import { pointIn, unionBox, type CommentPoint, type PinBox } from "./commentPins.ts";
 
