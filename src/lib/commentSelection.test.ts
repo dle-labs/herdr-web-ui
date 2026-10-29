@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { restoreFocusTarget, selectionListMarker, sliceText, spanText } from "./commentSelection.ts";
-import { parseMarkdown } from "./markdown.ts";
+import { parseMarkdown } from "../../shared/markdown.ts";
 
 describe("sliceText", () => {
   it("takes the characters start–end across the text units", () => {

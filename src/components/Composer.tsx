@@ -1014,7 +1014,7 @@ export function Composer({
   }, [agent, connected, draftKey, sending]);
   const sendQuick = useCallback((reply: string) => sendBeside(() => onSend(reply)), [onSend, sendBeside]);
   /** Send it: the terminal draft a DraftRefusal named goes as it is, as Clear it and send with the draft for the message. */
-  const sendDraft = useCallback((draft: string) => sendBeside(() => onSend(draft, draft), draft), [onSend, sendBeside]);
+  const sendDraft = useCallback((draft: string) => sendBeside(() => onSend(draft, { clearDraft: draft }), draft), [onSend, sendBeside]);
 
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
