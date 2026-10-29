@@ -2,7 +2,7 @@ import { createContext, useSyncExternalStore } from "react";
 import { isSlashCommand, MAX_COMPOSER_CHARS, SELECTION_QUOTE_MAX } from "./compose.ts";
 import { fileAnchor, fileCommentAt, fileQuote, isFileComment, sortFileComments, type FileComment, type FileTarget, type LineRange } from "./fileComments.ts";
 import { isCommentPoint, type CommentPoint } from "./commentPins.ts";
-import type { InlineNode, ListBlock, MarkdownBlock } from "./markdown.ts";
+import type { InlineNode, ListBlock, MarkdownBlock } from "../../shared/markdown.ts";
 
 /**
  * Comments on single blocks of an agent's final reply. This module owns what a comment is: how a

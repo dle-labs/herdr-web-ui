@@ -1,6 +1,6 @@
 import { isCommentPoint, type CommentPoint } from "./commentPins.ts";
 import { SELECTION_QUOTE_MAX } from "./compose.ts";
-import type { SourceLines } from "./markdown.ts";
+import type { SourceLines } from "../../shared/markdown.ts";
 
 /**
  * Comments on lines of a file in the file viewer. This module owns what such a comment is: how it
