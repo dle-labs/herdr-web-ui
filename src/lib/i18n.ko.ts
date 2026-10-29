@@ -344,6 +344,7 @@ const BASE: Record<string, string> = {
   "Binary files cannot be displayed as a text diff.": "바이너리 파일은 텍스트 비교로 표시할 수 없습니다.",
   "Close comment": "댓글 닫기",
   "Comment": "코멘트",
+  "Quoted text": "인용한 텍스트",
   "Delete comment": "댓글 삭제",
   "Discard comment": "댓글 버리기",
   "File diff": "파일 비교",

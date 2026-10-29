@@ -498,7 +498,7 @@ function ChatPage() {
       </SettingsGroup>
 
       <SettingsGroup title={t("File viewer")}>
-        <SettingsRow label={t("Comments")} description={t("Comment on files using line numbers in the source or diff view. Turning this off deletes every comment on this device.")}>
+        <SettingsRow label={t("Comments")} description={t("Comment on settled agent replies and files. Turning this off deletes every comment on this device.")}>
           <Toggle label={t("Comments")} checked={settings.comments} onChange={setComments} buttonRef={commentsToggle} />
         </SettingsRow>
         <SettingsRow label={t("Show Browse files shortcut")} description={t("The folder button appears beside the composer controls. Browse files stays available in the menu.")}>

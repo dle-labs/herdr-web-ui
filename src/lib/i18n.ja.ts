@@ -346,6 +346,7 @@ const BASE: Record<string, string> = {
   "Binary files cannot be displayed as a text diff.": "バイナリファイルはテキスト差分として表示できません。",
   "Close comment": "コメントを閉じる",
   "Comment": "コメント",
+  "Quoted text": "引用テキスト",
   "Delete comment": "コメントを削除",
   "Discard comment": "コメントを破棄",
   "File diff": "ファイル差分",

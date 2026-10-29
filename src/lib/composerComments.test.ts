@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { outgoingMessage, type BlockComment } from "./blockComments.ts";
-import { composerFileComments } from "./composerComments.ts";
+import { composerComments } from "./composerComments.ts";
 import { fileAnchor, type FileComment } from "./fileComments.ts";
 import { parseMarkdown } from "../../shared/markdown.ts";
 
@@ -12,20 +12,20 @@ const file: FileComment = {
 file.anchor = fileAnchor(file);
 
 describe("composer file comments", () => {
-  it("ignores old reply notes for counts, navigation and outgoing messages", () => {
-    const comments = composerFileComments([legacy, file]);
-    expect(comments).toEqual([file]);
+  it("keeps reply and file notes together in outgoing messages", () => {
+    const comments = composerComments([legacy, file]);
+    expect(comments).toEqual([legacy, file]);
     const outgoing = outgoingMessage(comments, "Please review", { answering: false, agent: true });
-    expect(outgoing.sentIds).toEqual([file.id]);
-    expect(outgoing.sent).toEqual([file]);
-    expect(composerFileComments([legacy])).toEqual([]);
-    expect(outgoingMessage(composerFileComments([legacy]), "", { answering: false, agent: true }).sendable).toBe(false);
+    expect(outgoing.sentIds).toEqual([legacy.id, file.id]);
+    expect(outgoing.sent).toEqual([legacy, file]);
+    expect(composerComments([legacy])).toEqual([legacy]);
+    expect(outgoingMessage(composerComments([legacy]), "", { answering: false, agent: true }).sendable).toBe(true);
   });
 
   it("retains old Preview notes but holds all file comments away from shells, answers and commands", () => {
     const preview: FileComment = { ...file, id: "preview-note", view: "preview" };
-    const comments = composerFileComments([legacy, preview]);
-    expect(comments).toEqual([preview]);
+    const comments = composerComments([legacy, preview]);
+    expect(comments).toEqual([legacy, preview]);
     for (const [text, options, reason] of [
       ["Hello", { answering: false, agent: false }, "no-agent"],
       ["Yes", { answering: true, agent: true }, "answer"],

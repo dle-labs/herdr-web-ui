@@ -7,7 +7,7 @@ import { OpenFileContext } from "../lib/filePaths.ts";
 import { parseMarkdownWithLines } from "../../shared/markdown.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 
-describe("Markdown without reply commenting", () => {
+describe("Markdown reply commenting", () => {
   let languages: PropertyDescriptor | undefined;
   beforeEach(() => {
     languages = Object.getOwnPropertyDescriptor(navigator, "languages");
@@ -17,7 +17,7 @@ describe("Markdown without reply commenting", () => {
     if (languages) Object.defineProperty(navigator, "languages", languages);
     else Reflect.deleteProperty(navigator, "languages");
   });
-  it("leaves chat text, code copying and file links intact even under a legacy reply context", () => {
+  it("leaves chat text, code copying and file links intact under a reply context", () => {
     const html = renderToStaticMarkup(createElement(SettingsProvider, { children:
       createElement(BlockCommentContext.Provider, { value: replyPart("pane", null, 0, 0), children:
         createElement(OpenFileContext.Provider, { value: () => {}, children:
@@ -28,8 +28,8 @@ describe("Markdown without reply commenting", () => {
     expect(html).toContain("Answer");
     expect(html).toContain("markdown-file");
     expect(html).toContain("markdown-code-copy");
-    expect(html).not.toContain("data-comment-root");
-    expect(html).not.toContain("is-commentable");
+    expect(html).toContain("data-comment-root");
+    expect(html).toContain("is-commentable");
     expect(html).not.toContain("is-commented");
   });
 

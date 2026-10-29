@@ -38,12 +38,17 @@
   font-size: var(--fs-md);
 }
 
-.chat-frame.chat-surface-layout {
+.chat-surface-layout {
   position: absolute;
   inset: 0;
   /* up under a phone's glass header (styles.css), into the room the stack keeps for it */
   top: calc(-1 * var(--header-over, 0px));
   z-index: 1;
+}
+
+.chat-surface-layout > .chat-frame {
+  position: relative;
+  flex: 1 1 auto;
 }
 
 .chat-view {

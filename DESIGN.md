@@ -2188,9 +2188,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   its own box.
   Thinking renders as a folded block only when **Show thinking** is enabled.
 - Comments are enabled per device by **Settings → Chat → Comments** (default on), only in
-  pane-owned source and Git diff viewers. Chat messages have no comment gestures, pins or
-  highlights; selecting and copying chat text stays native. Legacy reply comments are not counted,
-  navigated or sent by the composer.
+  settled agent replies and pane-owned source and Git diff viewers. Reply blocks offer comments
+  by click or text selection, with highlights and pins; native selection and copying remain
+  available. Saved reply and file comments are counted, navigated and sent by the composer.
   - Turning Comments off confirms **Turn off and delete** when comments exist, then clears all
     panes' stored comments on this device, propagating to other tabs, and closes editors. Cancel
     leaves it enabled; with no comments it disables immediately. Pending message snapshots remain.
@@ -2222,7 +2222,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
     it and allow editing through an outdated card explaining why it cannot be placed inline.
   - The file header's comment counter walks in send order, reveals source lines and opens the
     selected comment; outdated cards remain reachable. Only the composer sends comments.
-  - Composer counts and navigation include file comments only, in send order. Opening a file
+  - Composer counts and navigation include reply comments followed by file comments in send order. Opening a file
     preserves its target; its counter continues the walk while the composer is covered. Closing
     it resumes after the last visited file comment, remembered in memory.
   - Outgoing file quotes are grouped by first-comment file order, then line and selection start.
@@ -2745,14 +2745,17 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
     text. **Waits** (`is-waiting`): dim icon and `3 comments waiting` for commands, prompt answers
     or no agent; the reason is included in the accessible name and tooltip, not color alone.
   - The sentence is a full-height walk button, named by that sentence and titled **Go to the next
-    comment**. It cycles this pane's file comments, opening source lines or outdated cards.
-    Counts include stored file comments and survive reload. A dirty editor
+    comment**. It cycles reply comments, then file comments, opening source lines or outdated cards.
+    Counts include stored reply and file comments and survive reload. A dirty editor
     blocks walking or Send and regains focus without submitting anything.
   - **Remove all comments** is a separate X, kept visible when the sentence ellipsizes. It clears
-    this pane's file comments immediately, without undo or confirmation. Focus returns
+    this pane's reply and file comments immediately, without undo or confirmation. Focus returns
     to the message on hover pointers; on touch it is released without raising the keyboard.
     Send has no badge: only its name/tooltip includes this send's comment count, never waiting
-    comments. Legacy reply comments never enter the bar or outgoing message.
+    comments. Reply comments remain available on settled agent answers: click a block or select text and
+    choose Comment. The existing Claude-inspired editor opens saved notes for editing; replies
+    outside loaded history remain reachable from the bar. Live answers and user messages do not
+    accept comments. Reply and file comments accompany the next explicit send to the agent.
 - Not connected, the one word `Reconnecting…` (`Connecting…` before this page's first connection to
   the PC's socket) is the placeholder while the box is empty and moves into the status content once
   there is a draft (`composerStatusHint`), on a phone too; it says no more (nothing is queued, and

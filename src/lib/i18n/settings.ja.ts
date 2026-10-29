@@ -322,7 +322,7 @@ export const SETTINGS_JA: Record<string, string> = {
   "Agent integrations": "エージェント連携",
   "Show Browse files shortcut": "ファイル参照のショートカットを表示",
   "The folder button appears beside the composer controls. Browse files stays available in the menu.": "入力欄の操作ボタンの横にフォルダボタンを表示します。メニューのファイル参照は引き続き利用できます。",
-  "Comment on files using line numbers in the source or diff view. Turning this off deletes every comment on this device.": "ソースまたは差分表示の行番号からファイルにコメントできます。オフにすると、このデバイスのコメントがすべて削除されます。",
+  "Comment on settled agent replies and files. Turning this off deletes every comment on this device.": "完了したエージェントの回答やファイルにコメントできます。オフにすると、このデバイスのコメントがすべて削除されます。",
   "Comments": "コメント",
   "Delete 1 comment?": "コメント 1 件を削除しますか？",
   "Delete {count} comments?": "コメント {count} 件を削除しますか？",

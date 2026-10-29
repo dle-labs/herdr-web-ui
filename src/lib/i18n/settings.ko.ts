@@ -322,7 +322,7 @@ export const SETTINGS_KO: Record<string, string> = {
   "Agent integrations": "에이전트 통합",
   "Show Browse files shortcut": "파일 찾아보기 바로가기 표시",
   "The folder button appears beside the composer controls. Browse files stays available in the menu.": "작성기 컨트롤 옆에 폴더 버튼을 표시합니다. 메뉴에서는 계속 파일 찾아보기를 사용할 수 있습니다.",
-  "Comment on files using line numbers in the source or diff view. Turning this off deletes every comment on this device.": "소스 또는 변경 사항 보기의 줄 번호로 파일에 댓글을 달 수 있습니다. 끄면 이 기기의 모든 댓글이 삭제됩니다.",
+  "Comment on settled agent replies and files. Turning this off deletes every comment on this device.": "완료된 에이전트 답변과 파일에 댓글을 달 수 있습니다. 끄면 이 기기의 모든 댓글이 삭제됩니다.",
   "Comments": "댓글",
   "Delete 1 comment?": "댓글 1개를 삭제할까요?",
   "Delete {count} comments?": "댓글 {count}개를 삭제할까요?",
