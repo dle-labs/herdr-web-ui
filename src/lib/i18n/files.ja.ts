@@ -25,7 +25,6 @@ export const FILES_JA: Record<string, string> = {
   "This file can't be previewed here. Download it to open it.": "このファイルはここではプレビューできません。開くにはダウンロードしてください。",
   "Show the HTML file as": "HTML ファイルの表示",
   "Page": "ページ",
-  "Source": "ソース",
   "Too long to highlight": "長すぎるため構文ハイライトを省略しました",
   "Too long to preview": "長すぎるためプレビューを省略しました",
   "Line {line} is past the part of this file shown here. Download it to read the rest.": "{line}行目はプレビューの範囲外です。続きを読むにはダウンロードしてください。",

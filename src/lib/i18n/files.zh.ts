@@ -25,7 +25,6 @@ export const FILES_ZH: Record<string, string> = {
   "This file can't be previewed here. Download it to open it.": "此文件无法在此预览。请下载后打开。",
   "Show the HTML file as": "HTML 文件显示方式",
   "Page": "页面",
-  "Source": "源代码",
   "Too long to highlight": "内容过长，未做语法高亮",
   "Too long to preview": "内容过长，未显示预览",
   "Line {line} is past the part of this file shown here. Download it to read the rest.": "第 {line} 行超出了此文件的预览范围。请下载以阅读其余内容。",

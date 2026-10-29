@@ -118,6 +118,8 @@ const BASE: Record<string, string> = {
   "On, pushed to this device": "켜짐, 이 기기로 푸시",
   "Alerts on, pushed to this device, even with the app closed. Tap to turn them off": "알림 켜짐, 이 기기로 푸시됩니다. 앱을 닫아도 옵니다. 누르면 꺼집니다",
   "Off on this device": "이 기기에서 꺼짐",
+  "File view": "파일 보기",
+  "Source": "소스",
   "More": "더 보기",
   "More · alerts are off": "더 보기 · 알림 꺼짐",
   "Alerts off on this device. Tap to turn them on": "이 기기에서 알림이 꺼져 있습니다. 누르면 켜집니다",

@@ -2184,7 +2184,15 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   with HTML enabled; local images still pass through the file endpoint's image-size check.
   The page has an h1 and no Close or new-tab action; the dialog keeps its focus trap and sheet swipe.
   Actions use the existing header icon-button primitive, labels and focus states. On a phone the
-  name and Close occupy the first row, with actions below; a reader page has no Close.
+  Files dialog covers the app bar and uses one compact row: Back to files, filename, a native
+  Preview/Source/Diff selector where applicable, More and Close. The same row serves source,
+  diffs and native rendered Markdown; secondary actions and metadata live in More. Like Zed's
+  editor toolbar, document controls stay together, adapted here for phone space rather than
+  copied pixels. More closes independently on Escape, outside press or system Back. The filename
+  follows continuous diff scrolling without changing tree selection; Reveal in file tree stays
+  explicit in More. Touch targets remain 44px, safe areas are respected, and coarse-pointer phone
+  landscape uses the same layout. Desktop and the standalone reader page retain their headers;
+  a reader page has no Close.
   A link keeps `--accent` and a file chip reads in `--text-strong` with a dotted underline; both
   underlines are `--text-dim` at rest and both take the accent on hover and focus-visible.
   Code blocks are `--radius-lg` and never scroll inside: one longer than 30 lines opens at its

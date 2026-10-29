@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { FileToolbarContext, MOBILE_FILES_QUERY } from "./MobileFilesToolbar.tsx";
+import { useContext, useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { FolderSearch, GitCompareArrows, FolderInput } from "lucide-react";
 import { WorkspaceFileSearch } from "./WorkspaceFileSearch.tsx";
@@ -106,12 +107,15 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
   searchOpen: boolean; searchActive: boolean; onSearchOpen: () => void; onSearchClose: () => void;
 }) {
   const t = useT();
+  const toolbar = useContext(FileToolbarContext);
   const machineId = useMachineId();
   const { fetchGitChanges, fetchFileInfo } = useMachineApi();
   const { settings } = useSettings();
   const [inventory, setInventory] = useState<GitChangesResponse | null>(null);
   const [path, setPath] = useState<string | null>(initialComment?.diff?.path ?? null);
+  const [visiblePath, setVisiblePath] = useState<string | null>(null);
   const [revealToken, setRevealToken] = useState(0);
+  const [readerSource, setReaderSource] = useState(false);
   const [preview, setPreview] = useState<string | null>(initialComment?.diff ? null : initialPath);
   const [documentClosed, setDocumentClosed] = useState(!initialPath && !initialComment);
   const [comparisonVersion, setComparisonVersion] = useState(0);
@@ -132,7 +136,7 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
   const [loading, setLoading] = useState(false);
   const [jump, setJump] = useState<string | null>(initialComment?.diff?.path ?? null);
   const [queue] = useState(createDiffQueue);
-  const narrow = useMediaQuery("(max-width: 768px)");
+  const narrow = useMediaQuery(MOBILE_FILES_QUERY);
   const surface = useRef<HTMLDivElement>(null);
   const documentRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -142,14 +146,14 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
       const focused = document.activeElement;
       if (focused instanceof Element && (focused.closest(".comment-popover, .command-palette, .commit-picker, dialog") || focused.closest("[aria-modal='true']") !== surface.current?.closest("[aria-modal='true']"))) return;
       const section = surface.current?.querySelector<HTMLElement>('.changes-diff-section[data-find-owner="true"]');
-      const button = section?.querySelector<HTMLButtonElement>(".diff-find-button");
+      const button = (toolbar?.actions ?? section)?.querySelector<HTMLButtonElement>(".diff-find-button");
       if (!button) return;
       event.preventDefault(); event.stopPropagation();
       if (!button.disabled) button.click();
     };
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
-  }, [keyboardActive, preview, compareTarget, searchOpen]);
+  }, [keyboardActive, preview, compareTarget, searchOpen, toolbar]);
   const canLeave = useCallback(() => {
     const field = changedField(surface.current);
     if (field !== null) { revealField(field); return false; }
@@ -203,6 +207,22 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     const element = [...documentRef.current?.querySelectorAll<HTMLElement>("[data-diff-path]") ?? []].find((node) => node.dataset.diffPath === jump);
     if (element) { element.scrollIntoView({ block: "start" }); setJump(null); }
   }, [jump, inventory, preview, showFile, narrow]);
+  function updateVisiblePath() {
+    const container = documentRef.current;
+    if (!container) return;
+    const bounds = container.getBoundingClientRect();
+    const sections = [...container.querySelectorAll<HTMLElement>("[data-diff-path]")];
+    const intersects = (section: HTMLElement) => {
+      const rect = section.getBoundingClientRect();
+      return rect.bottom > bounds.top + 1 && rect.top < bounds.bottom;
+    };
+    // Several short diffs can fit at once. Keep the explicitly opened file while
+    // it is visible, then follow the first section without selecting a tree row.
+    const selected = sections.find(section => section.dataset.diffPath === path && intersects(section));
+    const visible = selected ?? sections.find(intersects);
+    setVisiblePath(visible?.dataset.diffPath ?? null);
+  }
+  useEffect(() => { updateVisiblePath(); }, [inventory, preview, showFile, narrow, path]);
   function select(absolute: string, intent: WorkspaceFileIntent | "preview" = comparisonActive ? "changes" : initialIntent) {
     if (!canLeave()) return;
     resolvedInitial.current = true;
@@ -213,6 +233,7 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     onShowFile();
     const changed = inventory ? changedWorkspacePath(inventory, absolute) : null;
     const document = inventory ? workspacePreviewPath(inventory, absolute, intent) : absolute;
+    setReaderSource(false);
     setComparisonPath(baseCommit ? changed : null);
     setPreview(document); setPath(changed); setJump(document === null ? changed : null);
   }
@@ -261,13 +282,14 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     target?.focus();
   }, [documentClosed]);
   const root = inventory?.root ?? start;
-  const selectedChanged = preview && inventory ? changedWorkspacePath(inventory, preview) : path;
+  const selectedChanged = preview && inventory ? changedWorkspacePath(inventory, preview) : toolbar ? visiblePath ?? path : path;
   const markdownPath = inventory && selectedChanged ? changedMarkdownPreviewPath(inventory, selectedChanged) : null;
-  function showMarkdown(mode: "preview" | "diff") {
+  function showMarkdown(mode: "preview" | "source" | "diff") {
     if (!markdownPath || !selectedChanged || !canLeave()) return;
     resolvedInitial.current = true;
     setPath(selectedChanged);
-    setPreview(mode === "preview" ? markdownPath : null);
+    setReaderSource(mode === "source");
+    setPreview(mode !== "diff" ? markdownPath : null);
     setJump(mode === "diff" ? selectedChanged : null);
     onShowFile();
   }
@@ -282,11 +304,24 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
       <button type="button" className="icon-button file-compare-button" data-commit-picker-trigger="" data-base-commit={baseCommit} aria-expanded={compareTarget !== undefined}
         aria-label={t("Compare with…")} title={baseCommit ? `${t("Compare with…")} ${baseCommit} → ${t("Working tree")}` : t("Compare with…")}
         onClick={() => setCompareTarget((target) => target === null ? undefined : null)}><GitCompareArrows aria-hidden="true" /></button>
-      {compareTarget !== undefined && <CommitPicker paneId={paneId} label={compareTarget ?? t("All files")} onSelect={compare} onClose={() => setCompareTarget(undefined)} />}
+
     </>, gitToolsHost)}
+    {paneId !== null && compareTarget !== undefined && (toolbar?.overlay ?? gitToolsHost) && createPortal(
+      <CommitPicker paneId={paneId} label={compareTarget ?? t("All files")} onSelect={compare} onClose={() => setCompareTarget(undefined)} />, (toolbar?.overlay ?? gitToolsHost)!)}
+    {toolbar?.document && !preview && !documentClosed && toolbar.title && createPortal(
+      <h2 className="modal-title" title={selectedChanged ?? ""}>{selectedChanged?.split("/").at(-1) ?? t("Files")}</h2>, toolbar.title)}
+    {toolbar?.document && !preview && !documentClosed && toolbar.mode && createPortal(
+      <select className="files-mobile-view" aria-label={t("File view")} value="diff" onChange={(event) => showMarkdown(event.target.value === "source" ? "source" : "preview")} disabled={!markdownPath}>
+        <option value="diff">{t("Diff")}</option>
+        {markdownPath && <><option value="preview">{t("Preview")}</option><option value="source">{t("Source")}</option></>}
+      </select>, toolbar.mode)}
+    {toolbar?.document && !preview && !documentClosed && toolbar.actions && createPortal(<>
+      <div className="files-mobile-info">{selectedChanged}</div>
+      {selectedChanged && <button type="button" className="icon-button" aria-label={t("Reveal in file tree")} onClick={() => revealInTree(selectedChanged)}><FolderInput aria-hidden="true" /></button>}
+    </>, toolbar.actions)}
     {paneId !== null && searchOpen && createPortal(<WorkspaceFileSearch paneId={paneId} refreshToken={refreshToken} keyboardActive={searchActive}
       onSelect={(absolute) => { select(absolute); onSearchClose(); }} onClose={onSearchClose} />, document.body)}
-    {markdownPath !== null && (!narrow || showFile) && <div className="changes-markdown-mode">
+    {!toolbar && markdownPath !== null && (!narrow || showFile) && <div className="changes-markdown-mode">
       <div className="segmented" role="group" aria-label={t("Markdown view")}>
         <button type="button" aria-pressed={preview !== null} onClick={() => showMarkdown("preview")}>{t("Preview")}</button>
         <button type="button" aria-pressed={preview === null} onClick={() => showMarkdown("diff")}>{t("Diff")}</button>
@@ -295,14 +330,15 @@ export default function ChangesView({ paneId, start, connected, initialIntent = 
     <div className="changes-layout">
       <aside className="changes-navigation"><WorkspaceFileTree root={root} paneId={paneId} files={inventory?.files ?? []} refreshToken={refreshToken} revealToken={revealToken} selected={preview ?? (path ? absolutePath(root, path) : null)} onSelect={select} onCompare={paneId === null ? undefined : (relative) => setCompareTarget(relative)} /></aside>
       {/* Scrolling a comment into view (or collapsing it after Save) is not file navigation. */}
-      <div className="changes-detail" ref={documentRef} aria-label={t("File diff")}>
+      <div className="changes-detail" ref={documentRef} onScroll={toolbar ? updateVisiblePath : undefined} aria-label={t("File diff")}>
         {documentClosed ? <p className="changes-note" role="status">{t("Select a file to view.")}</p> : preview ? <FileViewer key={`${readerPath}:${refreshToken}`} keyboardActive={keyboardActive} path={readerPath!} paneId={paneId} machineId={machineId} paneFolder={start} connected={connected}
+          initialMode={readerSource ? "code" : undefined} onShowDiff={markdownPath ? () => showMarkdown("diff") : undefined}
           commentId={!initialRequestActive || initialComment?.diff ? null : initialComment?.id ?? initialCommentId} onOpen={(absolute) => select(absolute, "preview")} onClose={closeDocument} /> : <>
           {loading && !inventory && <p className="changes-note" role="status">{t("Loading…")}</p>}
           {error !== null && <p className="changes-note" role="alert">{error}</p>}
           {inventory && (inventory.files.length === 0 || comparisonPath !== null && !inventory.files.some((file) => file.path === comparisonPath || file.old_path === comparisonPath)) && <p className="changes-note" role="status">{t("No changes in this comparison.")}</p>}
           <WorkerPoolContextProvider poolOptions={poolOptions} highlighterOptions={highlighterOptions}>
-            {paneId !== null && owner !== null && inventory?.files.filter((file) => comparisonPath === null || file.path === comparisonPath || file.old_path === comparisonPath).map((file, index) => <DiffSection key={`${owner}:${inventory.root}:${inventory.revision}:${file.path}`} paneId={paneId} inventory={inventory} path={file.path} owner={owner} connected={connected} split={settings.diffStyle === "split" && !narrow} findActive={path === file.path || path === null && index === 0} keyboardActive={keyboardActive && compareTarget === undefined && !searchOpen} scrollRoot={documentRef} queue={queue} initialId={initialRequestActive && (file.path === initialComment?.diff?.path || file.old_path === initialComment?.diff?.path) ? initialComment?.id : undefined} selected={path === file.path} onActive={setPath} onReveal={revealInTree} />)}
+            {paneId !== null && owner !== null && inventory?.files.filter((file) => comparisonPath === null || file.path === comparisonPath || file.old_path === comparisonPath).map((file, index) => <DiffSection key={`${owner}:${inventory.root}:${inventory.revision}:${file.path}`} paneId={paneId} inventory={inventory} path={file.path} owner={owner} connected={connected} split={settings.diffStyle === "split" && !narrow} findActive={(toolbar ? selectedChanged : path) === file.path || (toolbar ? selectedChanged : path) === null && index === 0} keyboardActive={keyboardActive && compareTarget === undefined && !searchOpen} scrollRoot={documentRef} queue={queue} initialId={initialRequestActive && (file.path === initialComment?.diff?.path || file.old_path === initialComment?.diff?.path) ? initialComment?.id : undefined} selected={path === file.path} onActive={setPath} onReveal={revealInTree} />)}
           </WorkerPoolContextProvider>
         </>}
       </div>

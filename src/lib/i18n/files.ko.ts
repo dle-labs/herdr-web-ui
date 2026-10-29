@@ -25,7 +25,6 @@ export const FILES_KO: Record<string, string> = {
   "This file can't be previewed here. Download it to open it.": "이 파일은 여기서 미리 볼 수 없습니다. 열려면 내려받으세요.",
   "Show the HTML file as": "HTML 파일 보기 방식",
   "Page": "페이지",
-  "Source": "소스",
   "Too long to highlight": "너무 길어 강조 표시를 생략했습니다",
   "Too long to preview": "너무 길어 미리보기를 생략했습니다",
   "Line {line} is past the part of this file shown here. Download it to read the rest.": "{line}번째 줄은 미리보기 범위를 벗어납니다. 나머지를 읽으려면 다운로드하세요.",

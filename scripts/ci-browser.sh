@@ -129,6 +129,7 @@ run_script scripts/repo-diff-browser-qa.ts
 run_script scripts/diff-find-demo-regression.ts
 run_script scripts/file-viewer-comments-regression.ts
 run_script scripts/git-diff-demo-regression.ts
+run_script scripts/mobile-files-layout-regression.ts
 run_script scripts/keyboard-viewport-regression.ts
 run_script scripts/file-viewer-mobile-regression.ts
 run_script scripts/droplet-demo-regression.ts
