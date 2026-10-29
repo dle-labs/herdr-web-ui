@@ -1,3 +1,6 @@
+import { CommentPopover } from "./CommentPopover.tsx";
+import { popoverOutlived } from "../lib/commentPopover.ts";
+import { markCurrentComment, showWalkStop } from "../lib/commentHighlight.ts";
 import {
   useCallback,
   useContext,
@@ -70,15 +73,15 @@ import { useT } from "../lib/i18n.ts";
 import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
 import { AttachmentTooLargeError } from "../lib/api.ts";
 import { modalOpen } from "../lib/focus.ts";
-import { blockComments, outgoingMessage, useBlockComments, type PaneComment } from "../lib/blockComments.ts";
-import { changedField, revealField } from "../lib/commentDom.ts";
+import { blockComments, commentTarget, isReplyComment, outgoingMessage, useBlockComments, type BlockComment, type PaneComment } from "../lib/blockComments.ts";
+import { changedField, inUnchangedPopover, revealField, savedPins } from "../lib/commentDom.ts";
 import { lastFileStop } from "../lib/commentWalk.ts";
 import { FileCommentNavContext } from "../lib/fileCommentNav.ts";
 import { WorkspaceFilesContext } from "../lib/workspaceFiles.ts";
 import { useWorkspaceChanges } from "../lib/useWorkspaceChanges.ts";
 import { BrowseFilesIcon } from "./BrowseFilesIcon.tsx";
-import { sortFileComments } from "../lib/fileComments.ts";
-import { composerFileComments } from "../lib/composerComments.ts";
+import { sortFileComments, type FileComment } from "../lib/fileComments.ts";
+import { composerComments } from "../lib/composerComments.ts";
 
 export interface ComposerProps {
   connected: boolean;
@@ -311,16 +314,87 @@ export function Composer({
   const draftKey = `ovis:composer-draft:${paneStorageId(machineId, paneId)}`;
   const { text, sending } = useSyncExternalStore(composerDrafts.subscribe, () => composerDrafts.read(draftKey));
   const setText = useCallback((value: string | ((previous: string) => string)) => composerDrafts.set(draftKey, value), [draftKey]);
-  // Only file comments go out with the next message. Ignore legacy persisted reply comments.
+  // Reply and file comments go out with the next message to the agent.
   const commentOwner = paneStorageId(machineId, paneId);
   const storedComments = useBlockComments(commentOwner);
-  const comments = useMemo(() => composerFileComments(storedComments), [storedComments]);
+  const comments = useMemo(() => composerComments(storedComments), [storedComments]);
   // an open question reads the text as its answer, and without an agent the text is typed into
   // whatever runs in the pane (a shell, perhaps): the comments wait for a message to the agent
   const outgoing = outgoingMessage(comments, text, { answering: answerHint !== null, agent: agent !== null });
-  // The context bar walks file comments, each opened in the file viewer.
+  // a comment the walk reached whose text is not in the chat, as it was opened, and what its field holds: a send
+  // acknowledged meanwhile must not close the popover on a change being typed
+  const [editedComment, setEditedComment] = useState<BlockComment | null>(null);
+  const editedText = useRef("");
+  // it closes as the chat's popover does (useCommentPopover): with comments turned off, whatever it holds; and, while
+  // nothing is typed in it, once its comment is no longer stored (a send acknowledged it, another tab deleted it)
+  useEffect(() => {
+    if (editedComment === null) return;
+    if (!settings.comments || popoverOutlived({ commentId: editedComment.id, initialComment: editedComment.comment }, comments, editedText.current)) setEditedComment(null);
+  }, [editedComment, settings.comments, comments]);
+  // the context bar at the top of the box walks the comments of the chat, one note per tap, and then
+  // the pane's file comments, each opened in the file viewer
   const nextComment = useRef(0);
   const openFileComment = useContext(FileCommentNavContext);
+  /** the walk control (the bar's text): Escape from the note the walk stands on hands the focus back to it */
+  const walkRef = useRef<HTMLButtonElement | null>(null);
+  /**
+   * The note the walk stands on (`is-current`, set by hand: no state per note) and its chat view,
+   * whose current highlight shows the note's text, until the next step, a click elsewhere or Escape.
+   */
+  const currentNote = useRef<{ note: HTMLElement; view: Element } | null>(null);
+  const clearCurrent = useCallback((): void => {
+    const current = currentNote.current;
+    if (current === null) return;
+    current.note.classList.remove("is-current");
+    markCurrentComment(current.view, null);
+    currentNote.current = null;
+  }, []);
+  useEffect(() => {
+    // a click, not a press: a touch scroll or a scrollbar drag does not end it. In the capture phase this runs before
+    // React's handler, so the walk control's own click clears the old mark and then sets the next
+    const onClick = (): void => clearCurrent();
+    const onKeyDown = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229) return;
+      const note = currentNote.current?.note;
+      // Escape from the note hands the focus back to the walk control, so Enter there walks on
+      // (it sits after the whole chat in the tab order)
+      // read from the event's target (the focused element, fixed at dispatch), not from `document.activeElement`: it stays
+      // inside the note even when an open edit form has been closed and detached meanwhile
+      // The popover the walk opened for the pin is the note's too, while nothing is typed in it: closed by this Escape, it
+      // finds the walk control focused and leaves it there
+      const inPopover = inUnchangedPopover(event.target);
+      const onNote = note !== undefined && event.target instanceof Node && (note.contains(event.target) || inPopover);
+      clearCurrent();
+      if (onNote) walkRef.current?.focus();
+    };
+    // keydown on the document in the capture phase: after the window-capture Escape owners (the palette, dialogs, menus,
+    // dictation, the modal editor), which stop the event first, and before React's handlers. An open edit form the walk
+    // stands on gives up on Escape from its own key handler only while nothing was typed in it, so this has always run
+    // before it: the mark goes, the focus moves to the walk control, and an untouched form then closes without holding the
+    // focus, leaving it there. A form with typed text is left open (its Escape does nothing, so the event is not stopped)
+    document.addEventListener("click", onClick, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      clearCurrent();
+    };
+  }, [clearCurrent]);
+  // the last comment gone: nothing to stand on
+  useEffect(() => { if (comments.length === 0) clearCurrent(); }, [comments.length, clearCurrent]);
+  // the current comment deleted while others remain: its note left the chat, and the mark goes with
+  // it. Checked a frame later, once the chat has rendered the change. A focused element that leaves
+  // the document leaves the focus on the body: then it was the note's, and the walk control takes it
+  useEffect(() => {
+    if (currentNote.current === null) return;
+    const frame = window.requestAnimationFrame(() => {
+      const current = currentNote.current;
+      if (current === null || current.note.isConnected) return;
+      clearCurrent();
+      if (document.activeElement === null || document.activeElement === document.body) walkRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [comments, clearCurrent]);
   const goToComment = (): void => {
     // this pane's own chat: several panes can be mounted, each with a chat view in its stack
     const view = surfaceRef.current?.closest(".terminal-stack");
@@ -331,16 +405,43 @@ export function Composer({
       revealField(unsaved);
       return;
     }
-    const files = sortFileComments(comments);
-    const stops = files.length;
+    // one stop per pin, in the order the pins appear, which is reading order (CommentPins). Not the provisional pin of a
+    // comment being written
+    const notes = savedPins(view, ".chat-view");
+    // a comment whose text is not in the chat (older history not loaded, a reply that changed) has no pin: it
+    // is a stop of its own that opens its popover as a dialog, so the bar reaches every comment it counts
+    const shown = new Set(notes.map((note) => note.dataset.commentId));
+    // (a file comment has no place in the chat: the viewer shows it)
+    const missing = comments.filter(isReplyComment).filter((comment) => !shown.has(comment.id));
+    // then the file comments, in the order they are sent, each a stop that opens the viewer at it
+    const files = sortFileComments(comments.filter((comment): comment is FileComment => !isReplyComment(comment)));
+    const inChat = notes.length + missing.length;
+    const stops = inChat + files.length;
     if (stops === 0) return;
     // the viewer walked its file's comments since (its counter, or a stop of this walk): this walk goes on after the one it showed last
     const last = lastFileStop.get(commentOwner);
     lastFileStop.delete(commentOwner);
     const shownLast = last === undefined ? -1 : files.findIndex((comment) => comment.id === last);
-    const stop = (shownLast >= 0 ? shownLast + 1 : nextComment.current) % stops;
+    const stop = (shownLast >= 0 ? inChat + shownLast + 1 : nextComment.current) % stops;
     nextComment.current = (stop + 1) % stops;
-    openFileComment?.(paneId, machineId, files[stop]!);
+    clearCurrent();
+    if (stop >= inChat) { openFileComment?.(paneId, machineId, files[stop - inChat]!); return; }
+    if (stop >= notes.length) {
+      const comment = missing[stop - notes.length]!;
+      editedText.current = comment.comment;
+      setEditedComment(comment);
+      return;
+    }
+    const pin = notes[stop]!;
+    const chat = pin.closest(".chat-view");
+    if (chat === null) return;
+    // its popover opens to edit (ChatView), and its field takes the focus as it mounts, once its pin is placed. The pin is marked
+    // after the click: the click is one, and the document's click listener above clears the mark
+    pin.click();
+    pin.classList.add("is-current");
+    currentNote.current = { note: pin, view: chat };
+    // its text highlighted, it and its pin scrolled into view, the focus on the pin (`showWalkStop`)
+    showWalkStop(chat, pin);
   };
   const mounted = useRef(true);
   const [caret, setCaret] = useState(text.length);
@@ -1371,7 +1472,33 @@ export function Composer({
           </div>
         )}
 
-        {/* The file comments stored for this pane, a row between the attachments and the message: their count, and
+      {editedComment && settings.comments && <CommentPopover
+        key={editedComment.id}
+        owner={`${commentOwner}:${editedComment.id}`}
+        connected={connected}
+        placement="dialog"
+        quote={editedComment.quote !== undefined ? { text: editedComment.quote } : { block: editedComment.block }}
+        comment={editedComment.comment}
+        onText={(value) => { editedText.current = value; }}
+        onSave={(value) => {
+          blockComments.save(commentOwner, commentTarget(editedComment), value);
+          setEditedComment(null);
+        }}
+        onDelete={() => {
+          blockComments.refresh(commentOwner);
+          if (blockComments.list(commentOwner).some((comment) => comment.id === editedComment.id)) {
+            blockComments.remove(commentOwner, [editedComment.id]);
+          } else {
+            blockComments.save(commentOwner, commentTarget(editedComment), "");
+          }
+          setEditedComment(null);
+        }}
+        onClose={() => setEditedComment(null)}
+        // asked after the commit that closes it: the bar is gone with the last comment
+        opener={() => walkRef.current?.isConnected ? walkRef.current : null}
+        fallback={() => textareaRef.current}
+      />}
+        {/* The reply and file comments stored for this pane, a row between the attachments and the message: their count, and
             whether they go with the next send (accent icon) or wait (dim; the name says why). The text walks to them, the X drops
             them all. Without comments the row takes no space */}
         {hasCommentBar && (() => {
@@ -1385,7 +1512,7 @@ export function Composer({
             <div className={`composer-comments-bar ${waiting ? "is-waiting" : "is-going"}`}>
               <button
                 type="button"
-                className="composer-comments-walk"
+                className="composer-comments-walk" ref={walkRef}
                 aria-label={waiting ? `${label}. ${why}` : label}
                 title={`${waiting ? `${label}\n${why}` : label}\n${t("Go to the next comment")}`}
                 onClick={goToComment}

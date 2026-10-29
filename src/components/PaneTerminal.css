@@ -516,6 +516,7 @@
   background: var(--term-bg);
 }
 
+.terminal-stack.is-peek > .terminal-surface > .chat-surface-layout,
 .terminal-stack.is-peek > .terminal-surface > .chat-frame,
 .terminal-stack.is-peek > .terminal-surface > .chat-view {
   visibility: hidden;
