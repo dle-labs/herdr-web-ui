@@ -79,11 +79,20 @@ async function openDiff(page: Page, phone: boolean, path: string): Promise<void>
     } else await page.locator(".header-files-button").click();
   }
   await files.waitFor();
+  if (phone) await files.locator(".files-mobile-header > button[aria-haspopup]").click();
   await files.locator(".file-compare-button").click();
   await files.getByRole("option", { name: /^(Working changes|작업 중인 변경 사항)$/, exact: true }).click();
   const section = files.locator(`.changes-diff-section[data-diff-path="${path}"]`);
-  await section.locator(".changes-diff-title").click();
-  await section.locator(".diff-find-button").waitFor();
+  if (phone) {
+    await files.getByRole("button", {name:/^(Back to files|파일 목록으로 돌아가기)$/,exact:true}).click();
+    const folder = files.locator(`.workspace-tree-row[title="${path.split("/")[0]}"]`);
+    if (await folder.getAttribute("aria-expanded") !== "true") await folder.click();
+    await files.locator(`.workspace-tree-row[title="${path}"]`).click();
+    await files.locator(".files-mobile-actions .diff-find-button").waitFor({state:"attached"});
+  } else {
+    await section.locator(".changes-diff-title").click();
+    await section.locator(".diff-find-button").waitFor();
+  }
 }
 async function rows(page: Page): Promise<void> {
   await page.waitForFunction(() => (document.querySelector(".changes-diff-section[data-find-owner='true'] diffs-container")?.shadowRoot?.querySelectorAll("[data-line]").length ?? 0) > 0);
@@ -143,7 +152,7 @@ async function check(browser: Browser, origin: string, width: 390 | 1440, theme:
       await openDiff(page, phone, "src/money.ts");
     }
     await rows(page);
-    const findButton = page.locator(".changes-diff-section[data-find-owner='true'] .diff-find-button");
+    const findButton = page.locator(phone ? ".files-mobile-actions .diff-find-button" : ".changes-diff-section[data-find-owner='true'] .diff-find-button");
     const query = page.locator(".repo-diff-find input");
     const [previous, next] = [page.locator(".repo-diff-find .find-bar-controls button").nth(0), page.locator(".repo-diff-find .find-bar-controls button").nth(1)];
     assert.equal(await findButton.getAttribute("aria-label"), language === "ko" ? "변경 내용에서 찾기" : "Find in diff", `${label}: the header's first action is Find`);
@@ -177,7 +186,7 @@ async function check(browser: Browser, origin: string, width: 390 | 1440, theme:
       await palette.waitFor({ state: "detached" });
       await page.locator(".files-dialog").waitFor();
     }
-    if (phone) await findButton.tap();
+    if (phone) { await page.locator(".files-mobile-header > button[aria-haspopup]").tap(); await findButton.tap(); }
     else await page.keyboard.press("ControlOrMeta+f");
     await query.waitFor();
     assert.equal(await query.evaluate((input) => input === document.activeElement), true, `${label}: the query has the focus`);

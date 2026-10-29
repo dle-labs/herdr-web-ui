@@ -1,4 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { FileToolbarContext } from "./MobileFilesToolbar.tsx";
+import { useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ArrowUp, Info, MessageSquarePlus, Trash2, X } from "lucide-react";
 import { FileDiff, useStableCallback, type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs/react";
 import type { DiffLineEventBaseProps } from "@pierre/diffs";
@@ -180,6 +182,7 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId, fin
   const popover = useCommentPopover<FileTarget>({ enabled: settings.comments, persist: (owner, target, text) => { blockComments.saveFile(owner, target, text); } });
   const shown = comments.filter((comment) => comment.diff?.revision === file.revision);
   const outdated = comments.filter((comment) => comment.diff?.revision !== file.revision);
+  const toolbar = useContext(FileToolbarContext);
   const find = useDiffFind(file.binary || !file.patch ? null : file.patch, findActive, keyboardActive, surface, onFindActive);
   const metadata = useMemo(() => diffMetadata(file, mode), [file, mode]);
   const [linkedCommentId, setLinkedCommentId] = useState<string | null>(null);
@@ -242,7 +245,7 @@ export function DiffViewer({ file, mode, owner, connected, split, initialId, fin
     </button>
   );
   return <div className="diff-viewer" ref={surface} data-comment-surface="">
-    {find.button}{find.bar}
+    {toolbar ? toolbar.document && findActive && toolbar.actions && createPortal(find.button, toolbar.actions) : find.button}{find.bar}
     {metadata !== null && <FileDiff fileDiff={metadata} lineAnnotations={annotations} selectedLines={selected} options={{
       diffStyle: split ? "split" : "unified", theme: PIERRE_THEME, themeType: resolvedTheme,
       // Explicit links can target collapsed context. Once revealed, keep that
