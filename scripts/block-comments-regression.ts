@@ -1,4 +1,4 @@
-/** Chat is read/copy only: clicks, drags and touch selections must never offer comments.
+/** Reply comments: create, edit, reload, delete and preserve native selection.
  * Fictional demo transport only; no herdr or existing dist required. Run:
  *   bun scripts/block-comments-regression.ts
  * HERDR_DEMO_BUILD reuses a demo build; BLOCK_COMMENTS_CASE=desktop|mobile filters devices.
@@ -11,16 +11,8 @@ import { chromium, type Locator, type Page } from "playwright-core";
 import { buildDemoApp } from "./demo-build.ts";
 
 const TEXT = "The sync plan keeps every revision in order and never loses a write.";
-const app = mkdtempSync(join(tmpdir(), "chat-no-comments-"));
+const app = mkdtempSync(join(tmpdir(), "chat-reply-comments-"));
 const frames = (page: Page) => page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-
-async function noComments(page: Page): Promise<void> {
-  await frames(page);
-  assert.equal(await page.locator(".comment-selection, .comment-pin, .comment-popover, .diff-comment-editor, .composer-comments-bar").count(), 0, "chat gestures create no comment affordance or composer context");
-  assert.equal(await page.locator(".chat-view .is-commentable, .chat-view [data-comment-surface]").count(), 0, "chat is not registered as a comment surface");
-  const saved = await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("ovis:block-comments:")).flatMap((key) => JSON.parse(localStorage.getItem(key)!).comments));
-  assert.deepEqual(saved, [], "chat gestures save no comments");
-}
 
 /** Checks the copy event contract, including the app's Markdown copy handler; no OS clipboard permission required. */
 async function copiedSelection(page: Page, expected?: string): Promise<void> {
@@ -35,7 +27,7 @@ async function copiedSelection(page: Page, expected?: string): Promise<void> {
   if (expected !== undefined) assert.equal(copied.before, expected);
   assert.equal(copied.after, copied.before, "copy preserves the selection");
   assert.equal(copied.copied, copied.before, "ordinary text copies unchanged");
-  await noComments(page);
+
 }
 
 async function selectParagraph(part: Locator, touch: boolean): Promise<void> {
@@ -67,6 +59,7 @@ try {
         data.turns = [
           { role: "user", parts: [{ kind: "text", text: "Show me the sync plan." }] },
           { role: "assistant", parts: [{ kind: "text", text: ${JSON.stringify(`${TEXT}\n\n- Keep the newest revision\n- Retry a conflict\n\n\`\`\`ts\nconst revision = 3;\n\`\`\``)} }] }
+          , { role: "user", parts: [{ kind: "text", text: "I am reviewing the answer." }] }
         ];
         return Response.json(data);
       }
@@ -86,7 +79,7 @@ try {
       if (process.env.BLOCK_COMMENTS_CASE && !process.env.BLOCK_COMMENTS_CASE.split(",").includes(name)) continue;
       const context = await browser.newContext({ viewport: { width: mobile ? 390 : 1280, height: mobile ? 844 : 900 }, isMobile: mobile, hasTouch: mobile, locale: "en-US", serviceWorkers: "block" });
       try {
-        // Deliberately enable comments: their removal from chat must not depend on the setting.
+        // Enable reply comments for both pointer and touch layouts.
         await context.addInitScript(() => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", comments: true, view: "chat", theme: "dark" })));
         const page = await context.newPage();
         page.setDefaultTimeout(10_000);
@@ -98,44 +91,57 @@ try {
         const paragraph = chat.locator("p").filter({ hasText: TEXT }).first();
         await paragraph.waitFor();
         await paragraph.scrollIntoViewIfNeeded();
-        for (const part of [paragraph, chat.locator("li").filter({ hasText: "Retry a conflict" }).first(), chat.locator("code").filter({ hasText: "const revision = 3;" }).first()]) {
-          if (mobile) await part.tap(); else await part.click();
-          await noComments(page);
-        }
-        await paragraph.scrollIntoViewIfNeeded();
-        if (!mobile) {
-          // A real mouse drag, not only a programmatic selection.
-          const points = await paragraph.evaluate((node) => {
-            // Markdown may wrap words in spans: character offsets belong to text
-            // nodes, not to the paragraph's first element child.
-            const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-            const nodes: Text[] = [];
-            for (let next = walker.nextNode(); next; next = walker.nextNode()) nodes.push(next as Text);
-            const at = (offset: number) => {
-              for (const text of nodes) {
-                if (offset >= text.length) { offset -= text.length; continue; }
-                const range = document.createRange(); range.setStart(text, offset); range.setEnd(text, offset + 1);
-                const box = range.getBoundingClientRect(); return { x: box.x + 1, y: box.y + box.height / 2 };
-              }
-              throw new Error("paragraph has no glyph at the requested offset");
-            };
-            return [at(0), at(30)];
-          });
-          await page.mouse.move(points[0]!.x, points[0]!.y);
-          await page.mouse.down();
-          await page.mouse.move(points[1]!.x, points[1]!.y, { steps: 8 });
-          await page.mouse.up();
-          await copiedSelection(page);
-          // The paragraph's box center can land on whitespace or beyond its text.
-          await page.mouse.dblclick(points[0]!.x, points[0]!.y);
-          await copiedSelection(page);
-        }
+        assert.ok(await paragraph.evaluate((node) => node.classList.contains("is-commentable")));
+        if (mobile) await paragraph.tap(); else await paragraph.click();
+        const field = page.locator(".comment-popover textarea");
+        await field.fill("Keep the retry explicit.");
+        await page.getByRole("button", { name: "Save comment", exact: true }).click();
+        await page.locator(".composer-comments-bar").waitFor();
+        assert.equal(await chat.locator(".comment-pin").count(), 1);
+        await page.reload();
+        await paragraph.waitFor();
+        await page.locator(".composer-comments-walk").click();
+        await field.fill("Explain the retry limit.");
+        await page.getByRole("button", { name: "Save comment", exact: true }).click();
+        await page.locator(".composer-comments-walk").click();
+        assert.equal(await field.inputValue(), "Explain the retry limit.");
+        await page.getByRole("button", { name: "Delete comment", exact: true }).click();
+        await page.locator(".composer-comments-bar").waitFor({ state: "detached" });
         await selectParagraph(paragraph, mobile);
         await copiedSelection(page, TEXT);
-        await page.evaluate(() => window.getSelection()?.removeAllRanges());
-        await noComments(page);
+        await page.locator(".comment-selection").click();
+        await field.fill("Comment on this selection.");
+        await page.getByRole("button", { name: "Save comment", exact: true }).click();
+        await page.locator(".composer-comments-bar").waitFor();
+        const saved = await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("ovis:block-comments:")).flatMap((key) => JSON.parse(localStorage.getItem(key)!).comments));
+        assert.equal(saved.length, 1);
+        assert.equal(saved[0].quote, TEXT);
+        assert.equal(saved[0].comment, "Comment on this selection.");
+        // An older reply outside rendered history remains editable from the composer.
+        await page.evaluate(() => {
+          const key = Object.keys(localStorage).find((key) => key.startsWith("ovis:block-comments:"))!;
+          const data = JSON.parse(localStorage.getItem(key)!);
+          data.comments[0].anchor = "not-loaded:0:0";
+          localStorage.setItem(key, JSON.stringify(data));
+        });
+        await page.reload();
+        await page.locator(".composer-comments-walk").click();
+        await field.fill("An unsaved edit.");
+        // Simulate another tab editing that same note while our draft stays open.
+        await page.evaluate(() => {
+          const key = Object.keys(localStorage).find((key) => key.startsWith("ovis:block-comments:"))!;
+          const oldValue = localStorage.getItem(key)!;
+          const data = JSON.parse(oldValue);
+          data.comments[0].id = "changed-in-other-tab";
+          data.comments[0].comment = "Another tab's edit.";
+          const newValue = JSON.stringify(data);
+          localStorage.setItem(key, newValue);
+          window.dispatchEvent(new StorageEvent("storage", { key, oldValue, newValue }));
+        });
+        await page.getByRole("button", { name: "Delete comment", exact: true }).click();
+        await page.locator(".composer-comments-bar").waitFor({ state: "detached" });
         assert.deepEqual(errors, [], "no browser exceptions");
-        console.log(`PASS Chat read/copy only: ${name} clicks, selections and copying never comment`);
+        console.log(`PASS Reply comments: ${name} create, reload, edit, delete and selection/copy`);
       } finally { await context.close(); }
     }
   } finally { await browser.close(); server.stop(); }
