@@ -2,7 +2,7 @@ import { expect, it } from "bun:test";
 import { blockTarget, composeWithComments, replyPart, selectionTarget, type BlockComment } from "./blockComments.ts";
 import { MAX_COMPOSER_CHARS } from "./compose.ts";
 import { heldAgentOnly, heldMessageText, MessageQueueStore } from "./messageQueue.ts";
-import { parseMarkdown } from "./markdown.ts";
+import { parseMarkdown } from "../../shared/markdown.ts";
 import { fileAnchor, type FileComment } from "./fileComments.ts";
 
 function fixture() {

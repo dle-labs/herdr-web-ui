@@ -290,7 +290,11 @@ describe("text no one wrote by hand", () => {
     let runs = 1;
     const timed = (input: string): number => {
       const start = cpu();
-      for (let run = 0; run < runs; run += 1) parse(input);
+      for (let run = 0; run < runs; run += 1) {
+        // Evict the last-call cache so both sizes measure parsing, never a cached lookup.
+        parseMarkdown("");
+        parse(input);
+      }
       return cpu() - start;
     };
     while (timed(small) < shortest) runs *= 2;
@@ -536,7 +540,7 @@ describe("numbered lists as agents write them", () => {
     expect(digits("0. a")).toBeNull();
     expect(digits("- a\n- b")).toBeNull();
     // a nested list counts its own numbers, not its parent's
-    expect(render("100. a\n    1. b")).toMatch(/--markdown-list-digits:3[^>]*><li><span>a<\/span><ol class="markdown-list"><li>/);
+    expect(render("100. a\n    1. b")).toMatch(/--markdown-list-digits:3[^>]*><li><div class="markdown-item"><span>a<\/span><\/div><ol class="markdown-list"><li>/);
     // past a 32-bit integer the browser counts from 1, so that start sets no wider indent
     expect(digits("2147483647. a")).toBe("10");
     expect(digits("100000000000000000000. a")).toBeNull();
