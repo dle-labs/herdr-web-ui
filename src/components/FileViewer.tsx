@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
+import { FileToolbarContext } from "./MobileFilesToolbar.tsx";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { Braces, Check, Code, Copy, Download, ExternalLink, Link2, MessageSquare, TriangleAlert, X } from "lucide-react";
 
 import "./FileViewer.css";
@@ -71,6 +73,9 @@ function useMarkdownPreview(text: string | null): Preview {
 }
 
 export interface FileViewerProps {
+  /** The containing review can also show this Markdown document as a diff. */
+  onShowDiff?: () => void;
+  initialMode?: TextViewMode;
   connected?: boolean;
   /** A document-only page, without the enclosing workspace browser. */
   page?: boolean;
@@ -154,8 +159,10 @@ function selectSource(element: HTMLElement): void {
  * file endpoint). Each opens whole in a new tab (a text file raw), and anything can be downloaded:
  * an installed app on a phone opens a new tab in an in-app view, which does not always offer to save it.
  */
-export function FileViewer({ connected = false, page = false, path: asked, paneId, machineId: givenMachineId, paneFolder = null, onClose, onOpen, commentId = null }: FileViewerProps) {
+export function FileViewer({ connected = false, page = false, path: asked, paneId, machineId: givenMachineId, paneFolder = null, onClose, onOpen, commentId = null, onShowDiff, initialMode }: FileViewerProps) {
   const t = useT();
+  const toolbar = useContext(FileToolbarContext);
+  const compact = toolbar !== null;
   const locale = useLocale();
   const appWindow = useAppWindow();
   const { fetchFileInfo, fileUrl, fetchDirectories } = useMachineApi();
@@ -188,7 +195,7 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
   // A new path never paints the old choice.
   const [chosen, setChosen] = useState<{ path: string; mode: TextViewMode } | null>(() => {
     const comment = commentId === null || paneId === null ? undefined : blockComments.list(paneStorageId(machineId, paneId)).find((c) => c.id === commentId);
-    return comment === undefined || isReplyComment(comment) ? null : { path: asked, mode: comment.view };
+    return comment === undefined || isReplyComment(comment) ? initialMode ? { path: asked, mode: initialMode } : null : { path: asked, mode: comment.view };
   });
   const mode = chosen?.path === path ? chosen.mode : target.line === null ? "preview" : "code";
   // The source <pre>, or a virtualized source's text box, selected when Copy cannot reach the clipboard.
@@ -437,10 +444,7 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
   const newTabHref = relay ? previewUrl : htmlPage && !source ? pageUrl : markdown ? previewUrl : url;
   const newTabSrc = useResourceUrl(newTabHref);
   const rawSrc = relay ? readerHref(machineId, `${shownPath}#L1`) : urlSrc;
-  const header = <header className={
-    "modal-header file-viewer-header file-viewer-header-stacked" + (page ? " file-reader-header" : "")
-  }>
-    <div className="file-viewer-title">
+  const title = <div className="file-viewer-title">
       {/* a long name is cut inside its stem, so its type stays in view */}
       <Heading className="modal-title"><span className="file-viewer-stem">{stem}</span>{extension}</Heading>
       <p className="file-viewer-meta" title={shownPath}>
@@ -456,8 +460,8 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
         {/* the dot is the folder's, so where the folder has no room left no dot dangles */}
         {folder !== "" && <span className="file-viewer-path"><span dir="ltr">{info && <span className="file-viewer-dot" aria-hidden="true">·</span>}{folder}</span></span>}
       </p>
-    </div>
-    <div className="file-viewer-actions">
+    </div>;
+  const actions = <div className="file-viewer-actions">
       {!page && commentsShown && <div className="file-viewer-group">
         <button type="button" className="icon-button file-viewer-action file-viewer-comments" aria-label={countLabel} title={`${countLabel}\n${t("Go to the next comment")}`} onClick={nextComment}>
           <MessageSquare aria-hidden="true" />
@@ -465,18 +469,23 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
         </button>
       </div>}
       {/* Preview/source is one toggle; the enclosing Files header owns the shared wrap toggle. */}
-      {textFile && previewable && <div className="file-viewer-group">
+      {!compact && textFile && previewable && <div className="file-viewer-group">
         <button type="button" className="icon-button file-viewer-action" aria-pressed={mode === "code"} aria-label={t("Show source")} title={t("Show source")} onClick={() => { if (leaveComment()) setChosen({ path, mode: mode === "code" ? "preview" : "code" }); }}><Braces aria-hidden="true" /></button>
       </div>}
       {/* the file itself: a Markdown tab is the reader; raw and download keep the original bytes */}
       <div className="file-viewer-group">
         {!page && !appWindow && <a className="icon-button file-viewer-action" href={newTabSrc ?? undefined} target="_blank" rel="noopener" aria-label={t("Open in a new tab")} title={t("Open in a new tab")}><ExternalLink aria-hidden="true" /></a>}
         {(page || markdown) && !appWindow && <a className="icon-button file-viewer-action" href={rawSrc ?? undefined} target="_blank" rel="noopener" aria-label={t("Open raw file")} title={t("Open raw file")}><Code aria-hidden="true" /></a>}
-        {!page && appWindow && <CopyLinkButton href={newTabSrc ?? undefined} />}
+        {!page && appWindow && <CopyLinkButton href={newTabHref} />}
         <a className="icon-button file-viewer-action" href={downloadHref ?? undefined} download={info?.name ?? true} aria-label={t("Download")} title={t("Download")}><Download aria-hidden="true" /></a>
         {copyable && <CopyFileButton text={loaded.text} sourceRef={sourceRef} onShowSource={showSourceToSelect} />}
       </div>
-    </div>
+    </div>;
+  const header = <header className={
+    "modal-header file-viewer-header file-viewer-header-stacked" + (page ? " file-reader-header" : "")
+  }>
+    {title}
+    {actions}
     {!page && <button type="button" className="icon-button file-viewer-action file-viewer-close" aria-label={t("Close file")} title={t("Close file")} onClick={onClose}><X aria-hidden="true" /></button>}
   </header>;
   // a virtualized source fills the viewer: its rows are a window the user scrolls, so the body
@@ -493,7 +502,21 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
   return (
     <div className="file-viewer-embedded">
       <section className={virtual !== null && view === "code" ? "modal file-viewer file-viewer-virtual" : "modal file-viewer"} role="region" aria-label={info?.name ?? path} ref={surface} tabIndex={-1}>
-        {header}
+        {compact ? <>
+          {toolbar.document && toolbar.title && createPortal(title, toolbar.title)}
+          {toolbar.document && toolbar.mode && (previewable || onShowDiff) && createPortal(
+            <select className="files-mobile-view" aria-label={t("File view")} value={view === "markdown" ? "preview" : "source"} onChange={(event) => {
+              if (!leaveComment()) return;
+              if (event.target.value === "diff") onShowDiff?.();
+              else setChosen({ path, mode: event.target.value === "preview" ? "preview" : "code" });
+            }}>
+              {previewable && <option value="preview">{t("Preview")}</option>}
+              <option value="source">{t("Source")}</option>
+              {onShowDiff && <option value="diff">{t("Diff")}</option>}
+            </select>, toolbar.mode)}
+          {toolbar.document && toolbar.actions && createPortal(<><div className="files-mobile-info">{title}</div>{actions}
+            <button type="button" className="icon-button" aria-label={t("Close file")} title={t("Close file")} onClick={onClose}><X aria-hidden="true" /></button></>, toolbar.actions)}
+        </> : header}
         <div ref={bodyRef} className={bodyClass}>
           {body}{openingNote}
           {view === "markdown" && preview.status === "ready" && scope !== null
