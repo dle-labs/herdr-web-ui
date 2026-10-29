@@ -1,3 +1,6 @@
+import "./BlockComments.css";
+import { BlockCommentContext, partAnchor, replyParts, usePartTouched, type PartLookup } from "../lib/blockComments.ts";
+import { forgetCommentPart, rememberCommentPart } from "../lib/commentSelection.ts";
 import { createContext, forwardRef, Fragment, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { BookOpen, Check, Copy, ImageOff, Maximize2 } from "lucide-react";
 
@@ -30,6 +33,7 @@ const SkillMatcherContext = createContext<SkillMatcher | null>(null);
  * They are not rendered, so they are neither in the tab order nor in the accessibility tree.
  */
 const QuotedContext = createContext(false);
+const ReplyPartsContext = createContext<PartLookup | null>(null);
 
 type Katex = typeof import("katex").default;
 /** KaTeX is a fifth of the app's script: the first expression loads it (lib/katex.ts), and every later one has it at once. */
@@ -287,7 +291,7 @@ function sourceAttributes(source: SourceLines | undefined): { "data-source-line"
 }
 
 /** A task item's box stands in for its bullet. */
-function List({ block }: { block: ListBlock }) {
+function List({ block, path, commentable }: { block: ListBlock; path: number[]; commentable: boolean }) {
   const Tag = block.ordered ? "ol" : "ul";
   // the widest number's digits: its marker sets the list's indent (ChatView.css). The browser counts
   // from 1 when `start` is past a 32-bit integer, so such a start sets no wider indent
@@ -295,7 +299,7 @@ function List({ block }: { block: ListBlock }) {
   const digits = block.ordered ? String(first + block.items.length - 1).length : 1;
   return (
     <Tag className="markdown-list" start={block.ordered ? block.start : undefined} style={digits > 1 ? { "--markdown-list-digits": digits } as CSSProperties : undefined}>
-      {block.items.map((_, index) => <ItemView key={index} list={block} index={index} />)}
+      {block.items.map((_, index) => <ItemView key={index} list={block} index={index} path={[...path, index]} commentable={commentable} />)}
     </Tag>
   );
 }
@@ -304,21 +308,22 @@ function List({ block }: { block: ListBlock }) {
 const PLAIN_FENCE = /^(?:|text|txt|plain|plaintext|log|console|output|shell-session)$/i;
 
 /** One list item, with its own source lines separate from any nested blocks. */
-function ItemView({ list, index }: { list: ListBlock; index: number }) {
+function ItemView({ list, index, path, commentable }: { list: ListBlock; index: number; path: number[]; commentable: boolean }) {
   const item = list.items[index]!;
+  const comment = useCommentable(path, commentable);
   const id = useId();
   const t = useT();
-  // `list-style` only works on the <li>, so the task class stays there.
+  // `list-style` only works on the <li>, so the task class stays there; the comment's classes go on the wrapper
   return (
     <li className={item.checked === undefined ? undefined : "markdown-task"}>
-      <div className="markdown-item" {...sourceAttributes(item.source)}>
+      <div ref={comment.ref} className={comment.className === undefined ? "markdown-item" : `markdown-item ${comment.className}`} {...sourceAttributes(item.source)}>
         {/* a task's box shows its state; the agent's text owns it, so it cannot be ticked here. Drawn,
             not an <input>: a disabled checkbox is greyed by the browser and ignores the accent.
             An item without text is named as an empty task instead of referencing an empty label */}
         {item.checked !== undefined && <span className="markdown-task-box" role="checkbox" aria-checked={item.checked} aria-disabled="true" aria-labelledby={item.content.length === 0 ? undefined : id} aria-label={item.content.length === 0 ? t("Empty task") : undefined}>{item.checked && <Check aria-hidden="true" />}</span>}
         {item.checked === undefined ? <Inline nodes={item.content} /> : <span id={id}><Inline nodes={item.content} /></span>}
       </div>
-      {item.blocks !== undefined && <Blocks blocks={item.blocks} />}
+      {item.blocks !== undefined && <Blocks blocks={item.blocks} path={path} commentable={commentable} />}
     </li>
   );
 }
@@ -384,35 +389,48 @@ function CodeBlock({ language, value, firstLine }: { language: string; value: st
   );
 }
 
-function Blocks({ blocks }: { blocks: MarkdownBlock[] }) {
-  return <>{blocks.map((block, index) => <BlockView key={`${block.type}-${index}`} block={block} />)}</>;
+const NO_PATH: number[] = [];
+
+/**
+ * `path` locates the blocks inside the reply part (a list item's index is part of it), which is
+ * how a comment finds its block again. Inside a blockquote nothing is commentable on its own:
+ * the quote is one block.
+ */
+function Blocks({ blocks, path = NO_PATH, commentable = true }: { blocks: MarkdownBlock[]; path?: number[]; commentable?: boolean }) {
+  return <>{blocks.map((block, index) => <BlockView key={`${block.type}-${index}`} block={block} path={[...path, index]} commentable={commentable} />)}</>;
 }
 
 /**
- * Preview blocks retain source-line metadata for navigation and selection comments.
+ * One block at `path`, commentable unless it is a rule; a list carries its comments on its items.
+ * A block of the file viewer's preview (one with `source`)
+ * writes its source lines on the elements a selection maps to lines: a heading, each line of a
+ * paragraph, each table row, each code line, a formula. The viewer draws nothing in it of the comments: their text is
+ * highlighted and their pins lie in its pin layer (FileComments.tsx).
  */
-function BlockView({ block }: { block: MarkdownBlock }): ReactNode {
+function BlockView({ block, path, commentable }: { block: MarkdownBlock; path: number[]; commentable: boolean }): ReactNode {
   const quoted = useContext(QuotedContext);
+  const comment = useCommentable(path, commentable && block.type !== "hr" && block.type !== "list");
+  const { className, ref } = comment;
   switch (block.type) {
     case "heading": {
       // agent headings are h3 whatever the agent wrote: the app's own h1/h2 (Brand, the dialog
       // titles) stay the outline above them. The level rides on a class, so the stylesheet
       // keeps drawing each level as it did (ChatView.css `.markdown-h1`...`.markdown-h6`).
       const level = `markdown-h${block.level}${block.align ? " markdown-center" : ""}`;
-      return <h3 data-markdown-heading={block.level} className={level} {...sourceAttributes(block.source)}><Inline nodes={block.content} /></h3>;
+      return <h3 ref={ref} data-markdown-heading={block.level} className={className ? `${level} ${className}` : level} {...sourceAttributes(block.source)}><Inline nodes={block.content} /></h3>;
     }
     case "paragraph": {
       const lineNumbers = block.lineNumbers;
-      const paragraphClass = block.align ? "markdown-center" : undefined;
+      const paragraphClass = [className, block.align ? "markdown-center" : undefined].filter(Boolean).join(" ") || undefined;
       // Exact Markdown lines live on their spans; annotating the paragraph too would
       // make a selection on one line also intersect the whole paragraph's range.
-      return <p className={paragraphClass} {...sourceAttributes(lineNumbers === undefined ? block.source : undefined)}>{block.lines.map((line, lineIndex) => {
+      return <p ref={ref} className={paragraphClass} {...sourceAttributes(lineNumbers === undefined ? block.source : undefined)}>{block.lines.map((line, lineIndex) => {
         const fileLine = lineNumbers?.[lineIndex];
         return <span key={lineIndex} {...sourceAttributes(fileLine === undefined ? undefined : [fileLine, fileLine])}><Inline nodes={line} standalone={standaloneImage(line)} />{lineIndex < block.lines.length - 1 && <br />}</span>;
       })}</p>;
     }
-    case "list": return <List block={block} />;
-    case "blockquote": return <blockquote><Blocks blocks={block.blocks} /></blockquote>;
+    case "list": return <List block={block} path={path} commentable={commentable} />;
+    case "blockquote": return <blockquote ref={ref} className={className}><Blocks blocks={block.blocks} path={path} commentable={false} /></blockquote>;
     case "hr": return <hr />;
     default: {
       const rowLine = (row: number): { "data-source-line"?: number } => {
@@ -428,13 +446,48 @@ function BlockView({ block }: { block: MarkdownBlock }): ReactNode {
             <tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex} {...rowLine(rowIndex + 1)}>{row.map((cell, cellIndex) => <td key={cellIndex}><Inline nodes={cell} /></td>)}</tr>)}</tbody>
           </table>
         </div>;
-      // BlockView already keeps the component identity stable. An extra code wrapper
-      // changes the browser's native selection newline at the block boundary.
+      // a code block, a table or a formula is commentable on a host around it. The
+      // host is there whether or not the block is commentable, so a reply turning final (or live
+      // again) keeps the same element, and a code block the reader unfolded stays unfolded.
       // A formula's host carries its range. Diagrams carry theirs only once rendered;
       // fallback code and tables instead expose their individual source lines.
-      return block.type === "code" ? body : <div className="markdown-block" {...(block.type === "math" ? sourceAttributes(block.source) : {})}>{body}</div>;
+      if (block.type === "code" && block.source !== undefined) return body;
+      return <div ref={ref} className={className === undefined ? "markdown-block" : `markdown-block ${className}`} {...(block.type === "math" ? sourceAttributes(block.source) : {})}>{body}</div>;
     }
   }
+}
+
+interface Commentable {
+  /** undefined where the block is not commentable */
+  className: string | undefined;
+  /** on the block's element: where it is commentable, the selection and click handlers find its target from it */
+  ref: (node: HTMLElement | null) => void;
+}
+
+/**
+ * What makes the block at `path` commentable; nothing where it is not (outside a final answer,
+ * inside a blockquote, a rule). Its target is the reply's part at `path` (`ReplyPartsContext`; a
+ * list item's path ends in its index). A comment is made by selecting text in the block or by
+ * clicking it (ChatView), which finds the block's target through the element `ref` registers. The
+ * block draws nothing of its comments: their text is highlighted (lib/commentHighlight.ts), which
+ * looks for the parts some comment covers (`is-commented`), and their pins lie in the chat's pin
+ * layer (CommentPins.tsx). With comments turned off no part is commented, whatever is stored (`BlockCommentStore.setEnabled`).
+ */
+function useCommentable(path: number[], enabled: boolean): Commentable {
+  const reply = useContext(BlockCommentContext);
+  const parts = useContext(ReplyPartsContext);
+  const target = enabled && reply !== null ? parts?.get(partAnchor(reply, path))?.target ?? null : null;
+  const touched = usePartTouched(reply?.owner ?? "", target, parts);
+  // registered while mounted and commentable, and taken out when either ends
+  const registered = useRef<HTMLElement | null>(null);
+  const ref = useCallback((node: HTMLElement | null) => {
+    if (registered.current !== null) forgetCommentPart(registered.current);
+    registered.current = node;
+    if (node !== null && target !== null && reply !== null && parts !== null) rememberCommentPart(node, { owner: reply.owner, target, parts });
+  }, [reply, target, parts]);
+  if (target === null || reply === null) return { className: undefined, ref };
+  // commented: some comment covers some of its text
+  return { className: `is-commentable${touched ? " is-commented" : ""}`, ref };
 }
 
 /**
@@ -443,8 +496,13 @@ function BlockView({ block }: { block: MarkdownBlock }): ReactNode {
  * as their text, file paths as plain text or code.
  */
 export function MarkdownBlocks({ blocks, quoted = false }: { blocks: MarkdownBlock[]; quoted?: boolean }) {
+  // the editor is portalled out of a reply but inherits its context: nothing commentable inside it
   const content = <div className="markdown"><Blocks blocks={blocks} /></div>;
-  return quoted ? <QuotedContext.Provider value><OpenFileContext.Provider value={null}>{content}</OpenFileContext.Provider></QuotedContext.Provider> : content;
+  return (
+    <BlockCommentContext.Provider value={null}><ReplyPartsContext.Provider value={null}>
+      {quoted ? <QuotedContext.Provider value><OpenFileContext.Provider value={null}>{content}</OpenFileContext.Provider></QuotedContext.Provider> : content}
+    </ReplyPartsContext.Provider></BlockCommentContext.Provider>
+  );
 }
 
 /**
@@ -506,5 +564,11 @@ export const ProgressiveMarkdown = memo(forwardRef<HTMLDivElement, { blocks: Mar
   </div>;
 }));
 export const ParsedMarkdown = memo(forwardRef<HTMLDivElement, { blocks: MarkdownBlock[]; className?: string }>(function ParsedMarkdown({ blocks, className }, ref) {
-  return <div ref={ref} className={className === undefined ? "markdown" : `markdown ${className}`}><Blocks blocks={blocks} /></div>;
+  // a final reply part: a selection that comments stays inside one (lib/commentSelection.ts)
+  const reply = useContext(BlockCommentContext);
+  // the same targets across renders while the reply and its text stay: a part re-renders only for its own comments
+  const parts = useMemo(() => reply === null ? null : replyParts(reply, blocks), [reply, blocks]);
+  return <ReplyPartsContext.Provider value={parts}>
+    <div ref={ref} className={className === undefined ? "markdown" : `markdown ${className}`} data-comment-root={reply === null ? undefined : ""}><Blocks blocks={blocks} /></div>
+  </ReplyPartsContext.Provider>;
 }));

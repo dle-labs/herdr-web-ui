@@ -348,6 +348,7 @@ const BASE: Record<string, string> = {
   "Binary files cannot be displayed as a text diff.": "二进制文件无法显示为文本差异。",
   "Close comment": "关闭评论",
   "Comment": "备注",
+  "Quoted text": "引用文本",
   "Delete comment": "删除评论",
   "Discard comment": "丢弃评论",
   "File diff": "文件差异",

@@ -1,3 +1,9 @@
+import { useCommentSurface, type SurfaceComment } from "./useCommentSurface.tsx";
+import { CommentSurfaceLayout } from "./CommentSurfaceLayout.tsx";
+import { BlockCommentContext, blockComments, blockContent, commentTarget, isReplyComment, quoteExcerpt, replyPart, selectionTarget, useBlockComments, type CommentTarget, type ReplyPart } from "../lib/blockComments.ts";
+import { commentPartOf, paneComposer, pointOnText, selectionComment, type SelectionComment } from "../lib/commentSelection.ts";
+import { draftRanges, showPendingComment, watchCommentHighlights } from "../lib/commentHighlight.ts";
+import { hasOpenComment } from "../lib/commentDom.ts";
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -949,6 +955,8 @@ function OutcomeRow({ outcome, actions, skills = null }: { outcome: CommandOutco
 }
 
 interface TurnProps {
+  commentIndex?: number;
+  commentable?: boolean;
   paneId: string;
   turn: ConversationTurn;
   /** the turn's stable row in the timeline (ChatRow.key): what its folded todo runs are named by */
@@ -1038,8 +1046,12 @@ function noticeLabel(t: ReturnType<typeof useT>, notice: Extract<ConversationPar
 }
 
 // a turn that did not change keeps its object across polls: skip re-rendering it
-export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, showThinking, skills = null, userSkills = null, outcome = null, outcomeActions = null, onRewindInTerminal = null }: TurnProps) {
+export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, showThinking, skills = null, userSkills = null, outcome = null, outcomeActions = null, onRewindInTerminal = null, commentIndex = 0, commentable = false }: TurnProps) {
   const t = useT();
+  const machineId = useMachineId();
+  const { answer } = splitTurn(turn.parts);
+  const replies = useMemo((): (ReplyPart | null)[] => Array.from({ length: answer.length }, (_, part) =>
+    live || !commentable ? null : replyPart(paneStorageId(machineId, paneId), turn.ts, commentIndex, part)), [machineId, paneId, turn.ts, commentIndex, live, commentable, answer.length]);
   const memory = useContext(ChatRowMemoryContext);
   // what the drawn runs, and the runs that drew no block, were named, by part index; the row's
   // memory takes it once the turn is drawn
@@ -1121,7 +1133,6 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, sh
       <SkillActivityList parts={turn.parts} />
     </article>;
   }
-  const { answer } = splitTurn(turn.parts);
   const answerText = answer.map((part) => part.text).join("\n\n");
   const goal = turnGoal(turn.parts);
   // in the agent's own order, as the terminal shows it: words written before a tool stay above it
@@ -1156,7 +1167,7 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, sh
     {/* the pending head stands only above no answer: one above words would leave a gap when the turn ends */}
     {head === undefined && live && answer.length === 0 && block(null)}
     {segments.map((segment) => segment.kind === "work" ? block(segment)
-      : segment.parts.map((part) => <Markdown key={`answer:${work.at.get(part)}`} skills={skills}>{part.text}</Markdown>))}
+      : segment.parts.map((part) => <BlockCommentContext.Provider key={`answer:${work.at.get(part)}`} value={replies[answer.indexOf(part)] ?? null}><Markdown skills={skills}>{part.text}</Markdown></BlockCommentContext.Provider>))}
     {answerText.length > 0 && <div className="chat-turn-meta chat-agent-meta">
       {/* a mouse reads one copy glyph and the words "Plain text"; touch reads the two formats */}
       <CopyButton className="chat-meta-btn" text={answerText} label={t("Copy as markdown")} onResult={copied}><span className="chat-meta-fmt">MD</span></CopyButton>
@@ -1320,9 +1331,13 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const scroller = useRef<HTMLDivElement>(null);
   // LegendList owns the actual scrolling element. Publish it after commit so the pin portal
   // mounts even on the first lazy-list render, and rebinds if the fallback replaces the list.
+  const [commentNode, setCommentNode] = useState<HTMLDivElement | null>(null);
+  useLayoutEffect(() => { setCommentNode(scroller.current); });
+  const commentScroller = useMemo(() => ({ current: commentNode }), [commentNode]);
   const timeline = useRef<LegendListRef>(null);
   const ChatTimeline = useChatTimeline();
   const stickToBottom = useRef(true);
+  const commentFollowing = useMemo(() => ({ get current() { return stickToBottom.current && !hasOpenComment(scroller.current); } }), []);
   // the timeline's hold on a following reader's own click layout (ChatTimeline manualLayout)
   const manualLayout = useRef(false);
   // Explicit paging stays away even inside the ordinary near-bottom tolerance.
@@ -1783,7 +1798,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   // instead of scrolling there from the top.
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (node !== null && stickToBottom.current) {
+    if (node !== null && stickToBottom.current && !hasOpenComment(node)) {
       if (state.source === "conversation") timeline.current?.scrollToEnd({ animated: false });
       else node.scrollTop = node.scrollHeight;
     }
@@ -1807,7 +1822,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
         const next = `${entry.contentRect.width}|${style.fontSize}|${style.fontFamily}`;
         if (next !== lane) { lane = next; follow = true; }
       }
-      if (follow && stickToBottom.current) {
+      if (follow && stickToBottom.current && !hasOpenComment(node)) {
         // The list's scrollToEnd lands a frame later (see dropPendingListScroll), so the frame
         // painted now would show the conversation's last lines under a composer that grew a line.
         // This callback runs before that paint: put the view at the end here, then let the list
@@ -1831,7 +1846,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   const faces = useFacesArrived();
   useLayoutEffect(() => {
     const node = scroller.current;
-    if (node !== null && stickToBottom.current) {
+    if (node !== null && stickToBottom.current && !hasOpenComment(node)) {
       if (timeline.current) timeline.current.scrollToEnd({ animated: false });
       else node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
     }
@@ -1966,7 +1981,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     }
     // the layout's move left a reader still following short of the end: they go on there, unless
     // what they just clicked is laid out where they are (ChatTimeline manualLayout)
-    if (heldInPlace && stickToBottom.current && !pagingAway.current && !manualLayout.current && distanceFromBottom > LAYOUT_ALLOWANCE_PX) {
+    if (heldInPlace && !hasOpenComment(scroller.current) && stickToBottom.current && !pagingAway.current && !manualLayout.current && distanceFromBottom > LAYOUT_ALLOWANCE_PX) {
       if (timeline.current) timeline.current.scrollToEnd({ animated: false });
       else node.scrollTo({ top: node.scrollHeight, behavior: "instant" });
     }
@@ -2214,15 +2229,81 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   // Nothing is typed: drafts and the agent's own rewind remain in the terminal.
   const offered = rewindOffer({ agent, interactive, connected, ended, conversation: state.source === "conversation" });
   const rewindInTerminal = offered === "terminal" ? onRewindInTerminal ?? null : null;
+  const owner = paneStorageId(machineId, paneId);
+  const stored = useBlockComments(owner);
+  const surfaceComments = useMemo<SurfaceComment<CommentTarget>[]>(() => stored.filter(isReplyComment).map((comment) => ({
+    id: comment.id,
+    anchor: comment.anchor,
+    label: t("Comment on “{quote}”: {comment}", { quote: quoteExcerpt(comment.quote ?? blockContent(comment.block)), comment: comment.comment }),
+    ...(comment.point === undefined ? {} : { point: comment.point }),
+    target: commentTarget(comment),
+    comment: comment.comment,
+  })), [stored, t]);
+  const commentSurface = useCommentSurface<CommentTarget, SelectionComment>({
+    connected: connected && !ended,
+    surface: commentScroller,
+    enabled: settings.comments,
+    active: state.source === "conversation" && commentNode !== null,
+    persist: (owner, target, value) => blockComments.save(owner, target, value),
+    owner,
+    comments: surfaceComments,
+    anchorOf: (target) => target.anchor,
+    // the block's or selection's comment where it has one: it keeps its pin where it was
+    existing: (targetOwner, target) => {
+      const found = blockComments.get(targetOwner, target);
+      return found === undefined ? null : { id: found.id, comment: found.comment, target };
+    },
+    // a new comment's pin goes where the block was clicked or the drag let go, on the text its highlight will cover (`draftRanges`)
+    pointed: (targetOwner, target, at) => {
+      const node = scroller.current;
+      const point = node === null ? undefined : pointOnText(draftRanges(node, targetOwner, target), at);
+      return point === undefined ? target : { ...target, point };
+    },
+    // a click on a reply block comments on all of it, or on the part of it that was clicked
+    targetAtClick: (element) => {
+      const part = element.closest(".is-commentable");
+      const found = part === null ? undefined : commentPartOf(part);
+      return found === undefined ? null : { owner: found.owner, target: found.target };
+    },
+    selection: {
+      measure: selectionComment,
+      target: (found) => ({ owner: found.owner, target: selectionTarget(found.target, found.text, found.start, found.end, found.until) }),
+    },
+    describe: ({ target }) => ({ quote: target.quote ? { text: target.quote.text } : { block: target.block } }),
+    // a Delete with no pin left, or a comment whose pin is gone, gives the focus to the composer
+    focusFallback: paneComposer,
+    // its text shows as the comment's will, a selection's (the field took the browser's selection away) or a whole block's
+    showPending: (targetOwner, target) => {
+      const node = scroller.current;
+      if (node === null) return () => {};
+      showPendingComment(node, { owner: targetOwner, target });
+      return () => showPendingComment(node, null);
+    },
+  });
+
+  const { "data-comment-surface": surfaceAttribute, "data-comments": commentsAttribute, ...commentHandlers } = commentSurface.surfaceProps;
+  useLayoutEffect(() => {
+    if (commentNode === null) return;
+    if (surfaceAttribute === undefined) delete commentNode.dataset.commentSurface;
+    else commentNode.dataset.commentSurface = surfaceAttribute;
+    if (commentsAttribute === undefined) delete commentNode.dataset.comments;
+    else commentNode.dataset.comments = commentsAttribute;
+    return () => { delete commentNode.dataset.commentSurface; delete commentNode.dataset.comments; };
+  }, [commentNode, surfaceAttribute, commentsAttribute]);
+
+  useEffect(() => {
+    const transcript = commentNode?.firstElementChild;
+    return !settings.comments || !commentNode || !transcript ? undefined : watchCommentHighlights(commentNode, transcript);
+  }, [settings.comments, commentNode]);
   const renderTurn = useCallback((row: ChatRow) => {
     if (row.turn === null) return <OutcomeRow outcome={row.outcome} actions={outcomeActions} skills={skillMatcher} />;
     const { turn } = row;
     const live = isLiveWorkTurn(turn, row.index === shownTurns.length - 1, workStatus, finishedBeforeSend);
     return <RenderBoundary resetKey={turnRevision(turn, true)} fallback={() => <p className="chat-inline-state chat-inline-error" data-pane-content-error>{t("This message can't be shown here. The terminal has it.")}</p>}>
-      <Turn paneId={paneId} turn={turn} rowKey={row.key} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} userSkills={skillMatcher} outcome={row.outcome} outcomeActions={outcomeActions}
+      <Turn paneId={paneId} turn={turn} commentIndex={row.index} commentable={settings.comments} rowKey={row.key} live={live} waiting={isWaitingWorkTurn(live, agentStatus)} showThinking={settings.showThinking} skills={skillMatcher} userSkills={skillMatcher} outcome={row.outcome} outcomeActions={outcomeActions}
         onRewindInTerminal={turn.role === "user" ? rewindInTerminal : null} />
     </RenderBoundary>;
-  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, skillMatcher, outcomeActions, rewindInTerminal]);
+  }, [shownTurns.length, workStatus, finishedBeforeSend, t, paneId, agentStatus, settings.showThinking, settings.comments, skillMatcher, outcomeActions, rewindInTerminal]);
   // displayPaneTitle falls back to the pane id for a pane with nothing else to call it
   const shownTitle = title?.trim() ?? "";
   const logLabel = shownTitle !== "" && shownTitle !== paneId ? t("conversation of {pane}", { pane: shownTitle }) : t("Conversation");
@@ -2293,7 +2374,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     : away && <button type="button" className="btn chat-new-messages chat-virtual-jump is-icon" aria-label={t("Jump to latest")} title={t("Jump to latest")} onClick={scrollToBottom}><ArrowDown aria-hidden="true" /></button>;
   return <ChatMarkdownImages paneId={paneId} cwd={cwd} connected={connected} onOpen={openMarkdownImage}><ChatPaneContext.Provider value={paneId}><ChatHistoryContext.Provider value={historyId ?? ""}><ImageViewerContext.Provider value={openViewer}><ToolPathRootContext.Provider value={toolPathRoot(cwd)}>
     {/* a reader away from the end has not seen the answer a finish lands there: presented only at the end */}
-    <div className="chat-frame chat-surface-layout" data-pane-content={active && visible && !covered && connected && !ended && loaded && error === null && !away && !newMessages
+    <CommentSurfaceLayout className="chat-surface-layout"><div className="chat-frame" {...commentHandlers} data-pane-content={active && visible && !covered && connected && !ended && loaded && error === null && !away && !newMessages
       && endPresentation?.state === state && endPresentation.key === presentationKey
       && (agentStatus !== "done" || conversationFinishPresented({ source: state.conversationSource, turns: state.turns }))
       && readPresentation === presentationKey && (state.source === "conversation" ? ChatTimeline !== null : agent === null) ? presentationKey : undefined}>
@@ -2312,7 +2393,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       source={state.conversationSource}
       scroller={scroller}
       listRef={timeline}
-      following={stickToBottom}
+      following={commentFollowing}
       manualLayout={manualLayout}
       smoothFollow={smoothFollow}
       memories={rowMemories}
@@ -2334,6 +2415,8 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     {state.source === "conversation" && interactive && !ended && <ReplyCommentAction scroller={scroller} storageKey={replyCommentsKey(paneStorageId(machineId, paneId))} />}
     </div>
     </div>
+    {commentNode !== null && createPortal(commentSurface.overlay, commentNode)}
+    </CommentSurfaceLayout>
   {/* The prompt card is not part of the transcript: it is drawn on the composer's column, over the
       input card, where PaneTerminal keeps its place. The prompt itself (its poll, the answer, the
       re-read) stays here. */}

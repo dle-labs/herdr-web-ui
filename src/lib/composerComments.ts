@@ -1,7 +1,6 @@
-import { isReplyComment, type PaneComment } from "./blockComments.ts";
-import type { FileComment } from "./fileComments.ts";
+import type { PaneComment } from "./blockComments.ts";
 
-/** The composer counts, visits and sends files only; old persisted reply notes stay inert. */
-export function composerFileComments(comments: readonly PaneComment[]): FileComment[] {
-  return comments.filter((comment): comment is FileComment => !isReplyComment(comment));
+/** Reply and file comments both accompany the next message to the agent. */
+export function composerComments(comments: readonly PaneComment[]): readonly PaneComment[] {
+  return comments;
 }

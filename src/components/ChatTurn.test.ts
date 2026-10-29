@@ -11,13 +11,13 @@ import { Turn } from "./ChatView.tsx";
 const text = (value: string): ConversationPart => ({ kind: "text", text: value });
 const tool = (command: string): ConversationPart => ({ kind: "tool", name: "Bash", summary: command, input: JSON.stringify({ command }), output: "" });
 
-const render = (parts: ConversationPart[], state: { live: boolean; waiting?: boolean }, role: ConversationTurn["role"] = "assistant"): string => {
+const render = (parts: ConversationPart[], state: { live: boolean; waiting?: boolean; commentable?: boolean }, role: ConversationTurn["role"] = "assistant"): string => {
   const turn: ConversationTurn = { role, ts: "2026-01-01T12:00:00Z", end_ts: "2026-01-01T12:01:00Z", parts };
   const languages = Object.getOwnPropertyDescriptor(navigator, "languages");
   Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
   try {
     return renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(Turn, {
-      paneId: "w1:p1", turn, rowKey: "turn:1", live: state.live, waiting: state.waiting ?? false, showThinking: false,
+      paneId: "w1:p1", turn, commentable: state.commentable, commentIndex: 1, rowKey: "turn:1", live: state.live, waiting: state.waiting ?? false, showThinking: false,
     }) }));
   } finally {
     if (languages) Object.defineProperty(navigator, "languages", languages);
@@ -216,5 +216,17 @@ describe("an agent turn's folded work, drawn again", () => {
     expect(opened()).toEqual([false]);
     await remount([tool("ls"), commentary("One shelf."), answer("Checking it.")]);
     expect(opened()).toEqual([false]);
+  });
+});
+
+
+describe("reply comments", () => {
+  it("enables settled agent answers but not live replies, user messages or disabled comments", () => {
+    const parts = [text("Final answer.")];
+    expect(render(parts, { live: false, commentable: true })).toContain("data-comment-root");
+    for (const state of [{ live: true, commentable: true }, { live: false, commentable: false }]) {
+      expect(render(parts, state)).not.toContain("data-comment-root");
+    }
+    expect(render(parts, { live: false, commentable: true }, "user")).not.toContain("data-comment-root");
   });
 });

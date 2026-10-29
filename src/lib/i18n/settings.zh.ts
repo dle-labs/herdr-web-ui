@@ -327,7 +327,7 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Agent integrations": "代理集成",
   "Show Browse files shortcut": "显示浏览文件快捷按钮",
   "The folder button appears beside the composer controls. Browse files stays available in the menu.": "在输入框控件旁显示文件夹按钮。菜单中的浏览文件仍然可用。",
-  "Comment on files using line numbers in the source or diff view. Turning this off deletes every comment on this device.": "通过源代码或差异视图中的行号为文件添加评论。关闭后，此设备上的所有评论都会被删除。",
+  "Comment on settled agent replies and files. Turning this off deletes every comment on this device.": "为已完成的智能体回复和文件添加评论。关闭后，此设备上的所有评论都会被删除。",
   "Comments": "评论",
   "Delete 1 comment?": "删除 1 条评论？",
   "Delete {count} comments?": "删除 {count} 条评论？",
