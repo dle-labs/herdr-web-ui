@@ -142,7 +142,8 @@ export function useComposerSends(deps: ComposerSendsDeps) {
       const socket = socketRef.current, session = sessionRef.current;
       const sentAt = Date.now();
       const sentAfter = pane === null ? null : waitingBaseline(waitingKey(machineId, pane));
-      const result = submitComposerMessage(composeWithComments(comments, text), { delivery, agentOnly: agentOnly || comments.length > 0, ...(delivery === "immediate" && clearDraft !== undefined ? { clearDraft } : {}), ...(sendAnyway ? { sendAnyway } : {}) });
+      const outgoingText = composeWithComments(comments, text);
+      const result = submitComposerMessage(outgoingText, { delivery, agentOnly: agentOnly || comments.length > 0, ...(delivery === "immediate" && clearDraft !== undefined ? { clearDraft } : {}), ...(sendAnyway ? { sendAnyway } : {}) });
       return result === null ? false : result.then((answer) => {
         if (!answer.ok) return submitRefusal(answer.code, answer.message, answer.draft, answer.box, agent, comments.length > 0);
         // an older bridge took it with no receipt: the box lets it go, a row keeps it as not confirmed
