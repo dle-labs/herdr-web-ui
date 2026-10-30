@@ -87,7 +87,7 @@ export function useComposerSends(deps: ComposerSendsDeps) {
   }, [answering, answerPending, paneId, pendingAnswer, sendAnswer, setPendingAnswer]);
 
   const composerSend = useCallback(
-    (text: string, { comments = [], clearDraft, sendAnyway = false }: { comments?: readonly PaneComment[]; clearDraft?: string; sendAnyway?: boolean } = {}): boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal> => {
+    (text: string, { comments = [], clearDraft, sendAnyway = false, agentOnly = false }: { comments?: readonly PaneComment[]; clearDraft?: string; sendAnyway?: boolean; agentOnly?: boolean } = {}): boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal> => {
       const pane = paneRef.current;
       // A refused send keeps the draft; no second choice goes to the card waiting on its read.
       if (pane !== null && answerPending) return false;
@@ -139,7 +139,8 @@ export function useComposerSends(deps: ComposerSendsDeps) {
       const socket = socketRef.current, session = sessionRef.current;
       const sentAt = Date.now();
       const sentAfter = pane === null ? null : waitingBaseline(waitingKey(machineId, pane));
-      const result = submitComposerMessage(composeWithComments(comments, text), { delivery, agentOnly: comments.length > 0, ...(delivery === "immediate" && clearDraft !== undefined ? { clearDraft } : {}), ...(sendAnyway ? { sendAnyway } : {}) });
+      const outgoingText = composeWithComments(comments, text);
+      const result = submitComposerMessage(outgoingText, { delivery, agentOnly: agentOnly || comments.length > 0, ...(delivery === "immediate" && clearDraft !== undefined ? { clearDraft } : {}), ...(sendAnyway ? { sendAnyway } : {}) });
       return result === null ? false : result.then((answer) => {
         if (!answer.ok) return submitRefusal(answer.code, answer.message, answer.draft, answer.box, agent, comments.length > 0);
         // an older bridge took it with no receipt: the box lets it go, a row keeps it as not confirmed

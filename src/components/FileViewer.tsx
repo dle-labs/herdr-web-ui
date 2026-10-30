@@ -1,3 +1,5 @@
+import { getTransport } from "../lib/transport.ts";
+import { useResourceUrl } from "../lib/useResourceUrl.ts";
 import { createPortal } from "react-dom";
 import { FileToolbarContext } from "./MobileFilesToolbar.tsx";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -239,7 +241,7 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
       const started = Date.now();
       deadline = setTimeout(() => download.abort(), budget.timeoutMs);
       try {
-        const response = await fetch(fileUrl(next.path, paneId), { signal: download.signal, headers: { range: `bytes=0-${budget.bytes - 1}` } });
+        const response = await getTransport().fetch(fileUrl(next.path, paneId), { signal: download.signal, headers: { range: `bytes=0-${budget.bytes - 1}` } });
         clearTimeout(deadline);
         const timeoutMs = Math.max(1, budget.timeoutMs - (Date.now() - started));
         const body = await readFilePreviewText(response, budget.bytes, { signal: download.signal, maxLines: budget.lines, timeoutMs, partialOnTimeout: true });
@@ -272,6 +274,9 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
   const view = previewable && mode === "preview" ? "markdown" : "code";
   const htmlPage = info !== null && info.kind === "text" && info.mime === "text/html";
   const pageUrl = `${url}&render=1`;
+  const urlSrc = useResourceUrl(url);
+  const pageSrc = useResourceUrl(pageUrl);
+  const imageSrc = useResourceUrl(info?.kind === "image" ? `${url}&revision=${encodeURIComponent(`${info.modified}:${info.size}`)}` : null);
   const modes = <div className="segmented file-viewer-modes" role="group" aria-label={t("Show the HTML file as")}>
     <button type="button" aria-pressed={!source} onClick={() => { if (leaveComment()) setSource(false); }}>{t("Page")}</button>
     <button type="button" aria-pressed={source} onClick={() => { if (leaveComment()) setSource(true); }}>{t("Source")}</button>
@@ -333,6 +338,9 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
   const markdown = info?.kind === "text" && /\.(?:md|markdown)$/i.test(info.name);
   // a page of just the document, not the app over it (FileReader)
   const previewUrl = readerHref(machineId, shownPath + (target.line === null ? "" : `#L${target.line}`));
+  const newTabHref = htmlPage && !source ? pageUrl : markdown ? previewUrl : url;
+  const newTabSrc = useResourceUrl(newTabHref);
+  const downloadHref = useResourceUrl(fileUrl(shownPath, paneId, true));
   // images of a markdown file load through the file endpoint, as the file itself does
   const imagePreview = useCallback((src: string) => markdownImagePreview(
     src, shownPath, (target) => fetchFileInfo(target, paneId), (target, download) => fileUrl(target, paneId, download),
