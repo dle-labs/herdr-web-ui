@@ -2277,12 +2277,12 @@ it("refuses an agent-only message on a bridge without agent-only, and names it w
     socket.receive(snapshot(features));
     try {
       if (!features.includes("agent-only")) {
-        expect(await client.submit("w1:p1", "> q\nc", "> q\rc", false, "immediate", undefined, false, undefined, undefined, true))
+        expect(await client.submit("w1:p1", "> q\nc", "> q\rc", { agentOnly: true }))
           .toMatchObject({ ok: false, code: "agent_only_unsupported" });
         expect(submissions(socket)).toEqual([]);
       } else {
         const next = socket.nextSubmission();
-        void client.submit("w1:p1", "> q\nc", "> q\rc", false, "immediate", undefined, false, undefined, undefined, true);
+        void client.submit("w1:p1", "> q\nc", "> q\rc", { agentOnly: true });
         expect(await next).toMatchObject({ type: "submit", agent_only: true });
       }
     } finally {

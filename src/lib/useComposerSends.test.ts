@@ -250,7 +250,7 @@ it("sends a held copy of an agent-only message again as agent-only", async () =>
   try {
     new PendingMessageStore(() => saved.storage).accept(owner, message, "earlier");
     await sends(pane, { ok: true }, [], { pendingScopeRef: { current: "now" }, submitComposerMessage }).actOnPending(message.id, "steer");
-    expect(calls.map((call) => call[6])).toEqual([true]);
+    expect(calls.map((call) => (call[1] as SubmitOptions).agentOnly)).toEqual([true]);
   } finally {
     pendingMessages.removeCopy(owner, message.id);
     saved.restore();
@@ -280,4 +280,21 @@ it("puts an edited agent-only message back in the box agent-only", async () => {
     pendingMessages.removeCopy(owner, "srv-only");
     saved.restore();
   }
+});
+
+it("settles a comment-bearing send against the full message recorded in the transcript", async () => {
+  const pane = "waiting-with-comments", key = waitingKey("local", pane);
+  const comments = [{ kind: "file" as const, id: "note", anchor: "file:a", created: 1,
+    path: "/repo/a.ts", label: "a.ts", view: "code" as const, lines: [1, 1] as [number, number],
+    source: ["const a = 1;"], quoteLines: ["const a = 1;"], comment: "Fix this." }];
+  let submitted = "";
+  try {
+    expect(await sends(pane, { ok: true }, [], { submitComposerMessage: (text) => {
+      submitted = text; return Promise.resolve({ ok: true });
+    } }).composerSend("Please review", { comments })).toBe(true);
+    expect(submitted).toContain("Fix this.");
+    expect(currentWaitingSends(key)[0]?.text).toBe(submitted);
+    settleWaitingSends(key, [{ role: "user", ts: new Date().toISOString(), parts: [{ kind: "text", text: submitted }] }]);
+    expect(currentWaitingSends(key)).toEqual([]);
+  } finally { forgetWaitingSends(key); }
 });

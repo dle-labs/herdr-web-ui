@@ -36,7 +36,7 @@ describe("MicButton", () => {
       press: () => {}, release: () => calls.push("release"), finish: () => calls.push("finish"), cancel: () => {},
       bindBars: () => {}, bindRing: () => {}, bindMeter: () => {},
     } satisfies VoiceInput;
-    const dictation: Dictation = { shown: true, connected: true, voice, forget: () => {}, partial: "", press: () => calls.push("press") };
+    const dictation: Dictation = { shown: true, connected: true, voice, forget: () => {}, cancel: () => {}, partial: "", press: () => calls.push("press") };
     const view = () => <SettingsProvider><MicButton dictation={{ ...dictation, voice: { ...voice } }} /></SettingsProvider>;
     await act(async () => { renderer = create(view()); });
     const button = () => renderer!.root.findByType("button");

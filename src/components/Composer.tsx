@@ -134,7 +134,7 @@ export interface ComposerProps {
    * where it named none, with `sendAnyway`. `comments` quote files, so with them the
    * message goes to an agent only, never typed into a shell. The receiver composes them with
    * `text` (composeWithComments). A promise settles to any of these results. */
-  onSend: (text: string, options?: { comments?: readonly PaneComment[]; clearDraft?: string; sendAnyway?: boolean }) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
+  onSend: (text: string, options?: { comments?: readonly PaneComment[]; clearDraft?: string; sendAnyway?: boolean; agentOnly?: boolean }) => boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal>;
   onAbort: () => void;
   onUploadImage: (file: File) => Promise<string>;
 }
@@ -1011,7 +1011,7 @@ export function Composer({
     // a polish landing before the acknowledgement would count as an edit and keep the sent message here
     dictation.forget();
     try {
-      const result = onSend(sent, { comments: sentComments, ...(clearDraft !== undefined ? { clearDraft } : {}), ...(sendAnyway ? { sendAnyway } : {}) });
+      const result = onSend(sent, { comments: sentComments, agentOnly: composerDrafts.isAgentOnly(draftKey), ...(clearDraft !== undefined ? { clearDraft } : {}), ...(sendAnyway ? { sendAnyway } : {}) });
       if (!(result instanceof Promise)) { settle(result); composerDrafts.end(draftKey, sendId); return true; }
       void result.then(settle).catch(() => { if (mounted.current) setNote(t("Not confirmed. Check the terminal before sending again.")); }).finally(() => composerDrafts.end(draftKey, sendId));
     } catch {

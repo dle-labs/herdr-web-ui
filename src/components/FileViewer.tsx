@@ -1,3 +1,5 @@
+import { getTransport } from "../lib/transport.ts";
+import { useResourceUrl } from "../lib/useResourceUrl.ts";
 import { createPortal } from "react-dom";
 import { FileToolbarContext } from "./MobileFilesToolbar.tsx";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -235,7 +237,7 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
       const started = Date.now();
       deadline = setTimeout(() => download.abort(), budget.timeoutMs);
       try {
-        const response = await fetch(fileUrl(next.path, paneId), { signal: download.signal, headers: { range: `bytes=0-${budget.bytes - 1}` } });
+        const response = await getTransport().fetch(fileUrl(next.path, paneId), { signal: download.signal, headers: { range: `bytes=0-${budget.bytes - 1}` } });
         clearTimeout(deadline);
         const timeoutMs = Math.max(1, budget.timeoutMs - (Date.now() - started));
         const body = await readFilePreviewText(response, budget.bytes, { signal: download.signal, maxLines: budget.lines, timeoutMs, partialOnTimeout: true });
@@ -268,6 +270,9 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
   const view = previewable && mode === "preview" ? "markdown" : "code";
   const htmlPage = info !== null && info.kind === "text" && info.mime === "text/html";
   const pageUrl = `${url}&render=1`;
+  const urlSrc = useResourceUrl(url);
+  const pageSrc = useResourceUrl(pageUrl);
+  const imageSrc = useResourceUrl(info?.kind === "image" ? `${url}&revision=${encodeURIComponent(`${info.modified}:${info.size}`)}` : null);
   const modes = <div className="segmented file-viewer-modes" role="group" aria-label={t("Show the HTML file as")}>
     <button type="button" aria-pressed={!source} onClick={() => { if (leaveComment()) setSource(false); }}>{t("Page")}</button>
     <button type="button" aria-pressed={source} onClick={() => { if (leaveComment()) setSource(true); }}>{t("Source")}</button>
@@ -317,6 +322,9 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
   const markdown = info?.kind === "text" && /\.(?:md|markdown)$/i.test(info.name);
   // a page of just the document, not the app over it (FileReader)
   const previewUrl = readerHref(machineId, shownPath + (target.line === null ? "" : `#L${target.line}`));
+  const newTabHref = htmlPage && !source ? pageUrl : markdown ? previewUrl : url;
+  const newTabSrc = useResourceUrl(newTabHref);
+  const downloadHref = useResourceUrl(fileUrl(shownPath, paneId, true));
   // images of a markdown file load through the file endpoint, as the file itself does
   const imagePreview = useCallback((src: string) => markdownImagePreview(
     src, shownPath, (target) => fetchFileInfo(target, paneId), (target, download) => fileUrl(target, paneId, download),
@@ -390,15 +398,15 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
       case "image":
         return info.size > MAX_INLINE_IMAGE_BYTES
           ? <p className="file-viewer-note">{t("This image is {size}; download it to view.", { size: formatBytes(info.size) })}</p>
-          : <img className="file-viewer-media" src={`${url}&revision=${encodeURIComponent(`${info.modified}:${info.size}`)}`} alt={info.name} />;
+          : <img className="file-viewer-media" src={imageSrc ?? undefined} alt={info.name} />;
       case "video":
-        return <video className="file-viewer-media" src={url} controls playsInline preload="metadata" />;
+        return <video className="file-viewer-media" src={urlSrc ?? undefined} controls playsInline preload="metadata" />;
       case "audio":
-        return <audio className="file-viewer-audio" src={url} controls preload="metadata" />;
+        return <audio className="file-viewer-audio" src={urlSrc ?? undefined} controls preload="metadata" />;
       case "pdf":
-        return <iframe className="file-viewer-pdf" src={url} title={info.name} />;
+        return <iframe className="file-viewer-pdf" src={urlSrc ?? undefined} title={info.name} />;
       case "text":
-        if (htmlPage && !source) return <>{modes}<iframe className="file-viewer-page" src={pageUrl} sandbox="allow-scripts" title={info.name} /></>;
+        if (htmlPage && !source) return <>{modes}<iframe className="file-viewer-page" src={pageSrc ?? undefined} sandbox="allow-scripts" title={info.name} /></>;
         return loaded === null || (view === "markdown" && preview.status !== "ready")
           ? null
           // a text the renderer cannot draw fails here, not the app: the header (Show source, Raw,
@@ -451,10 +459,10 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
       </div>}
       {/* the file itself: a Markdown tab is the reader; raw and download keep the original bytes */}
       <div className="file-viewer-group">
-        {!page && !appWindow && <a className="icon-button file-viewer-action" href={htmlPage && !source ? pageUrl : markdown ? previewUrl : url} target="_blank" rel="noopener" aria-label={t("Open in a new tab")} title={t("Open in a new tab")}><ExternalLink aria-hidden="true" /></a>}
-        {(page || markdown) && !appWindow && <a className="icon-button file-viewer-action" href={url} target="_blank" rel="noopener" aria-label={t("Open raw file")} title={t("Open raw file")}><Code aria-hidden="true" /></a>}
-        {!page && appWindow && <CopyLinkButton href={htmlPage && !source ? pageUrl : markdown ? previewUrl : url} />}
-        <a className="icon-button file-viewer-action" href={fileUrl(shownPath, paneId, true)} download={info?.name ?? true} aria-label={t("Download")} title={t("Download")}><Download aria-hidden="true" /></a>
+        {!page && !appWindow && <a className="icon-button file-viewer-action" href={newTabSrc ?? undefined} target="_blank" rel="noopener" aria-label={t("Open in a new tab")} title={t("Open in a new tab")}><ExternalLink aria-hidden="true" /></a>}
+        {(page || markdown) && !appWindow && <a className="icon-button file-viewer-action" href={urlSrc ?? undefined} target="_blank" rel="noopener" aria-label={t("Open raw file")} title={t("Open raw file")}><Code aria-hidden="true" /></a>}
+        {!page && appWindow && <CopyLinkButton href={newTabHref} />}
+        <a className="icon-button file-viewer-action" href={downloadHref ?? undefined} download={info?.name ?? true} aria-label={t("Download")} title={t("Download")}><Download aria-hidden="true" /></a>
         {copyable && <CopyFileButton text={loaded.text} sourceRef={sourceRef} onShowSource={showSourceToSelect} />}
       </div>
     </div>;

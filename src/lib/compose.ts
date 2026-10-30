@@ -154,18 +154,8 @@ export function submitNote(code: string, message: string, agent?: string | null,
   if (code === "agent_only_not_ready" || (agentOnly && code === "agent_not_ready")) return t("Not sent: the agent is not ready for a message yet. Nothing was typed. Send it again when it is ready.");
   if (code === "agent_queue_busy" || code === "agent_only_busy") return t("Not sent: the agent is busy with questions it queued. Nothing was typed. Send it again when it is ready.");
   if (code === "agent_only_unsupported") return t("Not sent: update this PC to send comments.");
-  if (code === "agent_only" || (agentOnly && code === "agent_not_found")) return t("Not sent: comments go to an agent only, and none runs in this pane now.");
-  if (code === "agent_only_not_ready" || (agentOnly && code === "agent_not_ready")) return t("Not sent: the agent is not ready for a message yet. Nothing was typed. Send it again when it is ready.");
-  if (code === "agent_queue_busy" || code === "agent_only_busy") return t("Not sent: the agent is busy with questions it queued. Nothing was typed. Send it again when it is ready.");
-  if (code === "agent_only_unsupported") return t("Not sent: update this PC to send comments.");
-  if (code === "rewind_dialog_open") return t("Not sent: Claude Code's rewind dialog is open in the terminal. Finish or close it there (Esc), then send this message.");
-  if (code === "agent_only" || (agentOnly && code === "agent_not_found")) return t("Not sent: comments go to an agent only, and none runs in this pane now.");
-  if (code === "agent_only_not_ready" || (agentOnly && code === "agent_not_ready")) return t("Not sent: the agent is not ready for a message yet. Nothing was typed. Send it again when it is ready.");
-  if (code === "agent_queue_busy" || code === "agent_only_busy") return t("Not sent: the agent is busy with questions it queued. Nothing was typed. Send it again when it is ready.");
-  if (code === "agent_only_unsupported") return t("Not sent: update this PC to send comments.");
   if (code === "pending_input_unsupported") return t("Update this PC to send messages in the next turn. Your draft stayed here.");
   // #511: a message with comments on a reply goes only to an agent
-  if (code === "agent_only_unsupported") return t("Update this PC to send comments on a reply. Your message and comments stayed here.");
   // the same code also says an agent's input state is unknown: that keeps the bridge's own words
   if (code === "agent_not_ready" && message === NO_AGENT_MESSAGE) return t("Not sent: no agent is running in this pane. Your message stayed here.");
   if (code === "submit_timeout") return t("Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.");

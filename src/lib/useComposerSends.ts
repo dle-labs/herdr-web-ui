@@ -87,7 +87,7 @@ export function useComposerSends(deps: ComposerSendsDeps) {
   }, [answering, answerPending, paneId, pendingAnswer, sendAnswer, setPendingAnswer]);
 
   const composerSend = useCallback(
-    (text: string, { comments = [], clearDraft, sendAnyway = false }: { comments?: readonly PaneComment[]; clearDraft?: string; sendAnyway?: boolean } = {}): boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal> => {
+    (text: string, { comments = [], clearDraft, sendAnyway = false, agentOnly = false }: { comments?: readonly PaneComment[]; clearDraft?: string; sendAnyway?: boolean; agentOnly?: boolean } = {}): boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal> => {
       const pane = paneRef.current;
       // A refused send keeps the draft; no second choice goes to the card waiting on its read.
       if (pane !== null && answerPending) return false;
@@ -139,15 +139,18 @@ export function useComposerSends(deps: ComposerSendsDeps) {
       const socket = socketRef.current, session = sessionRef.current;
       const sentAt = Date.now();
       const sentAfter = pane === null ? null : waitingBaseline(waitingKey(machineId, pane));
-      const result = submitComposerMessage(composeWithComments(comments, text), { delivery, agentOnly: comments.length > 0, ...(delivery === "immediate" && clearDraft !== undefined ? { clearDraft } : {}), ...(sendAnyway ? { sendAnyway } : {}) });
+      const outgoingText = composeWithComments(comments, text);
+      const result = submitComposerMessage(outgoingText, { delivery, agentOnly: agentOnly || comments.length > 0, ...(delivery === "immediate" && clearDraft !== undefined ? { clearDraft } : {}), ...(sendAnyway ? { sendAnyway } : {}) });
       return result === null ? false : result.then((answer) => {
         if (!answer.ok) return submitRefusal(answer.code, answer.message, answer.draft, answer.box, agent, comments.length > 0);
         // an older bridge took it with no receipt: the box lets it go, a row keeps it as not confirmed
         if (answer.unconfirmed && pane !== null) pendingMessages.keepUnconfirmed(paneStorageId(machineId, pane), composeWithComments(comments, text));
-        // only a receipt that says the pane took it at once, on the connection and pane it left from
-        if (delivery === "immediate" && answer.pending === undefined && !answer.unconfirmed
-          && paneRef.current === pane && socketRef.current === socket && sessionRef.current === session) {
-          setChatLocalSend((current) => ({ key: current.key + 1, navigationGeneration: navigation }));
+        // A confirmed send belongs to the original pane, even after navigation.
+        if (delivery === "immediate" && answer.pending === undefined && !answer.unconfirmed) {
+          if (paneRef.current === pane && socketRef.current === socket && sessionRef.current === session) {
+            setChatLocalSend((current) => ({ key: current.key + 1, navigationGeneration: navigation }));
+          }
+          if (pane !== null) rememberWaitingSend(waitingKey(machineId, pane), outgoingText, sentAt, sentAfter);
         }
         if (pane !== null && delivery === "immediate" && answer.pending === undefined && !answer.unconfirmed) showSentCommand(pane, text, known, seen);
         return true;
@@ -227,7 +230,7 @@ export function useComposerSends(deps: ComposerSendsDeps) {
           }
           const known = knownOutcomes(pane);
           const seen = inputRowNow() === "ready";
-          const result = submitComposerMessage(message.text, { delivery: "immediate", agentOnly: hasQuotedLine(message.text), resendId: id, generation: message.resendGeneration ?? 0 });
+          const result = submitComposerMessage(message.text, { delivery: "immediate", agentOnly: message.agent_only === true || hasQuotedLine(message.text), resendId: id, generation: message.resendGeneration ?? 0 });
           if (!result) {
             pendingMessages.fail(owner, id, { code: "not_transmitted", message: "the connection dropped before this message was sent" }, false);
             return;

@@ -61,7 +61,7 @@ async function resendRestored(restored: string): Promise<unknown[]> {
   await act(async () => { composerDrafts.set(draftKey, `${restored} please`); });
   await act(async () => { renderer!.update(<Composer {...props} agent={null} restored={null} />); });
   await act(async () => { renderer!.root.findByProps({ "aria-label": "Send message" }).props.onClick(); });
-  return calls.map((call) => call[3]);
+  return calls.map((call) => (call[1] as { agentOnly?: boolean } | undefined)?.agentOnly || undefined);
 }
 
 // #511: a comment message Claude put back on a cancel keeps its agent-only rule when it is edited and sent again
