@@ -980,10 +980,10 @@ describe("WebSocket submit", () => {
       shown = claudeInputScreen("❯\u00a0");
     });
     try {
-      socket.send({ type: "submit", id: 66, pane_id: agent.pane, text: "이 스킬 pr 올려줘", payload: "이 스킬 pr 올려줘", agent_only: agentOnly });
+      socket.send({ type: "submit", id: 66, pane_id: agent.pane, text: "이 스킬 pr 올려줘", payload: "이 스킬 pr 올려줘", ...(agentOnly ? { agent_only: true } : {}) });
       expect(await socket.result(66)).toMatchObject({ ok: false, code: "input_draft", draft: "ㅔ", typed: false });
       expect(sendKeys).not.toHaveBeenCalled();
-      socket.send({ type: "submit", id: 67, pane_id: agent.pane, text: "이 스킬 pr 올려줘", payload: "이 스킬 pr 올려줘", clear_draft: "ㅔ", agent_only: agentOnly });
+      socket.send({ type: "submit", id: 67, pane_id: agent.pane, text: "이 스킬 pr 올려줘", payload: "이 스킬 pr 올려줘", clear_draft: "ㅔ", ...(agentOnly ? { agent_only: true } : {}) });
       expect(await socket.result(67)).toMatchObject({ ok: true, pane_id: agent.pane });
       expect(sendKeys).toHaveBeenCalledWith(agent.pane, ["ctrl+k", "ctrl+u"], undefined, expect.any(Function));
       expect(prompt).toHaveBeenCalledWith(agent.pane, "이 스킬 pr 올려줘", undefined, expect.any(Function));
@@ -1085,7 +1085,7 @@ describe("WebSocket submit", () => {
     });
     try {
       await nameDraft(socket, "named draft");
-      socket.send({ type: "submit", id: 74, pane_id: agent.pane, text: "chat message", payload: "chat message", clear_draft: "named draft", agent_only: agentOnly });
+      socket.send({ type: "submit", id: 74, pane_id: agent.pane, text: "chat message", payload: "chat message", clear_draft: "named draft", ...(agentOnly ? { agent_only: true } : {}) });
       const reply = await socket.result(74);
       expect(reply).toMatchObject({ ok: false, code: "submit_partial" });
       expect(reply).not.toHaveProperty("typed");
@@ -1458,7 +1458,7 @@ describe("WebSocket submit", () => {
       const comment = "> quoted $(touch pwned)\nlooks wrong";
       const from = chunks(shell).length;
       socket.send({ type: "submit", id: 13, pane_id: shell.pane, text: comment, payload: paste(comment.replace(/\n/g, "\r")), agent_only: true });
-      expect(await socket.result(13)).toMatchObject({ ok: false, code: "agent_not_found", typed: false });
+      expect(await socket.result(13)).toMatchObject({ ok: false, code: "agent_not_ready", typed: false });
       // fixed wait: prove the refused comment never reaches the shell after the submit delay.
       await Bun.sleep(SUBMIT_DELAY_MS * 3);
       expect(chunks(shell).slice(from)).toEqual([]);

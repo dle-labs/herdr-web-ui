@@ -939,7 +939,7 @@ export class HerdrSocket {
       // message as raw typed input, past every check it makes before typing (#1591), so nothing is sent
       if (!this.featuresKnown) return CAPABILITIES_UNKNOWN;
       // an older bridge would type it into whatever runs in the pane, a shell included
-      if (agentOnly && !this.features.has("submit-agent-only")) return { ok: false, code: "agent_only_unsupported", message: "this PC's bridge cannot keep the message from a shell", typed: false };
+      if (agentOnly && !this.features.has("submit-agent-only") && !this.features.has("agent-only")) return { ok: false, code: "agent_only_unsupported", message: "this PC's bridge cannot keep the message from a shell", typed: false };
       // hold is decided once the bridge said what the bridge supports: one too old to hold queues it as before
       if (delivery === "hold" && !this.canHoldMessages()) delivery = "queue";
       if (delivery === "queue" && !this.canQueueMessages()) return { ok: false, code: "pending_input_unsupported", message: "Update this PC to queue messages.", typed: false };

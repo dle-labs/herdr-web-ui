@@ -108,8 +108,6 @@ import { TurnTime } from "./TurnTime.tsx";
 import { useT } from "../lib/i18n.ts";
 import { offersRetry, userFailure, type UserFailure } from "../lib/userError.ts";
 import { useAnnouncedText } from "../lib/useAnnouncedText.ts";
-import { replyCommentsKey } from "../lib/replyComments.ts";
-import { ReplyCommentAction } from "./ReplyComments.tsx";
 import { useResourceUrl } from "../lib/useResourceUrl.ts";
 
 /** Slow reads in a row the chat waits through quietly before it alarms: about 50 s at the local 15 s deadline. */
@@ -2409,7 +2407,6 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     {state.source === "conversation" && <ChatMinimap turns={minimap} rowKeys={rowKeys} scroller={scroller} onJump={jumpToTurn} onWheel={minimapWheel} />}
     {jump}
     {/* only a pane this device may send to takes comments: they go with its next message */}
-    {state.source === "conversation" && interactive && !ended && <ReplyCommentAction scroller={scroller} storageKey={replyCommentsKey(paneStorageId(machineId, paneId))} />}
     </div>
     </div>
     {commentNode !== null && createPortal(commentSurface.overlay, commentNode)}
