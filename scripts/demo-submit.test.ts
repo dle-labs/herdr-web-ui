@@ -78,6 +78,8 @@ it("the demo refuses draft clearing, drains accepted pending IDs once, and never
     assert.equal(refused.ok, false);
     assert.equal(refused.code, "unsupported");
     assert.equal(owner.send(claude, "must stay here", undefined, false, refused.id, "another draft").code, "invalid_submit_id");
+    owner.socket.send(JSON.stringify({ type: "submit", id: refused.id, pane_id: claude, text: "must stay here", payload: "must stay here", typed: false, clear_draft: "named draft", agent_only: true }));
+    assert.equal(owner.frames.findLast((frame) => frame.type === "submit-result" && frame.id === refused.id).code, "invalid_submit_id", "changing the agent-only safeguard changes the request identity");
     assert.deepEqual(await json("/api/pane/conversation?pane_id=" + claude), claudeBefore);
     const before = await transcript();
     assert.equal(owner.send(codex, "not an approval answer", "queue").code, "agent_blocked");

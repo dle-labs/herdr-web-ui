@@ -121,4 +121,6 @@ export const TERMINAL_ZH: Record<string, string> = {
   "Show keyboard": "显示键盘",
   "Hide keyboard": "隐藏键盘",
   "Recover unsent text": "恢复未发送的文本",
+  "Comments only": "仅评论",
+  "Comments with this message: {count}": "此消息的评论：{count}",
 };

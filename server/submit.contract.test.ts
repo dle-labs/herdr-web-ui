@@ -264,7 +264,9 @@ describe("WebSocket submit", () => {
       try {
         await nameDraft(socket, "named draft");
         socket.send({ type: "submit", id: 820, pane_id: agent.pane, text: "keep composer text", payload: "keep composer text", clear_draft: "named draft" });
-        expect(await socket.result(820)).toMatchObject({ ok: false, code: "submit_partial" });
+        const partial = await socket.result(820);
+        expect(partial).toMatchObject({ ok: false, code: "submit_partial" });
+        expect(partial.typed).toBeUndefined();
         expect(keys).toHaveBeenCalledTimes(1);
         expect(text).not.toHaveBeenCalled();
         if (failure !== "send") expect(prompt).not.toHaveBeenCalled();
@@ -965,7 +967,7 @@ describe("WebSocket submit", () => {
     }
   }, 30_000);
 
-  it("clears the draft a refusal named, once asked to, and sends when the box reads empty", async () => {
+  for (const agentOnly of [false, true]) it(`clears the draft a refusal named and sends when the box reads empty (agent-only: ${agentOnly})`, async () => {
     const socket = await Socket.connect();
     let shown = claudeInputScreen("❯ ㅔ");
     const screen = mockClaudeInput(agent.pane, () => shown);
@@ -978,10 +980,10 @@ describe("WebSocket submit", () => {
       shown = claudeInputScreen("❯\u00a0");
     });
     try {
-      socket.send({ type: "submit", id: 66, pane_id: agent.pane, text: "이 스킬 pr 올려줘", payload: "이 스킬 pr 올려줘" });
-      expect(await socket.result(66)).toMatchObject({ ok: false, code: "input_draft", draft: "ㅔ" });
+      socket.send({ type: "submit", id: 66, pane_id: agent.pane, text: "이 스킬 pr 올려줘", payload: "이 스킬 pr 올려줘", ...(agentOnly ? { agent_only: true } : {}) });
+      expect(await socket.result(66)).toMatchObject({ ok: false, code: "input_draft", draft: "ㅔ", typed: false });
       expect(sendKeys).not.toHaveBeenCalled();
-      socket.send({ type: "submit", id: 67, pane_id: agent.pane, text: "이 스킬 pr 올려줘", payload: "이 스킬 pr 올려줘", clear_draft: "ㅔ" });
+      socket.send({ type: "submit", id: 67, pane_id: agent.pane, text: "이 스킬 pr 올려줘", payload: "이 스킬 pr 올려줘", clear_draft: "ㅔ", ...(agentOnly ? { agent_only: true } : {}) });
       expect(await socket.result(67)).toMatchObject({ ok: true, pane_id: agent.pane });
       expect(sendKeys).toHaveBeenCalledWith(agent.pane, ["ctrl+k", "ctrl+u"], undefined, expect.any(Function));
       expect(prompt).toHaveBeenCalledWith(agent.pane, "이 스킬 pr 올려줘", undefined, expect.any(Function));
@@ -1070,7 +1072,7 @@ describe("WebSocket submit", () => {
     }
   }, 30_000);
 
-  it("reports a partial outcome rather than nothing typed when the deadline expires after clearing", async () => {
+  for (const agentOnly of [false, true]) it(`reports a partial outcome rather than nothing typed when the deadline expires after clearing (agent-only: ${agentOnly})`, async () => {
     const socket = await Socket.connect();
     let shown = claudeInputScreen("❯ named draft");
     let now = 1_800_000_000_000;
@@ -1083,8 +1085,10 @@ describe("WebSocket submit", () => {
     });
     try {
       await nameDraft(socket, "named draft");
-      socket.send({ type: "submit", id: 74, pane_id: agent.pane, text: "chat message", payload: "chat message", clear_draft: "named draft" });
-      expect(await socket.result(74)).toMatchObject({ ok: false, code: "submit_partial" });
+      socket.send({ type: "submit", id: 74, pane_id: agent.pane, text: "chat message", payload: "chat message", clear_draft: "named draft", ...(agentOnly ? { agent_only: true } : {}) });
+      const reply = await socket.result(74);
+      expect(reply).toMatchObject({ ok: false, code: "submit_partial" });
+      expect(reply).not.toHaveProperty("typed");
       expect(sendKeys).toHaveBeenCalledTimes(1);
       expect(prompt).not.toHaveBeenCalled();
     } finally {
@@ -1446,13 +1450,38 @@ describe("WebSocket submit", () => {
     }
   }, 30_000);
 
+  it("never types an agent-only message into a pane without an agent; an agent still gets it", async () => {
+    const socket = await Socket.connect();
+    try {
+      expect(socket.seen.find((message) => message.type === "snapshot")?.features).toContain("submit-agent-only");
+      // the quoted reply of a comment: a shell would take "> " for a redirect and run $(…)
+      const comment = "> quoted $(touch pwned)\nlooks wrong";
+      const from = chunks(shell).length;
+      socket.send({ type: "submit", id: 13, pane_id: shell.pane, text: comment, payload: paste(comment.replace(/\n/g, "\r")), agent_only: true });
+      expect(await socket.result(13)).toMatchObject({ ok: false, code: "agent_not_ready", typed: false });
+      // fixed wait: prove the refused comment never reaches the shell after the submit delay.
+      await Bun.sleep(SUBMIT_DELAY_MS * 3);
+      expect(chunks(shell).slice(from)).toEqual([]);
+      const sent = chunks(agent).length;
+      socket.send({ type: "submit", id: 14, pane_id: agent.pane, text: comment, payload: paste(comment.replace(/\n/g, "\r")), agent_only: true });
+      const delivered = await socket.result(14);
+      expect(delivered).toMatchObject({ ok: true });
+      expect(delivered.typed).toBeUndefined();
+      await received(agent, sent, 1);
+      expect(typed(agent, sent)).toBe(`${paste(comment)}\r`);
+    } finally {
+      socket.close();
+    }
+  }, 30_000);
+
   it("refuses a message while the agent waits for an answer, typing nothing", async () => {
     const socket = await Socket.connect();
     await herdrRpc("pane.report_agent", { pane_id: agent.pane, source: "manual", agent: "claude", state: "blocked" });
     try {
       const from = chunks(agent).length;
       socket.send({ type: "submit", id: 3, pane_id: agent.pane, text: "yes", payload: "yes" });
-      expect(await socket.result(3)).toMatchObject({ ok: false, code: "agent_blocked" });
+      // herdr refused agent.prompt before pasting: the bridge knows nothing was typed
+      expect(await socket.result(3)).toMatchObject({ ok: false, code: "agent_blocked", typed: false });
       await Bun.sleep(SUBMIT_DELAY_MS * 3);
       expect(chunks(agent).slice(from)).toEqual([]);
     } finally {

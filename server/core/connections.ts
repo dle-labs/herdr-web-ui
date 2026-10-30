@@ -193,6 +193,7 @@ export function createConnections({ clients, present, pending, devices, detachCl
       case "stalled": {
         if (state.closing) return;
         state.closing = true;
+        present.delete(client);
         killWatches(client);
         pending.close(client);
         clients.delete(client);

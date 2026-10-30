@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DEFAULT_VIRTUAL_FILE_METRICS, type FileContents, type VirtualizedFile, type Virtualizer as VirtualizerInstance } from "@pierre/diffs";
 import { File, useVirtualizer, Virtualizer, type FileOptions } from "@pierre/diffs/react";
 
 import { DiffWorkerPool } from "./DiffWorkerPool.tsx";
 import { VIRTUAL_HIGHLIGHT_LINES } from "../lib/sourcePreview.ts";
 import { contentKey, keepEmptyRows, SCROLL_CONFIG, SHADOW_CSS, SOURCE_THEME } from "../lib/sourceTheme.ts";
+import type { SourceInteraction } from "./SourceComments.tsx";
 import "./VirtualSource.css";
 
 export interface VirtualSourceProps {
@@ -18,9 +19,11 @@ export interface VirtualSourceProps {
   theme: "dark" | "light";
   /** a requested line, within the source: marked, and brought to the middle of the view */
   markedLine: number | null;
+  /** The same line annotations and gutter interactions used by the diff viewer. */
+  interaction?: SourceInteraction;
 }
 
-type FileOptionsOf = FileOptions<undefined, undefined>;
+type FileOptionsOf = FileOptions<ReactNode, undefined>;
 type Align = "center" | "start";
 interface Reveal { line: number; align: Align; passes: number }
 
@@ -44,7 +47,7 @@ function VirtualizerProbe({ onInstance }: { onInstance: (instance: VirtualizerIn
  * width change, which re-measure the rows, keeps the marked line in view when it was, else the
  * top line in place.
  */
-export default function VirtualSource({ name, text, colored, wrap, theme, markedLine }: VirtualSourceProps) {
+export default function VirtualSource({ name, text, colored, wrap, theme, markedLine, interaction }: VirtualSourceProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<VirtualizedFile | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
@@ -216,7 +219,8 @@ export default function VirtualSource({ name, text, colored, wrap, theme, marked
     enableLineSelection: false,
     unsafeCSS: SHADOW_CSS,
     onPostRender,
-  }), [wrap, theme, colored, onPostRender]);
+    ...interaction?.options,
+  }), [wrap, theme, colored, onPostRender, interaction?.options]);
   const selected = useMemo(() => markedLine === null ? null : { start: markedLine, end: markedLine }, [markedLine]);
   const metrics = useMemo(() => lineHeight === null ? null : { ...DEFAULT_VIRTUAL_FILE_METRICS, lineHeight }, [lineHeight]);
 
@@ -228,7 +232,7 @@ export default function VirtualSource({ name, text, colored, wrap, theme, marked
     <DiffWorkerPool>
       <Virtualizer className="virtual-source-scroll" contentClassName="virtual-source-column" config={SCROLL_CONFIG}>
         <VirtualizerProbe onInstance={onVirtualizer} />
-        {metrics !== null && <File className="virtual-source-file" file={file} options={options} metrics={metrics} selectedLines={selected} />}
+        {metrics !== null && <File className="virtual-source-file" file={file} options={options} metrics={metrics} selectedLines={interaction?.selectedLines ?? selected} lineAnnotations={interaction?.lineAnnotations} renderAnnotation={({ metadata }) => metadata} renderGutterUtility={interaction?.renderGutterUtility} />}
       </Virtualizer>
     </DiffWorkerPool>
   </div>;

@@ -73,6 +73,7 @@ export async function checkPaneFind(browser: Browser, origin: string): Promise<v
     });
     await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
     await page.locator(".xterm-rows", { hasText: "find_browser_ready" }).waitFor();
+    await page.evaluate(() => document.fonts.ready);
     const openedGeometry = resized();
     await page.keyboard.press("ControlOrMeta+Shift+F");
     await openedGeometry;

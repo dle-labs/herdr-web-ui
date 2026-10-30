@@ -9,6 +9,7 @@ import type { DiffStyle } from "../lib/settings.ts";
 import { VIRTUAL_HIGHLIGHT_LINES } from "../lib/sourcePreview.ts";
 import { contentKey, keepEmptyRows, SCROLL_CONFIG, SHADOW_CSS, SOURCE_THEME } from "../lib/sourceTheme.ts";
 import "./RepoDiff.css";
+import { markRow, textRange, revealColumns } from "../lib/diffFindPaint.ts";
 
 export interface RepoDiffProps {
   /** git's patch for one file, from its `diff --git` line on, whole */
@@ -45,47 +46,6 @@ function VirtualizerProbe({ onInstance }: { onInstance: (instance: VirtualizerIn
   const instance = useVirtualizer();
   useLayoutEffect(() => { onInstance(instance); }, [instance, onInstance]);
   return null;
-}
-
-/** The mounted row of a logical line: split draws each side in its own column; unified draws a deletion by its old number, the rest by their new one. */
-function markRow(shadow: ShadowRoot, mark: DiffMark): HTMLElement | null {
-  const split = shadow.querySelector("pre")?.getAttribute("data-diff-type") === "split";
-  if (split) return shadow.querySelector<HTMLElement>(`code[data-${mark.side === "old" ? "deletions" : "additions"}] [data-line="${mark.line}"]`);
-  return shadow.querySelector<HTMLElement>(mark.side === "old"
-    ? `[data-line="${mark.line}"][data-line-type="change-deletion"]`
-    : `[data-line="${mark.line}"]:not([data-line-type="change-deletion"])`);
-}
-
-/** The range of columns `start`..`end` of a row's text, across the token spans it is drawn in. */
-function textRange(row: HTMLElement, start: number, end: number): Range | null {
-  const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-  const range = document.createRange();
-  let offset = 0;
-  let started = false;
-  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-    const length = node.textContent?.length ?? 0;
-    if (!started && start < offset + length) { range.setStart(node, start - offset); started = true; }
-    if (started && end <= offset + length) { range.setEnd(node, end - offset); return range; }
-    offset += length;
-  }
-  return null;
-}
-
-/**
- * Brings a match's columns into view in its row's horizontal scroller (unwrapped rows; in split, its
- * side's column), centred beside the sticky line numbers; a match already in view stays put.
- */
-function revealColumns(row: HTMLElement, mark: DiffMark): void {
-  const scroller = row.closest<HTMLElement>("[data-code]");
-  if (scroller === null || scroller.scrollWidth <= scroller.clientWidth + 1) return;
-  const range = textRange(row, mark.start, mark.end);
-  if (range === null) return;
-  const match = range.getBoundingClientRect();
-  const box = scroller.getBoundingClientRect();
-  const left = Math.max(box.left, scroller.querySelector("[data-gutter]")?.getBoundingClientRect().right ?? box.left);
-  const right = box.left + scroller.clientWidth;
-  if (match.left >= left && match.right <= right) return;
-  scroller.scrollLeft += (match.left + match.right) / 2 - (left + right) / 2;
 }
 
 /** The fewest context lines the package's trimmer keeps correct (at 0 it miscounts the lines it drops). */

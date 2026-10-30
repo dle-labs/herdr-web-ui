@@ -1,0 +1,16 @@
+/** Non-modal: selection and native Copy remain available until Comment is pressed. */
+.comment-selection {
+  position: fixed;
+  z-index: var(--z-popover);
+  min-height: var(--touch-target);
+  box-shadow: var(--shadow-pop);
+}
+
+/* Keep the selected passage visible while editing and after saving. */
+.file-viewer-markdown ::highlight(block-comment) {
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.file-viewer-markdown ::highlight(block-comment-pending) {
+  background-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}

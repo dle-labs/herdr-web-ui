@@ -18,6 +18,12 @@ import { NO_AGENT_MESSAGE, submitNotTyped } from "../../shared/submit-outcome.ts
 export { submitNotTyped } from "../../shared/submit-outcome.ts";
 
 /** This cap keeps one composer message inside a single WS frame. */
+export const SELECTION_QUOTE_MAX = 2000;
+
+export function isSlashCommand(text: string): boolean {
+  return /^\/[\w:.-]+(?:\s|$)/.test(text.trimStart());
+}
+
 export const MAX_COMPOSER_CHARS = 20_000;
 
 const PASTE_START = "\u001b[200~";
@@ -68,9 +74,10 @@ export function insertNote(code: string, message: string): string {
  * frame never left (`not_transmitted`) proves only that a held row was not sent: a queued row may still
  * be typed by its turn's end, since the bridge keeps its lease until it notices the connection is gone.
  */
-export function pendingActionUncertain(code: string, state: string): boolean {
+export function pendingActionUncertain(input: string | { code: string; typed?: false }, state: string): boolean {
+  const code = typeof input === "string" ? input : input.code;
   if (code === "not_transmitted") return state !== "held";
-  return code === "pending_not_found" || !submitNotTyped(code);
+  return code === "pending_not_found" || !submitNotTyped(input);
 }
 
 /**
@@ -85,10 +92,10 @@ export type DraftRefusal = { note: string; draft: string } | { note: string; any
  * submitNote, or a DraftRefusal when the server named a draft it can clear (SubmitResult's `draft`)
  * or showed a box it could not tell empty (`box`; empty when it could not read one whole).
  */
-export function submitRefusal(code: string, message: string, draft?: string, box?: string, agent?: string | null): string | DraftRefusal {
+export function submitRefusal(code: string, message: string, draft?: string, box?: string, agent?: string | null, agentOnly = false): string | DraftRefusal {
   if (code === "input_draft" && draft) return { note: t("Not sent: Claude Code's input box in the terminal already holds “{draft}”.", { draft }), draft };
   if (code === "input_draft" && box) return { note: t("Not sent: Claude Code's input box in the terminal may not be empty. It shows “{box}”.", { box }), anyway: true };
-  return submitNote(code, message, agent);
+  return submitNote(code, message, agent, agentOnly);
 }
 
 /**
@@ -131,7 +138,7 @@ export function openCodeRefusalNote(code: string, message: string, tt: (text: st
 }
 
 /** `agent`: the pane's agent, which names the input an input_draft refusal is about (Claude Code's when unknown) */
-export function submitNote(code: string, message: string, agent?: string | null): string {
+export function submitNote(code: string, message: string, agent?: string | null, agentOnly = false): string {
   const opencode = openCodeRefusalNote(code, message);
   if (opencode !== null) return opencode;
   if (code === "submit_partial") return t("Not confirmed: the terminal draft was cleared or may have changed. Your message stayed here. Check the terminal before sending again.");
@@ -143,9 +150,12 @@ export function submitNote(code: string, message: string, agent?: string | null)
   if (code === "input_draft" && agent === "hermes") return t("Not sent: Hermes' input in the terminal is not empty. Send or clear it there, then send this message.");
   if (code === "input_draft") return t("Not sent: Claude Code's input box in the terminal is not empty. Send or clear it there, then send this message.");
   if (code === "rewind_dialog_open") return t("Not sent: Claude Code's rewind dialog is open in the terminal. Finish or close it there (Esc), then send this message.");
+  if (code === "agent_only" || (agentOnly && code === "agent_not_found")) return t("Not sent: comments go to an agent only, and none runs in this pane now.");
+  if (code === "agent_only_not_ready" || (agentOnly && code === "agent_not_ready")) return t("Not sent: the agent is not ready for a message yet. Nothing was typed. Send it again when it is ready.");
+  if (code === "agent_queue_busy" || code === "agent_only_busy") return t("Not sent: the agent is busy with questions it queued. Nothing was typed. Send it again when it is ready.");
+  if (code === "agent_only_unsupported") return t("Not sent: update this PC to send comments.");
   if (code === "pending_input_unsupported") return t("Update this PC to send messages in the next turn. Your draft stayed here.");
   // #511: a message with comments on a reply goes only to an agent
-  if (code === "agent_only_unsupported") return t("Update this PC to send comments on a reply. Your message and comments stayed here.");
   // the same code also says an agent's input state is unknown: that keeps the bridge's own words
   if (code === "agent_not_ready" && message === NO_AGENT_MESSAGE) return t("Not sent: no agent is running in this pane. Your message stayed here.");
   if (code === "submit_timeout") return t("Not sent: it waited too long behind an earlier message, and nothing was typed. Send it again.");

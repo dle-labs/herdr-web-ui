@@ -391,7 +391,7 @@ async function viewerLoading(page: Page, pane: Locator, label: string, capture: 
   await page.evaluate(() => (window as unknown as { releaseFile: () => void }).releaseFile());
   await page.getByText("export let c = 3;").first().waitFor();
   await opening.waitFor({ state: "detached" });
-  await page.getByRole("button", { name: "Close file", exact: true }).click();
+  await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
   await page.getByText("export let c = 3;").first().waitFor({ state: "detached" });
   record("relative-tool-target", `${label}: the viewer shows its loading state on the held file inside the page, then the file once released`, { box, viewport });
 }
@@ -455,10 +455,13 @@ async function demoChecks(browser: Browser, base: string): Promise<void> {
     await page.getByText("export const viewed = true;").first().waitFor();
     // the project icon's reads name no file
     const requests = (await page.evaluate(() => (window as unknown as { fsRequests: { endpoint: string; path: string | null }[] }).fsRequests)).filter((request) => request.path !== null);
-    assert.deepEqual(requests.map((request) => request.endpoint), ["/api/fs/stat", "/api/fs/file"]);
+    // Resolving a chat path and loading its embedded document each read metadata.
+    assert.ok(requests.some((request) => request.endpoint === "/api/fs/stat"));
+    assert.equal(requests.filter((request) => request.endpoint === "/api/fs/file").length, 1);
+    assert.ok(requests.every((request) => request.endpoint === "/api/fs/stat" || request.endpoint === "/api/fs/file"));
     assert.ok(requests.every((request) => request.path === "/work/app/src/a.ts"), `the viewer asked only for the whole path: ${JSON.stringify(requests)}`);
     record("relative-tool-target", "hovering shows the whole path, and the viewer requests exactly /work/app/src/a.ts", { title: "Open /work/app/src/a.ts", requests });
-    await page.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await page.getByText("export const viewed = true;").first().waitFor({ state: "detached" });
     await viewerLoading(page, pane, "desktop", null);
     await copyChecks(page, pane, "the link");
@@ -601,12 +604,12 @@ async function captureSet(browser: Browser, base: string, bareBase: string, widt
     await page.getByText("export const viewed = true;").first().waitFor();
     await noPageScroll(page, name("viewer"));
     await shot(page, name("viewer"));
-    await page.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await page.getByText("export const viewed = true;").first().waitFor({ state: "detached" });
     await pane.getByRole("button", { name: "app/src/b.ts", exact: true }).click();
     await page.getByRole("alert").filter({ hasText: "The file could not be opened." }).waitFor();
     await shot(page, name("viewer-error"));
-    await page.getByRole("button", { name: "Close file", exact: true }).click();
+    await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
     await page.getByText("The file could not be opened.").waitFor({ state: "detached" });
     // the viewer's loading state, on a file whose content waits for the script
     await viewerLoading(page, pane, name("viewer-loading"), name("viewer-loading"));

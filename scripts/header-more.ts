@@ -17,6 +17,10 @@ export async function moreItem(page: Page, label: string): Promise<Locator> {
 
 /** Runs an item; the menu closes with it. */
 export async function runMoreItem(page: Page, label: string): Promise<void> {
+  if (label === "Browse files" && await page.locator(".header-files-button").isVisible()) {
+    await page.locator(".header-files-button").click();
+    return;
+  }
   const item = await moreItem(page, label);
   await item.click();
   await item.waitFor({ state: "hidden" });

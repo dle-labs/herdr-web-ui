@@ -31,6 +31,15 @@ const BASE: Record<string, string> = {
   "Goal": "目标",
   "Waiting for your answer": "等待你的回答",
   "Back": "返回",
+  "Find files…": "查找文件…",
+  "Search commits…": "搜索提交…",
+  "Working changes": "工作区更改",
+  "Could not load files": "无法加载文件",
+  "Could not load commits": "无法加载提交",
+  "More results available. Refine your search.": "还有更多结果，请缩小搜索范围。",
+  "Compare with…": "比较对象…",
+  "Working tree": "工作区",
+  "All files": "所有文件",
   "Scroll pane up": "向上滚动面板",
   "Scroll pane down": "向下滚动面板",
   "Find in terminal": "在终端中查找",
@@ -113,6 +122,8 @@ const BASE: Record<string, string> = {
   "On, pushed to this device": "已开启，推送到此设备",
   "Alerts on, pushed to this device, even with the app closed. Tap to turn them off": "提醒已开启，推送到此设备。即使关闭应用也会收到。点按可关闭",
   "Off on this device": "此设备已关闭",
+  "File view": "文件视图",
+  "Source": "源代码",
   "More": "更多",
   "More · alerts are off": "更多 · 提醒已关闭",
   "Alerts off on this device. Tap to turn them on": "此设备上的提醒已关闭。点按可开启",
@@ -164,9 +175,11 @@ const BASE: Record<string, string> = {
 
   // ---- files ----
   "Files": "文件",
+  "Reveal in file tree": "在文件树中显示",
   "This image is {size}; download it to view.": "此图片大小为 {size}；请下载后查看。",
   "Download": "下载",
   "Open {path}": "打开 {path}",
+  "Preview": "预览",
 
   // ---- PC dialog ----
   "Continue": "继续",
@@ -189,6 +202,7 @@ const BASE: Record<string, string> = {
   "Pairing code": "配对码",
   "Open this address on your phone": "在手机上打开此地址",
   "{agent} is ready": "{agent} 已就绪",
+
 
 
   // ---- composer ----
@@ -241,6 +255,7 @@ const BASE: Record<string, string> = {
 
   // ---- devices ----
   "Loading…": "正在加载…",
+  "Select a file to view.": "请选择要查看的文件。",
   "Done": "完成",
 
   // ---- phone ----
@@ -300,6 +315,7 @@ const BASE: Record<string, string> = {
   "This pane can't be shown.": "无法显示此窗格。",
   "The sidebar can't be shown.": "无法显示侧边栏。",
   "Diff layout": "差异布局",
+  "Changed files": "已更改的文件",
   "Unified": "单栏",
   "Split": "并排",
   // t3code ports (a)
@@ -330,6 +346,35 @@ const BASE: Record<string, string> = {
   "Weekly": "每周",
   "Open terminal": "打开终端",
   "Sign in to {agent}": "登录 {agent}",
+  "Add comment": "添加评论",
+  "Binary files cannot be displayed as a text diff.": "二进制文件无法显示为文本差异。",
+  "Close comment": "关闭评论",
+  "Comment": "备注",
+  "Quoted text": "引用文本",
+  "Delete comment": "删除评论",
+  "Discard comment": "丢弃评论",
+  "File diff": "文件差异",
+  "Markdown view": "Markdown 视图",
+  "Diff": "差异",
+  "Files changed while this diff was loading. Refresh to review the latest changes.": "加载差异时文件发生了变化。请刷新以查看最新更改。",
+  "Git changes could not be loaded. Check that this pane is in a Git repository and its bridge supports diffs.": "无法加载 Git 更改。请确认此窗格位于 Git 仓库中，且桥接服务支持差异查看。",
+  "Go to the next comment": "跳到下一条评论",
+  "Line {line}": "第 {line} 行",
+  "Lines {first}–{last}": "第 {first}–{last} 行",
+  "New": "新版本",
+  "No changes in this comparison.": "此比较中没有更改。",
+  "Old": "旧版本",
+  "Outdated comments": "旧版本评论",
+  "Save comment": "保存评论",
+  "Saved comments are included with your next chat message.": "保存的评论将包含在下一条聊天消息中。",
+  "This diff could not be displayed.": "无法显示此差异。",
+  "This diff could not be loaded. The file may have changed, be too large, or have unresolved conflicts.": "无法加载此差异。文件可能已更改、过大或存在未解决的冲突。",
+  "This folder listing is incomplete.": "此文件夹列表未完整显示。",
+  "Too long to send. Shorten the message or remove comments.": "内容过长，无法发送。请缩短消息或删除评论。",
+  "Write a comment…": "写评论…",
+  "{count} comment": "{count} 条评论",
+  "{count} comments": "{count} 条评论",
+  "Wrap long lines": "长行自动换行",
 };
 
 /** The parts ZH is made of; src/lib/i18n.test.ts fails when a key is in two parts, since a spread keeps only the last. */
