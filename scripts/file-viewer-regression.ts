@@ -199,6 +199,9 @@ try {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   // A known prior document proves explicit close leaves no invisible preview entry.
+  // Run the web-panel integration independently of the full file-preview matrix.
+  const previewBrowser = browser;
+  const checkFilePreviews = async () => {
   await page.goto(`${origin}/api/health`);
   await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}`);
   await page.locator(".conn-live").waitFor();
@@ -781,7 +784,7 @@ try {
   // the same document, while raw/download keep their byte-for-byte API contract.
   for (const width of [390, 1440]) {
     for (const theme of ["dark", "light"]) {
-      const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
+      const context = await previewBrowser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
       await context.addInitScript((theme) => localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme })), theme);
       const page = await context.newPage();
       page.setDefaultTimeout(10_000);
@@ -870,7 +873,7 @@ try {
   // Since the body is then the one scroll box, it opens with the focus, so the keys scroll it
   // before any click; and the bound is the screen's only, so printing it prints every page.
   for (const width of [1280, 601, 600, 390]) {
-    const readerContext = await browser.newContext({ viewport: { width, height: 800 } });
+    const readerContext = await previewBrowser.newContext({ viewport: { width, height: 800 } });
     try {
       const readerPage = await readerContext.newPage();
       await readerPage.goto(`${origin}/?read=${encodeURIComponent(join(root, "long.md"))}`);
@@ -928,7 +931,7 @@ try {
   assert.ok(local?.snapshot);
   const remote: Machine = { ...local, id: "remote-fixture", name: "Remote fixture", snapshot: { ...local.snapshot, panes: [], workspaces: [], tabs: [], layouts: [], agents: [] } };
   for (const target of ["remote-fixture", "local", "missing-fixture"]) {
-    const ownerContext = await browser.newContext();
+    const ownerContext = await previewBrowser.newContext();
     const fileRequests: string[] = [];
     await ownerContext.addInitScript(({ stored, pane }) => {
       localStorage.setItem("ovis:settings", JSON.stringify({ language: "en" }));
@@ -1339,6 +1342,10 @@ try {
   await imagePage.close();
   console.log("PASS Chat Markdown image opens by touch, Enter and Space with its filename; Back, Close and Escape restore the thumbnail");
 
+  };
+  if (!process.argv.includes("--web-panel-only")) await checkFilePreviews();
+  else await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}&view=chat`);
+
   // Own document: report closes leave forward entries, while the file checks start without them.
   // The real App must provide and render the web panel even when no docked column fits.
   const reportPage = await context.newPage();
@@ -1432,99 +1439,30 @@ try {
   await reportPage.getByRole("button", { name: "Close page", exact: true }).click();
   await reportPage.locator(".web-panel-popup").waitFor({ state: "detached" });
   await reportPage.close();
-  // The report and a docked file share one place and one history entry. Each row records the open
-  // panel and the screen each Back reaches, beside what 6c78047f (before mobile reports) did; a row
-  // that differs says why. "previous" is the page before the app. Rows with fileOpen "popup" open
-  // the file as a popup ("file popup" when it is the only panel) and "dock" moves it beside the pane with Show beside the pane. "forward" is
-  // the screen after a Forward right on the open panel, "forwards" the screens of Forwards after the Backs.
-  type Screen = "none" | "web" | "file" | "file popup" | "web+file" | "previous";
-  type Moves = { open: Screen; forward?: Screen; backs: Screen[]; forwards?: Screen[] };
-  const transitions: Array<Moves & { name: string; fileOpen?: "popup"; steps: Array<"web" | "file" | "dock" | "diff" | "narrow" | "wide">; base: Moves | null; why?: string }> = [
-    { name: "web → file", steps: ["web", "file"], open: "file", backs: ["none", "previous"], base: { open: "file", backs: ["none", "previous"] } },
-    { name: "file → web", steps: ["file", "web"], open: "web", backs: ["none", "previous"], base: { open: "web", backs: ["previous"] }, why: "the report takes over the file's entry instead of waiting on a Back that dropped it" },
-    { name: "file → web → file", steps: ["file", "web", "file"], open: "file", backs: ["none", "previous"], base: { open: "file", backs: ["none", "previous"] } },
-    { name: "docked web (from the narrow popup) → file", steps: ["narrow", "web", "wide", "file"], open: "file", backs: ["none", "previous"], base: null, why: "narrow windows had no report before" },
-    { name: "web → narrow → wide → file", steps: ["web", "narrow", "wide", "file"], open: "file", backs: ["none", "previous"], base: { open: "file", backs: ["none", "previous"] } },
-    { name: "file popup → dock", fileOpen: "popup", steps: ["file", "dock"], open: "file", backs: ["none", "previous"], base: { open: "file", backs: ["none", "previous"] } },
-    { name: "file popup → dock → web → file popup → dock", fileOpen: "popup", steps: ["file", "dock", "web", "file", "dock"], open: "file", backs: ["none", "previous"], base: { open: "file", backs: ["none", "previous"] } },
-    { name: "file popup → dock → web → file popup → narrow → wide → dock", fileOpen: "popup", steps: ["file", "dock", "web", "file", "narrow", "wide", "dock"], open: "file", backs: ["none", "previous"], base: { open: "file", backs: ["none", "previous"] } },
-    { name: "file popup → dock → web → file popup → dock, Forward", fileOpen: "popup", steps: ["file", "dock", "web", "file", "dock"], open: "file", forward: "file", backs: ["none", "previous"], base: { open: "file", forward: "file", backs: ["none", "previous"] } },
-    { name: "file popup → dock → web → file popup → dock, Back → Forward", fileOpen: "popup", steps: ["file", "dock", "web", "file", "dock"], open: "file", backs: ["none"], forwards: ["file"], base: { open: "file", backs: ["none"], forwards: ["file"] } },
-    { name: "file → web → Browse files → Changes → diff → Open file", steps: ["file", "web", "diff"], open: "file", backs: ["none", "previous"], base: { open: "file", backs: ["none", "previous"] } },
-    { name: "docked web (from the narrow popup) → file popup", fileOpen: "popup", steps: ["narrow", "web", "wide", "file"], open: "web+file", backs: ["web", "none", "previous"], base: null, why: "narrow windows had no report before" },
-    { name: "docked web (from the narrow popup) → file popup → dock", fileOpen: "popup", steps: ["narrow", "web", "wide", "file", "dock"], open: "file", backs: ["none", "previous"], base: null, why: "narrow windows had no report before" },
-  ];
-  for (const row of transitions) {
+  // Files is a modal workspace in this branch. Opening it over a web report must
+  // preserve the report and return to it when the file's history entry closes.
+  for (const startNarrow of [false, true]) {
     const page = await context.newPage();
     page.setDefaultTimeout(10_000);
     page.on("pageerror", (error) => reportErrors.push(error.message));
-    await page.addInitScript((fileOpen) => {
-      if (window.top !== window) return;
-      const settings = JSON.parse(localStorage.getItem("ovis:settings") ?? "{}") as Record<string, unknown>;
-      localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", chatFontSize: 17, chatFontFamily: "Georgia", webLinks: "panel", ...settings, fileOpen }));
-    }, row.fileOpen ?? "panel");
     try {
-      await page.setViewportSize({ width: 1280, height: 800 });
-      await page.goto(reportUrl);
+      await page.setViewportSize({ width: startNarrow ? 900 : 1280, height: 800 });
       await page.goto(`${origin}/?pane=${encodeURIComponent(pane)}&view=chat`);
       await page.locator(".conn-live").waitFor();
-      const screen = async (): Promise<Screen> => {
-        if (page.url().startsWith(reportUrl)) return "previous";
-        const web = await page.locator(".web-panel, .web-panel-popup").count() > 0;
-        const docked = await page.locator("aside.file-panel").count() > 0;
-        const popup = await page.locator(".modal.file-viewer").count() > 0;
-        return web && (docked || popup) ? "web+file" : web ? "web" : docked ? "file" : popup ? "file popup" : "none";
-      };
-      const reaches = async (expected: Screen, label: string): Promise<void> => {
-        const until = Date.now() + 5_000;
-        while (await screen() !== expected && Date.now() < until) await page.waitForTimeout(50);
-        // fixed wait: no stray Back may close the reached panel in this time
-        await page.waitForTimeout(400);
-        assert.equal(await screen(), expected, `${row.name}: ${label}`);
-      };
-      for (const step of row.steps) {
-        if (step === "narrow" || step === "wide") {
-          await page.setViewportSize({ width: step === "narrow" ? 900 : 1280, height: 800 });
-          if (await screen() === "web") await page.locator(step === "narrow" ? ".web-panel-popup" : ".web-panel").waitFor();
-        } else if (step === "web") {
-          await page.getByRole("link", { name: "web report", exact: true }).click();
-          await page.locator(".web-panel, .web-panel-popup").first().waitFor();
-        } else if (step === "diff") {
-          await openFiles(page);
-          const files = page.locator(".files-dialog");
-          await files.getByRole("button", { name: "Changes", exact: true }).click();
-          await files.locator(".repo-change").filter({ hasText: "notes.txt" }).click();
-          await page.locator(".repo-diff-viewer").getByRole("button", { name: "Open file", exact: true }).click();
-          await page.locator("aside.file-panel").getByText("File preview history regression", { exact: true }).waitFor();
-        } else if (step === "dock") {
-          await page.getByRole("dialog", { name: "notes.txt", exact: true }).getByRole("button", { name: "Show beside the pane", exact: true }).click();
-          await page.locator("aside.file-panel").getByText("File preview history regression", { exact: true }).waitFor();
-        } else {
-          await page.getByRole("button", { name: "notes", exact: true }).press("Enter");
-          await page.locator(row.fileOpen === "popup" ? ".modal.file-viewer" : "aside.file-panel").getByText("File preview history regression", { exact: true }).waitFor();
-        }
-      }
-      await reaches(row.open, "open panel");
-      assert.equal(await page.evaluate(() => {
-        const state = history.state ?? {};
-        return Object.hasOwn(state, "ovis:file-preview") && (Object.hasOwn(state, "ovis:web-panel") || Object.hasOwn(state, "ovis:web-panel-docked"));
-      }), false, `${row.name}: one panel owns the entry`);
-      if (row.forward !== undefined) {
-        await page.goForward();
-        await reaches(row.forward, "Forward");
-      }
-      for (const [back, expected] of row.backs.entries()) {
-        await page.goBack();
-        await reaches(expected, `Back ${back + 1}`);
-      }
-      for (const [forward, expected] of (row.forwards ?? []).entries()) {
-        await page.goForward();
-        await reaches(expected, `Forward ${forward + 1} after the Backs`);
-      }
-      const moves = ({ open, forward, backs, forwards }: Moves): string =>
-        `open ${open}${forward === undefined ? "" : `, Forward ${forward}`}, Back ${backs.join(" → ")}${forwards === undefined ? "" : `, Forward ${forwards.join(" → ")}`}`;
-      if (row.base !== null && row.why === undefined) assert.deepEqual(moves(row), moves(row.base), `${row.name} matches 6c78047f`);
-      console.log(`PASS transition ${row.name}: ${moves(row)}${row.base === null ? "" : `; 6c78047f: ${moves(row.base)}`}${row.why === undefined ? "" : ` (${row.why})`}`);
+      await page.getByRole("link", { name: "web report", exact: true }).click();
+      await page.locator(startNarrow ? ".web-panel-popup" : ".web-panel").waitFor();
+      if (startNarrow) await page.setViewportSize({ width: 1280, height: 800 });
+      await page.locator(".web-panel").waitFor();
+      await page.getByRole("button", { name: "notes", exact: true }).press("Enter");
+      await page.locator(".files-dialog .file-viewer").waitFor();
+      assert.equal(await page.locator(".web-panel").count(), 1, "Files preserves the report underneath");
+      await sheetsSettled(page);
+      await page.goBack();
+      await page.locator(".files-dialog").waitFor({ state: "detached" });
+      await page.locator(".web-panel").waitFor();
+      await page.getByRole("button", { name: "Close page", exact: true }).click();
+      await page.locator(".web-panel").waitFor({ state: "detached" });
+      assert.equal(await page.locator(".chat-transcript").count(), 1);
     } finally { await page.close(); }
   }
   assert.deepEqual(reportErrors, []);

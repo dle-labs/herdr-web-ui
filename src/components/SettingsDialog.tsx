@@ -16,6 +16,7 @@ import { CHAT_FONT_MAX, CHAT_FONT_MIN, CHAT_WIDTHS, chatFontSize, HISTORY_PROMPT
 import { pickTheme, rowFor, THEME_IDS, type Mode, type ThemeId } from "../lib/themes.ts";
 import { LANGUAGE_NAMES, LANGUAGE_SETTINGS, useLocale, useT } from "../lib/i18n.ts";
 import { useFocusTrap } from "../lib/useFocusTrap.ts";
+import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { KeyBarSettings } from "./KeyBarSettings.tsx";
 import { onSettingsHistory, recordSettings, settingsEntry, settingsLevels, type SettingsLevel } from "../lib/settingsHistory.ts";
 import { Segmented, SettingsGroup, SettingsRow, SettingsSelect, Stepper, Toggle } from "./SettingsControls.tsx";
