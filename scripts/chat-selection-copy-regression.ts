@@ -30,8 +30,11 @@ async function readClipboard(page: Page): Promise<string> {
 try {
   const build = await Bun.build({ entrypoints: ["scripts/chat-virtual-fixture.tsx"], outdir: root, target: "browser", define: { "process.env.NODE_ENV": '"development"' } });
   assert.ok(build.success, String(build.logs));
+  const worker = await Bun.build({ entrypoints: ["src/lib/highlight.worker.ts"], outdir: root, naming: { entry: "highlight.worker.js", chunk: "chunk-[hash].js", asset: "asset-[hash].[ext]" }, splitting: true, target: "browser" });
+  assert.ok(worker.success, String(worker.logs));
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     const path = new URL(request.url).pathname;
+    if (path === "/highlight.worker.ts") return new Response(Bun.file(join(root, "highlight.worker.js")), { headers: { "content-type": "text/javascript" } });
     if (path === "/favicon.ico") return new Response(null, { status: 204 });
     if (path.endsWith("/pane/commands")) return Response.json({ commands: [] });
     if (path.endsWith("/pane/conversation")) return Response.json({ source: "claude-transcript", history_id: "copy-fixture", cursor: null, turns: [{ role: "assistant", ts: null, parts: [{ kind: "text", text: reply }] }] });

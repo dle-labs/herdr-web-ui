@@ -7,6 +7,7 @@
  * when it can hold the focus itself (a dialog whose controls are all disabled while it works).
  */
 import { useEffect, useLayoutEffect, useRef, type MutableRefObject, type RefObject } from "react";
+import { commentTabTarget } from "./commentDom.ts";
 
 /** Tab stops in DOM order; what a user reaches with Tab inside the surface. */
 const FOCUSABLE = [
@@ -102,6 +103,12 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
       if (event.key !== "Tab" || openTraps.at(-1) !== trap) return;
       const node = surface.current;
       if (!node || nativeModalOver(node)) return;
+      const logical = commentTabTarget(node, document.activeElement, event.shiftKey);
+      if (logical !== null && node.contains(logical)) {
+        event.preventDefault();
+        logical.focus({ preventScroll: true });
+        return;
+      }
       const stops = tabStops(node);
       // every control disabled (a deed that cannot be undone): Tab goes nowhere rather than out
       if (stops.length === 0) { event.preventDefault(); return; }

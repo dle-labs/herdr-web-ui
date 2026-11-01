@@ -121,4 +121,6 @@ export const TERMINAL_KO: Record<string, string> = {
   "Show keyboard": "키보드 보이기",
   "Hide keyboard": "키보드 숨기기",
   "Recover unsent text": "보내지 않은 글 복구",
+  "Comments only": "댓글만",
+  "Comments with this message: {count}": "이 메시지의 댓글: {count}",
 };

@@ -1,0 +1,49 @@
+.comment-surface-layout {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.comment-editor-host {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-popover);
+  pointer-events: none;
+}
+
+.comment-editor-host:empty {
+  display: none;
+}
+
+/* This is a real flex row, not an overlay or sticky card: the source's viewport shrinks. */
+.comment-editor-host[data-docked] {
+  position: relative;
+  inset: auto;
+  flex: none;
+  max-height: 45%;
+  overflow: auto;
+  padding: var(--space-2);
+  border-top: var(--hairline) solid var(--border-strong);
+  background: var(--bg);
+  pointer-events: auto;
+}
+
+.comment-editor-host .comment-popover-place {
+  pointer-events: auto;
+}
+
+.comment-editor-host[data-docked] .comment-popover-place {
+  position: static;
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+.comment-editor-host[data-docked] .comment-popover {
+  max-width: 100%;
+  max-height: calc(var(--comment-dock-max) - 2 * var(--space-2));
+}
