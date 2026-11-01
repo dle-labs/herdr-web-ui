@@ -211,7 +211,7 @@ it("a queued follow-up the bridge typed at once waits in the chat and follows it
   const actions = sends(pane, { ok: true, typedNow: true }, shown, {
     agentStatus: "working", inputAtRest: () => false, settings: { autoSendQueued: true },
     setChatLocalSend: () => { follows++; },
-    submitComposerMessage: (_text, delivery) => { expect(delivery).toBe("queue"); return Promise.resolve({ ok: true, typedNow: true }); },
+    submitComposerMessage: (_text, options) => { expect(options?.delivery).toBe("queue"); return Promise.resolve({ ok: true, typedNow: true }); },
   });
   try {
     expect(await actions.composerSend("then list the tests")).toBe(true);

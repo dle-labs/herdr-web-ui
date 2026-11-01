@@ -1,5 +1,3 @@
-import { getTransport } from "../lib/transport.ts";
-import { useResourceUrl } from "../lib/useResourceUrl.ts";
 import { createPortal } from "react-dom";
 import { FileToolbarContext } from "./MobileFilesToolbar.tsx";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";

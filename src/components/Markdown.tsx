@@ -521,8 +521,12 @@ function BlockView({ block, path, commentable }: { block: MarkdownBlock; path: n
       };
       const body = block.type === "code" ? (block.language === "mermaid" && !quoted
         ? <MermaidDiagram value={block.value} source={block.source} />
-        : <CodeBlock language={block.language} value={block.value} firstLine={block.source === undefined ? undefined : block.source[0] + 1} />)
-        : block.type === "math" ? <MathExpression value={block.value} displayMode />
+        : block.language.toLowerCase() === "svg" && !quoted
+          ? <SvgFigure value={block.value} />
+          : block.language === "math" && !quoted
+            ? <MathExpression value={block.value} displayMode fallback={<CodeBlock language="math" value={block.value} firstLine={block.source === undefined ? undefined : block.source[0] + 1} />} />
+            : <CodeBlock language={block.language} value={block.value} firstLine={block.source === undefined ? undefined : block.source[0] + 1} />)
+        : block.type === "math" ? <MathExpression value={block.value} displayMode dollar={block.dollar} oneLine={block.oneLine} />
         : <div className="markdown-table-wrap">
           <table><thead><tr {...rowLine(0)}>{block.header.map((cell, cellIndex) => <th key={cellIndex}><Inline nodes={cell} /></th>)}</tr></thead>
             <tbody>{block.rows.map((row, rowIndex) => <tr key={rowIndex} {...rowLine(rowIndex + 1)}>{row.map((cell, cellIndex) => <td key={cellIndex}><Inline nodes={cell} /></td>)}</tr>)}</tbody>
