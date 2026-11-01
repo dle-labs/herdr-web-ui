@@ -39,7 +39,7 @@ try {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.port}/?pane=w1C%3Ap1`);
-  await page.locator('.composer-browse').waitFor();
+  await page.locator('.composer').waitFor();
   await page.evaluate(async () => {
     const response = await fetch('/api/pane/rename', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pane_id: 'w1C:p1', label: 'Review the greeting' }) });
     if (!response.ok) throw new Error('Demo pane rename failed');
@@ -105,7 +105,10 @@ try {
   await hand.begin();
   mark('browse:start');
   await hold(550); // fixed wait: pacing the recorded showcase for the viewer
-  await click(page.locator('.composer-browse'));
+  if (device === 'mobile') {
+    await click(page.locator('.header-more-button'));
+    await click(page.getByRole('button', { name: 'Browse files', exact: true }));
+  } else await click(page.locator('.header-files-button'));
   await page.getByRole('dialog', { name: 'Files', exact: true }).waitFor();
   await click(tree('src'));
   assert.equal(await tree('src/greeting.ts').getAttribute('data-status'), 'modified');

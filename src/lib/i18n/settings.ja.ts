@@ -397,8 +397,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "On this device, list the agents above the workspaces: the ones that need you first, then working, done and idle. Pinned agents stay on top.": "このデバイスでは、エージェントをワークスペースの上に表示します。応答が必要なものが先で、次に作業中、完了、待機の順です。ピン留めしたエージェントは一番上のままです。",
   "Within a state": "同じ状態の中で",
   "Longest wait": "待ち時間順",
-  "Show Browse files shortcut": "ファイル参照のショートカットを表示",
-  "The folder button appears beside the composer controls. Browse files stays available in the menu.": "入力欄の操作ボタンの横にフォルダボタンを表示します。メニューのファイル参照は引き続き利用できます。",
   "Comment on settled agent replies and files. Turning this off deletes every comment on this device.": "完了したエージェントの回答やファイルにコメントできます。オフにすると、このデバイスのコメントがすべて削除されます。",
   "Comments": "コメント",
   "Delete 1 comment?": "コメント 1 件を削除しますか？",

@@ -397,8 +397,6 @@ export const SETTINGS_ZH: Record<string, string> = {
   "On this device, list the agents above the workspaces: the ones that need you first, then working, done and idle. Pinned agents stay on top.": "在此设备上，把代理列在工作区上方：先是需要你回应的，然后是工作中、已完成和空闲。已固定的代理仍在最上面。",
   "Within a state": "同一状态内",
   "Longest wait": "按等待时长",
-  "Show Browse files shortcut": "显示浏览文件快捷按钮",
-  "The folder button appears beside the composer controls. Browse files stays available in the menu.": "在输入框控件旁显示文件夹按钮。菜单中的浏览文件仍然可用。",
   "Comment on settled agent replies and files. Turning this off deletes every comment on this device.": "为已完成的智能体回复和文件添加评论。关闭后，此设备上的所有评论都会被删除。",
   "Comments": "评论",
   "Delete 1 comment?": "删除 1 条评论？",

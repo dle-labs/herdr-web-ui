@@ -78,9 +78,6 @@ import { blockComments, commentTarget, isReplyComment, outgoingMessage, useBlock
 import { changedField, inUnchangedPopover, revealField, savedPins } from "../lib/commentDom.ts";
 import { lastFileStop } from "../lib/commentWalk.ts";
 import { FileCommentNavContext } from "../lib/fileCommentNav.ts";
-import { WorkspaceFilesContext } from "../lib/workspaceFiles.ts";
-import { useWorkspaceChanges } from "../lib/useWorkspaceChanges.ts";
-import { BrowseFilesIcon } from "./BrowseFilesIcon.tsx";
 import { sortFileComments, type FileComment } from "../lib/fileComments.ts";
 import { composerComments } from "../lib/composerComments.ts";
 
@@ -287,10 +284,8 @@ export function Composer({
   const activeRef = useRef(active);
   activeRef.current = active;
   const machineId = useMachineId();
-  const openFiles = useContext(WorkspaceFilesContext);
   const { fetchPaneFiles } = useMachineApi();
   const { settings, resolvedLanguage } = useSettings();
-  const filesChanged = useWorkspaceChanges(paneId, cwd ?? "", connected && active && openFiles !== null && settings.showBrowseFilesShortcut, paneStatus({ agent_status: agentStatus, background_wait: backgroundWait ? true : undefined }));
   const mobile = useMediaQuery("(max-width: 640px), (pointer: coarse)");
   // a touch screen's Return breaks the line until this device chooses otherwise; Send (or Mod+Enter) sends
   const enterSends = enterSendsOn(settings, useMediaQuery("(pointer: coarse)"));
@@ -1675,19 +1670,6 @@ export function Composer({
               <MessageSquarePlus aria-hidden="true" />
             </button>
           )}
-          {openFiles && settings.showBrowseFilesShortcut && <button
-            type="button"
-            className="icon-button composer-browse"
-            aria-label={t("Browse files")}
-            title={filesChanged ? `${t("Browse files")} · ${t("Changed files")}` : t("Browse files")}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              openFiles(paneId);
-            }}
-          >
-            <BrowseFilesIcon changed={filesChanged} />
-          </button>}
           <BackgroundTasks paneId={paneId} count={backgroundTasks} omo={agent === "omo"} subagents={agent === "claude" || agent === "opencode"} plan={plan} />
           {agent === "claude" && <Artifacts paneId={paneId} status={agentStatus} />}
         </div>

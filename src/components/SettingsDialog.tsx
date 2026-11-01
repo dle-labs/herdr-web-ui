@@ -540,9 +540,6 @@ function ChatPage() {
         <SettingsRow label={t("Comments")} description={t("Comment on settled agent replies and files. Turning this off deletes every comment on this device.")}>
           <Toggle label={t("Comments")} checked={settings.comments} onChange={setComments} buttonRef={commentsToggle} />
         </SettingsRow>
-        <SettingsRow label={t("Show Browse files shortcut")} description={t("The folder button appears beside the composer controls. Browse files stays available in the menu.")}>
-          <Toggle label={t("Show Browse files shortcut")} checked={settings.showBrowseFilesShortcut} onChange={(showBrowseFilesShortcut) => update({ showBrowseFilesShortcut })} />
-        </SettingsRow>
         <SettingsRow label={t("Wrap long lines")}>
           <Toggle label={t("Wrap long lines")} checked={settings.wrapCode} onChange={(wrapCode) => update({ wrapCode })} />
         </SettingsRow>

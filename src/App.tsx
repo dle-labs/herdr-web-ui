@@ -73,7 +73,6 @@ import { folderQueryFor } from "./lib/paletteFolders.ts";
 import { WebPanel } from "./components/WebPanel.tsx";
 import { WebPanelContext } from "./lib/webPanel.ts";
 import { RepoDiffViewer } from "./components/RepoDiffViewer.tsx";
-import { WorkspaceFilesContext } from "./lib/workspaceFiles.ts";
 import { OpenFileContext } from "./lib/filePaths.ts";
 import { useAccessState, useLockedRef, usePairFromAddress } from "./lib/useAccess.ts";
 import { useLocalHealth } from "./lib/useLocalHealth.ts";
@@ -82,7 +81,7 @@ import { useMachineDialog } from "./lib/useMachineDialog.ts";
 import { useNewSessionMachine, useNewSessionState, useSessionHistoryList } from "./lib/useNewSessionDialog.ts";
 import { useCommandPalette } from "./lib/useCommandPalette.ts";
 import { useRenameRequest } from "./lib/useRenameRequest.ts";
-import { useFilePanels, useWorkspaceFilesOpener } from "./lib/useFilePanels.ts";
+import { useFilePanels } from "./lib/useFilePanels.ts";
 import { usePaneCoverage } from "./lib/usePaneCoverage.ts";
 import { FileCommentNavContext } from "./lib/fileCommentNav.ts";
 import { useT } from "./lib/i18n.ts";
@@ -341,7 +340,6 @@ export function App() {
 
 
   const { selectedPane } = useSelectedPane({ snapshot, selectedPaneId });
-  const openWorkspaceFiles = useWorkspaceFilesOpener({ canLeaveFiles, selectPane, openFilesFor, selectedMachineId });
 
   const filesCwd = selectedPane?.foreground_cwd ?? selectedPane?.cwd ?? "";
   const filesChanged = useWorkspaceChangesSnapshot(selectedPane ? { machineId: selectedMachineId, paneId: selectedPane.pane_id, cwd: filesCwd } : null);
@@ -844,7 +842,6 @@ export function App() {
         {/* a file path in the chat opens in the viewer, relative to the selected pane's folder */}
         <OpenFileContext.Provider value={selectedPaneId !== null ? viewFile : null}>
         <WebPanelContext.Provider value={openWebPage}>
-        <WorkspaceFilesContext.Provider value={openWorkspaceFiles}>
         <FileCommentNavContext.Provider value={viewFileComment}>
         <div className={`pane-column${chatShown ? " is-chat" : ""}`}>
         {/* over the pane only: a bar across the window would cut the sidebar off from its top row in the header */}
@@ -918,7 +915,6 @@ export function App() {
             const slotBar = splitOn ? <div className="pane-slot-bar"><span className="pane-slot-title">{pane ? displayPaneTitle(pane) : t("Pane closed")}</span>{slotEnd}</div> : null;
             return (
               <MachineContext.Provider key={slot} value={machineId}><AppLayoutContext.Provider value={appLayoutOf(herdr)}><SlotSessions slot={slot} machineIds={machines.map((item) => item.id)}><PaneFollowContext.Provider value={sameTabs && !active}>
-              <WorkspaceFilesContext.Provider value={(id) => { if (!canLeaveFiles()) return; onSelect(id, false); openFilesFor(id, machineId, "browse"); }}>
               <div
                 className={`pane-slot${showsChat(pane, slotView) ? " is-chat" : ""}${splitOn ? active ? " is-active" : " is-inactive" : ""}`}
                 data-slot={slot}
@@ -1025,7 +1021,6 @@ export function App() {
                 </main>
                 </RenderBoundary>
               </div>
-              </WorkspaceFilesContext.Provider>
               </PaneFollowContext.Provider></SlotSessions></AppLayoutContext.Provider></MachineContext.Provider>
             );
           })}
@@ -1033,7 +1028,6 @@ export function App() {
         </div>}
         </div>
         </FileCommentNavContext.Provider>
-        </WorkspaceFilesContext.Provider>
         </WebPanelContext.Provider>
         </OpenFileContext.Provider>
         {webPage !== null &&

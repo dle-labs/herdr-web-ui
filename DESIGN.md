@@ -498,11 +498,10 @@ blocks of `src/styles.css`.
   inside its scroll root. On phones, pulling down in content never dismisses Files, even at its
   top; swipe-to-dismiss starts only on the Files header. Wrap, horizontal source scrolling,
   native text selection and the diff gutter's explicit comment-range gesture remain available.
-- **Browse files** is a quick action beside the composer's microphone, or beside `+` when
-  dictation is unavailable. It targets that composer's pane/PC without background polling;
-  pane and tab menus do not contain Changed files. Settings → Chat → File viewer → **Show Browse files
-  shortcut** controls this device's folder button (on by default); the header menu entry stays
-  available. Both folder icons carry a small `--notice` dot for known uncommitted changes,
+- **Browse files** uses the upstream header button on wide screens and the header's More menu
+  on phones. It opens Files for the selected pane/PC; the composer has no duplicate folder button.
+  Pane and tab menus do not contain Changed files. The header/menu folder icon carries a small
+  `--notice` dot for known uncommitted changes,
   including untracked files, never for historical comparison differences. Shared read-only
   snapshots refresh on activation, window focus/visibility return, menu opening and transitions
   into/out of agent work; normal browser inventories also update the dot. There is no timer
@@ -3323,7 +3322,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   **Composer**: Enter sends, send queued messages automatically, in a mouse-driven window wider than
   640px the New tab button (off by default), the Artifacts chip (off by default, the device setting
   `composerArtifacts`), and on a touch screen the suggestion chip (off by default); then
-  **Quick replies**; then **File viewer**: Browse files shortcut, wrap long lines, Markdown width, Diff layout), **Terminal** (font size, font family, wheel
+  **Quick replies**; then **File viewer**: wrap long lines, Markdown width, Diff layout), **Terminal** (font size, font family, wheel
   speed, input mode, Key bar, Clipboard from a pane, Use alongside herdr's own window, Follow
   herdr's focus), **Alerts**, **Voice input**, **Agents**,
   **Shortcuts** (the platform-resolved global bindings), **Phone & devices** (Connect a phone,

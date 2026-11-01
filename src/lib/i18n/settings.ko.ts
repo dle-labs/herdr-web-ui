@@ -397,8 +397,6 @@ export const SETTINGS_KO: Record<string, string> = {
   "On this device, list the agents above the workspaces: the ones that need you first, then working, done and idle. Pinned agents stay on top.": "이 기기에서 에이전트를 워크스페이스 위에 보여 줍니다. 내 응답이 필요한 에이전트가 먼저, 그다음 작업 중, 완료, 대기 순입니다. 고정한 에이전트는 맨 위에 그대로 있습니다.",
   "Within a state": "같은 상태 안에서",
   "Longest wait": "오래 기다린 순",
-  "Show Browse files shortcut": "파일 찾아보기 바로가기 표시",
-  "The folder button appears beside the composer controls. Browse files stays available in the menu.": "작성기 컨트롤 옆에 폴더 버튼을 표시합니다. 메뉴에서는 계속 파일 찾아보기를 사용할 수 있습니다.",
   "Comment on settled agent replies and files. Turning this off deletes every comment on this device.": "완료된 에이전트 답변과 파일에 댓글을 달 수 있습니다. 끄면 이 기기의 모든 댓글이 삭제됩니다.",
   "Comments": "댓글",
   "Delete 1 comment?": "댓글 1개를 삭제할까요?",

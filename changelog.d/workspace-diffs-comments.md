@@ -20,13 +20,12 @@
 - Unsaved diff comments have a Discard action. Deleting a saved comment also removes another
   tab's update on that target without touching other sides or revisions.
 - Changed files mark every ancestor folder, including collapsed folders, with an accessible
-  indicator. Browse files buttons show a dot for current working changes, not historical diffs;
-  Settings can hide the composer shortcut without removing the header menu entry.
+  indicator. The Browse files trigger shows a dot for current working changes, not historical diffs.
 - File browsers retain their opening pane and unsaved comments through pane selection and
   refused Back navigation. Closing a file keeps its browser open; unsaved comments protect both.
 - Git inventories skip unsupported embedded repositories without hiding other changes, and
   cached deletions keep a consistent deleted side even when the file remains on disk.
-- Browse files opens beside the microphone or attachment button without selecting a diff.
+- Browse files opens from the header button or More menu without selecting a diff.
   Search filenames and compare all files or one context-menu-selected file with a previous commit.
 - New, staged and modified Markdown files open as rendered previews when browsed. Preview/Diff
   switching preserves comments; explicit comparisons and comment links retain their diff intent.

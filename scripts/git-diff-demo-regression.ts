@@ -396,35 +396,14 @@ try {
         } else await page.getByRole("menuitem", { name: "Split right", exact: true }).waitFor();
         assert.equal(await page.getByRole(mobile ? "button" : "menuitem", { name: "Changed files", exact: true }).count(), 0, "Changed files is no longer a pane/tab menu action");
         await page.keyboard.press("Escape");
-        await page.locator(".composer-browse .browse-files-dot").waitFor();
-        await page.waitForFunction(() => !history.state?.["ovis:sheet"]);
-        await page.keyboard.press("ControlOrMeta+Shift+Comma");
-        await openSettingsPage(page, "Chat");
-        let shortcutSettings = page.getByRole("dialog", { name: "Settings", exact: true });
-        await shortcutSettings.getByRole("switch", { name: "Show Browse files shortcut", exact: true }).click();
-        assert.equal(await page.locator(".composer-browse").count(), 0, "shortcut can be hidden without removing the menu action");
-        await shortcutSettings.getByRole("button", { name: "Close settings", exact: true }).click();
-        await page.reload();
-        await page.locator(".conn-live").waitFor({ state: "attached" });
-        await page.locator(".composer").waitFor();
-        assert.equal(await page.locator(".composer-browse").count(), 0, "shortcut setting survives reload");
+        assert.equal(await page.locator(".composer").getByRole("button", { name: "Browse files", exact: true }).count(), 0, "Files has no duplicate composer trigger");
         if (mobile) await page.locator(".header-more-button").click();
         const browseEntry = mobile ? page.getByRole("button", { name: "Browse files", exact: true }) : page.locator(".header-files-button");
         await browseEntry.locator(".browse-files-dot").waitFor();
         await page.keyboard.press("Escape");
         await page.waitForFunction(() => !history.state?.["ovis:sheet"]);
-        await page.keyboard.press("ControlOrMeta+Shift+Comma");
-        await openSettingsPage(page, "Chat");
-        shortcutSettings = page.getByRole("dialog", { name: "Settings", exact: true });
-        assert.equal(await shortcutSettings.getByRole("switch", { name: "Show Browse files shortcut", exact: true }).getAttribute("aria-checked"), "false");
-        await shortcutSettings.getByRole("switch", { name: "Show Browse files shortcut", exact: true }).click();
-        await shortcutSettings.getByRole("button", { name: "Close settings", exact: true }).click();
-        await page.locator(".composer-browse .browse-files-dot").waitFor();
-        console.log(`PASS Git Changes: ${mobile ? "phone" : "desktop"} shortcut setting, persistence and menu/shortcut dots`);
-        const openPaneChanges = async () => {
-          assert.ok(await page.locator(".composer-browse").evaluate((button) => button.previousElementSibling?.matches(".voice-mic, .composer-attach")), "file quick action is immediately beside microphone or plus");
-          await page.locator(".composer").getByRole("button", { name: "Browse files", exact: true }).click();
-        };
+        console.log(`PASS Git Changes: ${mobile ? "phone" : "desktop"} uses the upstream Files trigger with its change indicator`);
+        const openPaneChanges = async () => { await runMoreItem(page, "Browse files"); };
         await openPaneChanges();
         await page.getByRole("dialog", { name: "Files", exact: true }).getByRole("button", { name: "Close files", exact: true }).click();
         await page.waitForFunction(() => !history.state?.["ovis:sheet"]);
@@ -791,7 +770,7 @@ try {
         await empty.getByRole("option", { name: "Working changes", exact: true }).click();
         await empty.getByText("No changes in this comparison.", { exact: true }).waitFor({ state: "attached" });
         assert.equal(await empty.locator("[data-diff-path]").count(), 0);
-        assert.equal(await page.locator(".composer-browse .browse-files-dot").count(), 0, "empty working inventory clears the shortcut dot");
+        assert.equal(await page.locator(".header-files-button .browse-files-dot").count(), 0, "empty working inventory clears the header dot");
         assert.equal(await empty.locator(".modal-header").getByRole("group", { name: "Diff layout", exact: true }).count(), 0, "empty inventory hides layout controls");
         if (mobile) {
           await empty.getByRole("button", { name: "Back to files", exact: true }).click();

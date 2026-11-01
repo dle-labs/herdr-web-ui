@@ -1183,7 +1183,7 @@ it("keeps where web links open to a tab or the panel, a tab by default", () => {
 });
 
 describe("review preferences", () => {
-  for (const key of ["comments", "showBrowseFilesShortcut"] as const) {
+  for (const key of ["comments"] as const) {
     it(`${key} defaults on, stays on this device, and only keeps booleans`, () => {
       expect(DEFAULT_SETTINGS[key]).toBe(true);
       expect(SETTING_SCOPE[key]).toBe("device");

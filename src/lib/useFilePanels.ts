@@ -79,17 +79,3 @@ export function useFilePanels({ machines, settings, filePanelAvailable, selected
   const { webPage, closeWebPage, openWebPage } = useWebPanel({ settings, filePanelAvailable });
   return { filesOpen, setFilesOpen, filesTarget, filesIntent, diffCommentView, setDiffCommentView, canLeaveFiles, openFilesFor, viewing, openFile, closeFile, releaseFile, viewFile, diffViewing, closeDiff, viewFileComment, paneRole, setPaneRole, webPage, closeWebPage, openWebPage };
 }
-
-/** A browse request selects its pane without raising the phone keyboard. */
-export function useWorkspaceFilesOpener({ canLeaveFiles, selectPane, openFilesFor, selectedMachineId }: {
-  canLeaveFiles: () => boolean;
-  selectPane: (paneId: string, focusInput: boolean) => void;
-  openFilesFor: (paneId: string, machineId: string, intent: WorkspaceFileIntent) => void;
-  selectedMachineId: string;
-}) {
-  return useCallback((paneId: string) => {
-    if (!canLeaveFiles()) return;
-    selectPane(paneId, false);
-    openFilesFor(paneId, selectedMachineId, "browse");
-  }, [selectPane, selectedMachineId, openFilesFor, canLeaveFiles]);
-}
