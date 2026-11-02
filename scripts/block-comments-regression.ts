@@ -109,7 +109,7 @@ try {
         await page.locator(".composer-comments-bar").waitFor({ state: "detached" });
         await selectParagraph(paragraph, mobile);
         await copiedSelection(page, TEXT);
-        await page.locator(".comment-selection").click();
+        await page.locator(".reply-comment-offer").click();
         await field.fill("Comment on this selection.");
         await page.getByRole("button", { name: "Save comment", exact: true }).click();
         await page.locator(".composer-comments-bar").waitFor();

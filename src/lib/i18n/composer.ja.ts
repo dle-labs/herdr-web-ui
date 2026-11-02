@@ -260,12 +260,4 @@ export const COMPOSER_JA: Record<string, string> = {
   "Not sent: no agent is running in this pane. Your message stayed here.": "未送信: このペインではエージェントが動いていません。メッセージはここに残っています。",
   "1 comment": "コメント1件",
   "{count} comment waiting": "コメント {count} 件が待機中",
-  "{count} comments waiting": "コメント {count} 件が待機中",
-  "Comment on the reply": "返答にコメント",
-  "Add a comment": "コメントを追加",
-  "1 comment waiting": "コメント1件が待機中",
-  "1 comment on the reply": "返答へのコメント1件",
-  "{count} comments on the reply": "返答へのコメント{count}件",
-  "They go with your next message, not with this one": "このメッセージではなく、次のメッセージと一緒に送られます",
-  "They go first in your next message, each as a quote": "次のメッセージの先頭に、それぞれ引用として送られます",
 };

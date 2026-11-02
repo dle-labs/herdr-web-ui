@@ -81,6 +81,8 @@ export interface CommentSurfaceOptions<T, S> {
   pointed: (owner: string, target: T, at: { x: number; y: number }) => T;
   /** what a plain click on `element` comments on; null for nothing */
   targetAtClick: (element: Element) => { owner: string; target: T } | null;
+  /** false when the host supplies a shared Quote/Comment selection toolbar */
+  selectionAction?: boolean;
   /** a mouse's drag: `measure` the selection in `view`, and the comment a measured selection makes (null: none) */
   selection: {
     measure: (selection: Selection | null, view: Element) => S | null;
@@ -111,6 +113,7 @@ export function useCommentSurface<T extends { point?: CommentPoint }, S>(options
   overlay: ReactNode;
   open: OpenComment<T> | null;
   escape: () => boolean;
+  commentSelection: (at: { x: number; y: number }) => void;
 } {
   const t = useT();
   const { surface, enabled, active = true, persist, comments } = options;
@@ -134,7 +137,7 @@ export function useCommentSurface<T extends { point?: CommentPoint }, S>(options
   const takes = enabled && active;
   const selectionComment = useSelectionComment({
     view: surface,
-    enabled: takes,
+    enabled: takes && options.selectionAction !== false,
     measure: (selection, view) => latest.current.selection.measure(selection, view),
     onComment: (found, at) => {
       const made = latest.current.selection.target(found);
@@ -235,6 +238,12 @@ export function useCommentSurface<T extends { point?: CommentPoint }, S>(options
       "data-comment-surface": active ? "" : undefined,
       "data-comments": takes ? "" : undefined,
       ...handlers,
+    },
+    commentSelection: (at) => {
+      const node = surface.current;
+      const found = takes && node ? latest.current.selection.measure(window.getSelection(), node) : null;
+      const made = found === null ? null : latest.current.selection.target(found);
+      if (made !== null) openOn(made.owner, made.target, true, at);
     },
     overlay,
     open,

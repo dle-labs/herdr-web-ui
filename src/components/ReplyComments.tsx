@@ -95,7 +95,7 @@ const FORM_W = 360;
 /** a frame narrower than this docks the form along its bottom edge, where a phone's keyboard meets it */
 const DOCK_BELOW = 560;
 
-interface Placed { quote: string; left: number; top: number }
+interface Placed { commentable: boolean; quote: string; left: number; top: number }
 
 /**
  * The actions on a selection in a chat's reply. It floats over the transcript, so a selection in
@@ -103,7 +103,7 @@ interface Placed { quote: string; left: number; top: number }
  * released, on a touch screen below the selection. Quote, first, puts the words in the composer as a
  * `> ` quote (lib/chatQuote.ts); Comment (#511) opens a form that saves a comment for the next message.
  */
-export function ReplyCommentAction({ scroller, storageKey, paneKey }: { scroller: RefObject<HTMLDivElement | null>; storageKey: string; paneKey: string | null }) {
+export function ReplyCommentAction({ scroller, storageKey, paneKey, onComment, canComment, commentsEnabled = true }: { scroller: RefObject<HTMLDivElement | null>; storageKey: string; paneKey: string | null; onComment?: (at: { x: number; y: number }) => void; commentsEnabled?: boolean; canComment?: (range: Range) => boolean }) {
   const t = useT();
   const layer = useRef<HTMLDivElement>(null);
   const [offer, setOffer] = useState<Placed | null>(null);
@@ -132,13 +132,19 @@ export function ReplyCommentAction({ scroller, storageKey, paneKey }: { scroller
     const first = rects[0] ?? last;
     const box = host.getBoundingClientRect();
     const touch = pointer.current?.touch ?? matchMedia("(pointer: coarse)").matches;
+    const style = getComputedStyle(host);
+    const height = touch ? Math.max(OFFER_H, Number.parseFloat(style.getPropertyValue("--touch-target")) || 44) : OFFER_H;
+    const bottom = box.bottom - (Number.parseFloat(style.getPropertyValue("--composer-over")) || 0);
     const mouse = !touch && pointer.current !== null ? pointer.current : null;
     let top = mouse !== null ? mouse.y + EDGE : last.bottom + (touch ? HANDLE_ROOM : EDGE);
-    if (top + OFFER_H > box.bottom - EDGE) top = first.top - OFFER_H - (touch ? HANDLE_ROOM : EDGE);
+    if (top + height > bottom - EDGE) top = first.top - height - (touch ? HANDLE_ROOM : EDGE);
     const x = mouse !== null ? mouse.x : last.right;
     const left = Math.min(Math.max(x - box.left - OFFER_W / 2, EDGE), Math.max(box.width - OFFER_W - EDGE, EDGE));
-    setOffer({ quote, left, top: Math.min(Math.max(top - box.top, EDGE), Math.max(box.height - OFFER_H - EDGE, EDGE)) });
-  }, [scroller]);
+    const start = range.startContainer;
+    const turn = (start instanceof Element ? start : start.parentElement)?.closest(".chat-turn-agent");
+    const commentRange = turn ? wordsEnd(range, turn)?.range ?? range : range;
+    setOffer({ commentable: canComment?.(commentRange) ?? true, quote, left, top: Math.min(Math.max(top - box.top, EDGE), Math.max(bottom - box.top - height - EDGE, EDGE)) });
+  }, [scroller, canComment]);
 
   // on the document, the scroller looked up as each event comes: the chat's timeline can arrive after this mounts
   useEffect(() => {
@@ -171,6 +177,19 @@ export function ReplyCommentAction({ scroller, storageKey, paneKey }: { scroller
 
   const open = (placed: Placed) => {
     pressing.current = false;
+    if (onComment) {
+      // The unified comment surface reads the same words as Quote, excluding the copy row.
+      const selection = getSelection();
+      const range = selection?.rangeCount === 1 ? selection.getRangeAt(0) : null;
+      const start = range?.startContainer;
+      const turn = (start instanceof Element ? start : start?.parentElement)?.closest(".chat-turn-agent");
+      const trimmed = range && turn ? wordsEnd(range, turn)?.range : null;
+      if (trimmed && selection) { selection.removeAllRanges(); selection.addRange(trimmed); }
+      const box = layer.current?.getBoundingClientRect();
+      onComment({ x: placed.left + (box?.left ?? 0), y: placed.top + (box?.top ?? 0) });
+      setOffer(null);
+      return;
+    }
     const host = layer.current;
     const width = host?.clientWidth ?? 0;
     const height = host?.clientHeight ?? 0;
@@ -208,7 +227,7 @@ export function ReplyCommentAction({ scroller, storageKey, paneKey }: { scroller
   return <div className="reply-comment-layer" ref={layer}>
     {/* outside the pill, on the chat's far side from it (at the foot, over the jump control's room); drawn first, so the pill stays over it */}
     {offer !== null && form === null && paneKey !== null && !fits && <p id={quoteNote} className={`selection-note${offer.top < (layer.current?.clientHeight ?? 0) / 2 ? " is-below" : ""}`} role="status">{t("Too long to quote: shorten the message or the selection.")}</p>}
-    {offer !== null && form === null && <div className="selection-offer" role="group" aria-label={t("Selection")} style={{ left: offer.left, top: offer.top }}
+    {offer !== null && form === null && (paneKey !== null || (commentsEnabled && offer.commentable)) && <div className="selection-offer" role="group" aria-label={t("Selection")} style={{ left: offer.left, top: offer.top }}
       // a mouse press keeps the selection; a touch's is read from the offer it showed
       onMouseDown={(event) => event.preventDefault()}
       onPointerDown={() => { pressing.current = true; }}
@@ -218,9 +237,9 @@ export function ReplyCommentAction({ scroller, storageKey, paneKey }: { scroller
         aria-describedby={fits ? undefined : quoteNote} title={fits ? t("Quote it in your message") : undefined} onClick={() => quote(offer)}>
         <Quote aria-hidden="true" />{t("Quote")}
       </button>}
-      <button type="button" className="reply-comment-offer" aria-label={t("Comment")} title={t("Comment")} onClick={() => open(offer)}>
+      {commentsEnabled && offer.commentable && <button type="button" className="reply-comment-offer" aria-label={t("Comment")} title={t("Comment")} onClick={() => open(offer)}>
         <MessageSquarePlus aria-hidden="true" />
-      </button>
+      </button>}
     </div>}
     {form !== null && <ReplyCommentForm form={form} comment={comment} onComment={setComment} onKeyDown={keyDown} onSave={save} onCancel={close} />}
   </div>;

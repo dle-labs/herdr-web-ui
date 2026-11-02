@@ -1,5 +1,7 @@
 import { useCommentSurface, type SurfaceComment } from "./useCommentSurface.tsx";
 import { CommentSurfaceLayout } from "./CommentSurfaceLayout.tsx";
+import { ReplyCommentAction } from "./ReplyComments.tsx";
+import { replyCommentsKey } from "../lib/replyComments.ts";
 import { BlockCommentContext, blockComments, blockContent, commentTarget, isReplyComment, quoteExcerpt, replyPart, selectionTarget, useBlockComments, type CommentTarget, type ReplyPart } from "../lib/blockComments.ts";
 import { commentPartOf, paneComposer, pointOnText, selectionComment, type SelectionComment } from "../lib/commentSelection.ts";
 import { draftRanges, showPendingComment, watchCommentHighlights } from "../lib/commentHighlight.ts";
@@ -2572,6 +2574,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
       const found = part === null ? undefined : commentPartOf(part);
       return found === undefined ? null : { owner: found.owner, target: found.target };
     },
+    selectionAction: false,
     selection: {
       measure: selectionComment,
       target: (found) => ({ owner: found.owner, target: selectionTarget(found.target, found.text, found.start, found.end, found.until) }),
@@ -2722,7 +2725,7 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
     {state.source === "conversation" && <ChatMinimap turns={minimap} rowKeys={rowKeys} scroller={scroller} onJump={jumpToTurn} onWheel={minimapWheel} />}
     {jump}
     {/* only a pane this device may send to takes quotes and comments: they go with its next message */}
-    {state.source === "conversation" && interactive && !ended && <ReplyCommentAction scroller={scroller} storageKey={replyCommentsKey(paneStorageId(machineId, paneId))} paneKey={quotable ? paneStorageId(machineId, paneId) : null} />}
+    {state.source === "conversation" && interactive && !ended && <ReplyCommentAction canComment={canCommentOnReply} commentsEnabled={settings.comments} onComment={commentSurface.commentSelection} scroller={scroller} storageKey={replyCommentsKey(paneStorageId(machineId, paneId))} paneKey={quotable ? paneStorageId(machineId, paneId) : null} />}
     </div>
     </div>
     {commentNode !== null && createPortal(commentSurface.overlay, commentNode)}
@@ -2749,3 +2752,10 @@ export const ChatView = memo(function ChatView({ paneId, presentationKey, finish
   {viewer !== null && <ImageLightbox images={viewer.images} index={viewer.index} onClose={closeViewer} />}
   </ToolPathRootContext.Provider></ImageViewerContext.Provider></ChatHistoryContext.Provider></ChatPaneContext.Provider></ChatMarkdownImages>;
 });
+
+/** The selection toolbar offers comments only on the settled reply surface the editor can anchor. */
+function canCommentOnReply(range: Range): boolean {
+  const root = (node: Node) => (node instanceof Element ? node : node.parentElement)?.closest("[data-comment-root]");
+  const start = root(range.startContainer);
+  return start != null && start === root(range.endContainer);
+}
