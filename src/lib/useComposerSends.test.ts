@@ -302,7 +302,7 @@ it.each([[true, ["steer"]], [false, []]] as const)("a queued send with now=%p st
       // as useTerminalSends does before it answers: the receipt's row is in the list first
       submitComposerMessage: () => { pendingMessages.accept(owner, pending, "scope"); return Promise.resolve({ ok: true, pending }); },
       submitRetention: { retain: () => () => { settled(); } } as unknown as ComposerSendsDeps["submitRetention"],
-    }).composerSend(pending.text, undefined, false, false, now);
+    }).composerSend(pending.text, { now });
     expect(result).toBe(true);
     if (now) await steered;
     expect(actions).toEqual([...expected]);

@@ -87,5 +87,5 @@ it.each([
   await act(async () => {
     box.props.onKeyDown({ key: "Enter", shiftKey: false, altKey: false, metaKey: false, ctrlKey: false, repeat: false, ...keys, nativeEvent: { isComposing: false, keyCode: 13 }, preventDefault() {} });
   });
-  expect(calls.map((call) => call[4])).toEqual([...expected]);
+  expect(calls.map((call) => (call[1] as { now?: boolean } | undefined)?.now)).toEqual([...expected]);
 });
