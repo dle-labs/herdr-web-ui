@@ -110,7 +110,7 @@ export function MarkdownOutline({ id, entries, scroller, drawer, toggle, onClose
       if (event.key !== "Escape" || event.isComposing) return;
       // only while the keyboard is in this viewer: a dialog in front of it (Settings), or the pane
       // beside a docked panel, keeps its own Escape
-      const viewer = list.current?.closest("[role=dialog], .file-panel, .file-reader");
+      const viewer = list.current?.closest("[role=dialog], .file-panel, .file-reader, .file-viewer-embedded");
       if (!viewer?.contains(document.activeElement)) return;
       // a menu open over it (the header's More) is the topmost: its Escape closes the menu alone (#3066)
       if (document.activeElement?.closest("[role=menu]")) return;
