@@ -271,7 +271,7 @@ export function App() {
   const { more, setMore, closeMore, group: moreGroup, openGroup: openMoreGroup, closeGroup: closeMoreGroup } = moreMenu;
   const paneActionsRef = useRef<((target: HerdrPane, options?: { counted?: boolean }) => RowMenuItem[]) | null>(null);
   const paneLocked = usePaneLocked(selectedMachineId);
-  const { filesOpen, setFilesOpen, filesTarget, filesIntent, diffCommentView, setDiffCommentView, canLeaveFiles, openFilesFor, viewing, openFile, closeFile, hideFile, leaveFile, restoreFile, fileFromPop, forgetLeftFiles, viewFile, diffViewing, closeDiff, viewFileComment, paneRole, setPaneRole, webPage, closeWebPage, openWebPage } = useFilePanels({ machines, settings, filePanelAvailable, selectedPaneId, selectedMachineId });
+  const { filesOpen, setFilesOpen, filesDocked, browserDocked, filesTarget, filesIntent, diffCommentView, setDiffCommentView, canLeaveFiles, openFilesFor, viewing, openFile, closeFile, hideFile, leaveFile, restoreFile, fileFromPop, forgetLeftFiles, viewFile, diffViewing, closeDiff, viewFileComment, paneRole, setPaneRole, webPage, closeWebPage, openWebPage } = useFilePanels({ machines, settings, filePanelAvailable, selectedPaneId, selectedMachineId });
   const { settingsOpen, setSettingsOpen, settingsLinkPage, setSettingsLinkPage, settingsLinkSection, setSettingsLinkSection, settingsPage, settingsSection, setSettingsSection, closeSettings, onSettingsPage } = useSettingsDialog(initialLink);
   const { newSessionOpen, setNewSessionOpen, newPrefill, setNewPrefill, newFields, setNewFields, pendingCreate, newSessionPending, newTab, setNewTab, sessionHistory, setSessionHistory, worktreeFor, setWorktreeFor } = useNewSessionState({ initialLink, watching: auth?.role === "watch" });
   const { connected, setConnected, connectedBefore, setConnectedBefore, paneLost, outputStopped, setOutputStopped, reportedBy, setReportedBy } = useConnectionChip();
@@ -475,10 +475,11 @@ export function App() {
   const { dialogCover, webDialogCover, contentReady } = usePaneCoverage({ contentKey });
   const panePresence = useCallback((): PanePresence => !(locked === false && linkLanded && pendingFile.current === null && pendingCreate.current === null
     && !drawerOpen && !settingsOpen && !newSessionOpen
-    && !filesOpen && !machineDialog && !paletteOpen && !diffViewing && !viewing
+    // the browser beside the pane (Files beside the pane, or a file docked there) leaves the pane in view
+    && !((filesOpen || viewing !== null) && !browserDocked) && !machineDialog && !paletteOpen && !diffViewing
     && !dialogCover && !paneCovered() && !inbox.shown) ? "covered"
     : contentReady && paneContentPresented(contentKey) ? "front" : "loading",
-  [locked, linkLanded, inbox.shown, drawerOpen, settingsOpen, newSessionOpen, filesOpen, machineDialog, paletteOpen, diffViewing, viewing, dialogCover, contentReady, contentKey]);
+  [locked, linkLanded, inbox.shown, drawerOpen, settingsOpen, newSessionOpen, filesOpen, browserDocked, machineDialog, paletteOpen, diffViewing, viewing, dialogCover, contentReady, contentKey]);
   const activity = useSidebarActivityState(machines, selectedMachineId, presentedPaneId, panePresence, shareSeen);
   useAgentStateStamping(machines, activity);
 
@@ -899,6 +900,23 @@ export function App() {
     setDiffCommentView(null);
     if (viewing) closeFile();
   };
+  const browserShown = viewing !== null || (filesOpen && browserPaneId !== null);
+  // the header button toggles Files beside the pane: it closes a browser shown there, or brings it out from under a page
+  const filesBeside = browserShown && browserDocked && webPage === null;
+  const toggleFiles = (): void => {
+    if (filesDocked && filesBeside) closeBrowser();
+    else if (selectedPane) { actions.counted?.("files", "button"); openFilesFor(selectedPane.pane_id, selectedMachineId, "browse"); }
+  };
+  const filesBrowser = (docked: boolean): ReactNode => <MachineContext.Provider value={browserMachineId}>
+        <FilesDialog docked={docked} covered={docked && webPage !== null} panelStart={docked ? <FilePanelResizer width={filePanelWidth} onResize={setFilePanelWidth} /> : undefined} key={`${browserMachineId}:${browserPaneId}:${viewing?.path ?? browserComment?.id ?? filesIntent}`}
+          initialIntent={viewing ? "browse" : filesIntent}
+          start={browserComment?.diff?.repository ?? (!viewing && filesTarget ? filesTarget.start : browserPane?.foreground_cwd ?? browserPane?.cwd ?? "")} paneId={browserPaneId}
+          initialPath={viewing?.path ?? (browserComment?.diff ? null : browserComment?.path ?? null)} initialComment={browserComment} initialCommentId={viewing?.comment ?? null}
+          connected={connected && paneRole?.mode === "interact" && paneRole.machineId === browserMachineId && paneRole.paneId === browserPaneId}
+          onBrowseFolders={(path) => actions.openPalette(folderQueryFor(path, null))}
+          machineName={browserMachineId !== LOCAL_MACHINE || machines.length > 1 ? machines.find((machine) => machine.id === browserMachineId)?.name : undefined}
+          keyboardActive={!settingsOpen && !paletteOpen} editable={fileEditable} onClose={closeBrowser} />
+    </MachineContext.Provider>;
 
   return (
     <MachineSessionsProvider sessions={machineSessions} machineIds={machines.map((machine) => machine.id)}><MachineContext.Provider value={selectedMachineId}><AppLayoutContext.Provider value={appLayout}><div className={`app${(inMode ? !inboxWide : sidebarCollapsed) ? " sidebar-collapsed" : ""}${inMode ? " is-inbox" : ""}${listScreen ? " is-inbox-list" : ""}${inboxWide ? " is-inbox-wide" : ""}${inboxWide && !inbox.shown && selectedPane !== null && !chatShown ? " is-inbox-terminal" : ""}${tabRoom ? " is-inbox-tab-room" : ""}`} style={sidebarWidth === null && filePanelWidth === null ? undefined : {
@@ -1036,7 +1054,7 @@ export function App() {
           </div>
         )}
         {selectedPane && wideScreen && !inMode && (
-          <button type="button" className="header-text-button header-files-button is-icon" aria-label={t("Browse files")} title={filesChanged ? `${t("Files")} · ${t("Changed files")}` : t("Files")} onClick={() => { actions.counted?.("files", "button"); if (selectedPane) openFilesFor(selectedPane.pane_id, selectedMachineId, "browse"); }}>
+          <button type="button" className="header-text-button header-files-button is-icon" aria-label={t("Browse files")} title={filesChanged ? `${t("Files")} · ${t("Changed files")}` : t("Files")} aria-pressed={filesDocked ? filesBeside : undefined} onClick={toggleFiles}>
             <BrowseFilesMenuIcon paneId={selectedPane.pane_id} cwd={filesCwd} connected={selectedMachine?.state === "connected" && !selectedPane.restore_error} status={paneStatus(selectedPane)} />
           </button>
         )}
@@ -1302,6 +1320,8 @@ export function App() {
         </FileCommentNavContext.Provider>
         </WebPanelContext.Provider>
         </OpenFileContext.Provider>
+        {/* last in the row: the browser beside the pane (from 980px), the pane column shrinks and its terminal refits */}
+        {browserShown && browserDocked && filesBrowser(true)}
         {webPage !== null &&
           <WebPanel key={webPage} url={webPage} docked={filePanelAvailable} covered={webDialogCover} onClose={closeWebPage} panelStart={filePanelAvailable ? <FilePanelResizer width={filePanelWidth} onResize={setFilePanelWidth} /> : undefined} />}
       </div>
@@ -1358,19 +1378,11 @@ export function App() {
         setFilesOpen(false);
         selectTargetRef.current(machineId, paneId);
       }} />
-      <SettingsDialog machines={machines} auth={auth} picturesByDefault={picturesByDefault} herdrVersion={shownHealth?.herdr?.version ?? null} herdrRuntime={shownHealth?.herdr ? shownHealth.herdr.runtime ?? "herdr" : null} herdrCore={shownHealth?.herdr_core ?? null} herdrRuntimeFacts={shownHealth?.herdr_runtime ?? null} bootId={shownHealth?.web_ui?.boot_id ?? null} onServerRestarted={() => { void readLocalHealth(); void readBridgeHealth(); void load(); }} security={security} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} onUsageLogin={(paneId) => { closeSettings(); selectTarget("local", paneId, "terminal"); void load(); }} onOpenPane={(machineId, paneId) => { closeSettings(); selectTarget(machineId, paneId, "terminal"); void load(); }} actions={actions} updates={updates} onEnableNotifications={enableNotifications} saveError={settingsSaveError} savePaused={settingsSavePaused} saveRetrying={settingsSaveRetrying} onRetrySave={retrySettingsSave} overPreview={filesOpen || viewing !== null || diffViewing !== null || (webPage !== null && !filePanelAvailable)} />
+      <SettingsDialog machines={machines} auth={auth} picturesByDefault={picturesByDefault} herdrVersion={shownHealth?.herdr?.version ?? null} herdrRuntime={shownHealth?.herdr ? shownHealth.herdr.runtime ?? "herdr" : null} herdrCore={shownHealth?.herdr_core ?? null} herdrRuntimeFacts={shownHealth?.herdr_runtime ?? null} bootId={shownHealth?.web_ui?.boot_id ?? null} onServerRestarted={() => { void readLocalHealth(); void readBridgeHealth(); void load(); }} security={security} open={settingsOpen} section={settingsSection} linkPage={settingsLinkPage} linkSection={settingsLinkSection} onPage={onSettingsPage} onClose={closeSettings} onUsageLogin={(paneId) => { closeSettings(); selectTarget("local", paneId, "terminal"); void load(); }} onOpenPane={(machineId, paneId) => { closeSettings(); selectTarget(machineId, paneId, "terminal"); void load(); }} actions={actions} updates={updates} onEnableNotifications={enableNotifications} saveError={settingsSaveError} savePaused={settingsSavePaused} saveRetrying={settingsSaveRetrying} onRetrySave={retrySettingsSave} overPreview={((filesOpen || viewing !== null) && !browserDocked) || diffViewing !== null || (webPage !== null && !filePanelAvailable)} />
       {diffViewing !== null && <MachineContext.Provider value={diffViewing.machineId}>
         <RepoDiffViewer key={`${diffViewing.scope}:${diffViewing.path}`} target={diffViewing} onClose={closeDiff} onOpenFile={(path) => openFile({ path, paneId: diffViewing.paneId, machineId: diffViewing.machineId })} keyboardActive={!settingsOpen && viewing === null && !filesOpen} />
       </MachineContext.Provider>}
-      {(viewing !== null || filesOpen && browserPaneId !== null) && <MachineContext.Provider value={browserMachineId}>
-        <FilesDialog key={`${browserMachineId}:${browserPaneId}:${viewing?.path ?? browserComment?.id ?? filesIntent}`}
-          initialIntent={viewing ? "browse" : filesIntent}
-          start={browserComment?.diff?.repository ?? (!viewing && filesTarget ? filesTarget.start : browserPane?.foreground_cwd ?? browserPane?.cwd ?? "")} paneId={browserPaneId}
-          initialPath={viewing?.path ?? (browserComment?.diff ? null : browserComment?.path ?? null)} initialComment={browserComment} initialCommentId={viewing?.comment ?? null}
-          connected={connected && paneRole?.mode === "interact" && paneRole.machineId === browserMachineId && paneRole.paneId === browserPaneId}
-          onBrowseFolders={(path) => actions.openPalette(folderQueryFor(path, null))}
-          keyboardActive={!settingsOpen && !paletteOpen} editable={fileEditable} onClose={closeBrowser} />
-      </MachineContext.Provider>}
+      {browserShown && !browserDocked && filesBrowser(false)}
       {worktreeFor && <WorktreeRequestDialog request={worktreeFor} onClose={() => setWorktreeFor(null)} onOpenPane={(paneId) => { setWorktreeFor(null); selectTarget(worktreeFor.machineId, paneId); }} onOpened={(opened) => {
         setWorktreeFor(null);
         if (opened.agent_started === true) actions.agentStarted(worktreeFor.machineId, opened.pane_id);
