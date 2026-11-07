@@ -210,4 +210,5 @@ export const FILES_JA: Record<string, string> = {
   "Back to files": "ファイル一覧に戻る",
   "Markdown preview is unavailable. Showing source.": "Markdown プレビューを表示できないため、ソースを表示しています。",
   "{count} outdated": "古いコメント {count} 件",
+  "Show": "表示",
 };

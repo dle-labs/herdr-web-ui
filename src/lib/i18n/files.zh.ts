@@ -210,4 +210,5 @@ export const FILES_ZH: Record<string, string> = {
   "Back to files": "返回文件列表",
   "Markdown preview is unavailable. Showing source.": "Markdown 预览不可用，正在显示源代码。",
   "{count} outdated": "{count} 条已过时",
+  "Show": "显示",
 };

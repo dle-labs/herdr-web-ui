@@ -210,4 +210,5 @@ export const FILES_KO: Record<string, string> = {
   "Back to files": "파일 목록으로 돌아가기",
   "Markdown preview is unavailable. Showing source.": "Markdown 미리보기를 표시할 수 없어 소스를 보여 줍니다.",
   "{count} outdated": "오래된 댓글 {count}개",
+  "Show": "보기",
 };

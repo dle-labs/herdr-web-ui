@@ -186,27 +186,43 @@
 
 .files-dialog-docked .modal-body {
   min-height: 0;
-  padding: var(--space-3);
+  padding: 0;
 }
 
-/* with Documents, four tabs do not fit beside the title and Close on
-   a phone or a narrow panel: they take the row under them, each an equal share of it */
-@media (max-width: 480px) {
-  .files-dialog .modal-header:has(.files-dialog-tabs > :nth-child(4)) { flex-wrap: wrap; }
-  .files-dialog .files-dialog-tabs:has(> :nth-child(4)) { order: 1; flex: 1 1 100%; display: flex; }
-  .files-dialog .files-dialog-tabs:has(> :nth-child(4)) > button { flex: 1 1 auto; min-width: 0; padding-inline: var(--space-1); overflow: hidden; }
+/* the dialog's size is the panel's: it fills the column the resizer sets */
+.files-dialog-docked.files-dialog-changes {
+  width: auto;
+  height: auto;
+  max-height: none;
 }
 
-@container file-panel (max-width: 480px) {
-  .files-dialog-docked .modal-header:has(.files-dialog-tabs > :nth-child(4)) { flex-wrap: wrap; padding-block: var(--space-1); }
-  .files-dialog-docked .files-dialog-tabs:has(> :nth-child(4)) { order: 1; flex: 1 1 100%; display: flex; }
-  .files-dialog-docked .files-dialog-tabs:has(> :nth-child(4)) > button { flex: 1 1 auto; min-width: 0; padding-inline: var(--space-1); overflow: hidden; }
-  /* the title gives way below 360px: Close keeps the row's end */
-  .files-dialog-docked .modal-header:has(.files-dialog-tabs > :nth-child(4)) > .icon-button:last-child { margin-left: auto; }
-}
+/* the panel is narrower than the dialog: the actions wrap under the title and the views rather than squeeze them */
+.files-dialog-docked .files-dialog-header { padding-inline: var(--space-3); }
 
-/* the narrowest panel keeps the tabs and Close; the palette's folder search waits for a wider one */
-@container file-panel (max-width: 360px) {
-  .files-dialog-docked .modal-title,
-  .files-dialog-docked .files-dialog-tabs + .icon-button:not(:last-child) { display: none; }
+/*
+ * Files | Pull request | Documents (FilesDialog's views): beside the title on a wide window; on a phone a
+ * row of its own under the toolbar, each an equal share of it. The files view stays mounted under the
+ * other two (its tree, reader and drafts kept), as do their own panels once read.
+ */
+.files-dialog-views { flex: 0 1 auto; }
+.files-dialog-views-row {
+  flex-shrink: 0;
+  padding: var(--space-2) var(--space-3);
+  border-block-end: var(--hairline) solid var(--border);
+}
+.files-dialog-views-row .files-dialog-views { display: flex; }
+.files-dialog-views-row .files-dialog-views > button { flex: 1 1 0; min-width: 0; padding-inline: var(--space-1); overflow: hidden; }
+.files-dialog .changes-view[hidden],
+.files-dialog-action-group[hidden],
+.files-dialog-actions > [hidden],
+.files-dialog-view-panel[hidden] { display: none; }
+.files-dialog-view-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--space-6);
+}
+@media (max-width: 640px) {
+  .files-dialog-view-panel { padding: var(--space-3); }
 }

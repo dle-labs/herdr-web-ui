@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Machine } from "../../shared/protocol.ts";
 import { CHANGED_ATTR, changedField, revealField } from "./commentDom.ts";
+import { openPresentation } from "./filePresentation.ts";
 import type { FileComment } from "./fileComments.ts";
 import type { Settings } from "./settings.ts";
+import { useFocusReturn } from "./useFocusTrap.ts";
 import { useFileViewer } from "./useFileViewer.ts";
 import { useRepoDiffViewer } from "./useRepoDiffViewer.ts";
 import { useWebPanel } from "./useWebPanel.ts";
@@ -24,6 +26,11 @@ export function useFilePanels({ machines, settings, filePanelAvailable, selected
   // One Files browser, whether opened from its button, a path link or a comment.
   const [filesOpen, setFilesOpen] = useState(false);
   const [filesTarget, setFilesTarget] = useState<{ machineId: string; paneId: string; start: string } | null>(null);
+  // a same-host web page shares the place beside the pane with Files on wide windows, a popup on narrow ones
+  const { webPage, openWebPage: openWebPanel, closeWebPage, yieldEntry } = useWebPanel({ settings, filePanelAvailable });
+  // Files beside the pane (opt-in, wide windows): the browser is a panel on the right of the pane, not a
+  // dialog over it, and a web page opened there covers it until it closes
+  const filesDocked = filePanelAvailable && settings.filesPanel;
   const canLeaveFiles = useCallback(() => {
     const field = changedField(document.querySelector(".files-dialog"));
     if (field === null) return true;
@@ -37,10 +44,36 @@ export function useFilePanels({ machines, settings, filePanelAvailable, selected
     setDiffCommentView(null);
     setFilesIntent(intent);
     setFilesOpen(true);
-  }, [machines, canLeaveFiles]);
+    // opening Files again (its button, the palette) brings it out from under a web page beside the pane
+    if (filesDocked && webPage !== null) closeWebPage();
+  }, [machines, canLeaveFiles, filesDocked, webPage, closeWebPage]);
   const [filesIntent, setFilesIntent] = useState<WorkspaceFileIntent>("browse");
   const [diffCommentView, setDiffCommentView] = useState<{ paneId: string; machineId: string; comment: FileComment } | null>(null);
-  const { viewing, openFile, closeFile, releaseFile, hideFile, fileFromPop } = useFileViewer(canLeaveFiles);
+  const { viewing, openFile: openPreview, closeFile, releaseFile, hideFile, fileFromPop } = useFileViewer(canLeaveFiles);
+  /** Whether a file opens in the browser beside the pane: Files beside the pane, or Open files beside the pane for its kind. */
+  const docks = useCallback((path: string) => filePanelAvailable && (settings.filesPanel || openPresentation(path, settings.fileOpen) === "panel"), [filePanelAvailable, settings.filesPanel, settings.fileOpen]);
+  // the browser is beside the pane for a file that docks, or for Files beside the pane
+  const browserDocked = viewing !== null ? docks(viewing.path) : filesDocked;
+  // a docked file taking the place of a web page takes over its history entry in place, and a web page
+  // opened over a docked file takes the file's: no push over it, no Back to wait on
+  const openFile = useCallback((preview: Parameters<typeof openPreview>[0], replace = false) => {
+    openPreview(preview, (docks(preview.path) && webPage !== null && yieldEntry()) || replace);
+  }, [openPreview, docks, webPage, yieldEntry]);
+  const openWebPage = useCallback((uri: string, shiftKey: boolean, machineId: string) =>
+    openWebPanel(uri, shiftKey, machineId, viewing !== null && browserDocked ? releaseFile : undefined),
+  [openWebPanel, viewing, browserDocked, releaseFile]);
+  useEffect(() => {
+    if (viewing !== null && browserDocked && webPage !== null) closeWebPage(true);
+  }, [viewing, browserDocked, webPage, closeWebPage]);
+  // the panel is no dialog, so no trap gives the focus back when it closes: what opened it gets it
+  useFocusReturn((filesOpen || viewing !== null) && browserDocked);
+  // Files closes with the dock it lived in when the window narrows: a dialog mounted then would come up
+  // under a popup web page already open and take its focus and Escape
+  const wasDocked = useRef(filesDocked);
+  useEffect(() => {
+    if (wasDocked.current && !filesDocked) setFilesOpen(false);
+    wasDocked.current = filesDocked;
+  }, [filesDocked]);
   // Match upstream's Files list: a pane/PC switch starts at the newly selected pane.
   // An explicit preview retains its own history owner. A dirty editor must finish before
   // its browser can be replaced; observe the editor so saving/discarding catches up at once.
@@ -123,6 +156,5 @@ export function useFilePanels({ machines, settings, filePanelAvailable, selected
     openFile({ path: comment.path, paneId, machineId, comment: comment.id });
   }, [openFile, canLeaveFiles]);
   const [paneRole, setPaneRole] = useState<{ machineId: string; paneId: string; mode: "observe" | "interact" } | null>(null);
-  const { webPage, closeWebPage, openWebPage } = useWebPanel({ settings, filePanelAvailable });
-  return { filesOpen, setFilesOpen, filesTarget, filesIntent, diffCommentView, setDiffCommentView, canLeaveFiles, openFilesFor, viewing, openFile, closeFile, releaseFile, leaveFile, restoreFile, fileFromPop, forgetLeftFiles, viewFile, diffViewing, closeDiff, viewFileComment, paneRole, setPaneRole, webPage, closeWebPage, openWebPage };
+  return { filesOpen, filesDocked, browserDocked, setFilesOpen, filesTarget, filesIntent, diffCommentView, setDiffCommentView, canLeaveFiles, openFilesFor, viewing, openFile, closeFile, releaseFile, leaveFile, restoreFile, fileFromPop, forgetLeftFiles, viewFile, diffViewing, closeDiff, viewFileComment, paneRole, setPaneRole, webPage, closeWebPage, openWebPage };
 }

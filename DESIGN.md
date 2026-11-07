@@ -2326,21 +2326,32 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   owner was replaced, and there is no app precedent to follow. A PC whose server names no herdr (an older bridge) keeps its drafts in the page alone.
 
 ### Documents list (`.md-docs`)
-- Files always has a fourth face (the old Documents in Files switch is gone, a stored value ignored),
-  Files, **Documents**: the Markdown files (`.md`, `.markdown`) under the pane's folder, newest
+- Files has three views, one choice of three (`.files-dialog-views`, a segmented control beside the
+  title; on a phone a row of its own under the toolbar, each an equal share of it): **Files** (the
+  unified tree, changes and reader), **Pull request** (`PullRequestPanel`, the branch's checks,
+  review threads and merge) and **Documents**. Each is read on its first visit and kept, and the
+  files view stays mounted under the other two, its tree, reader and drafts with it; the git and
+  folder actions in the header belong to the files view and are hidden with it. Without a pane
+  there is no choice, only the files view.
+- **Documents** (the old Documents in Files switch is gone, a stored value ignored): the Markdown files (`.md`, `.markdown`) under the pane's folder, newest
   first (GET /api/pane/docs: git's files that are not ignored, or a Markdown-only walk outside a
   repository). It is the folder browser's card and
   rows (`.dir-browser`): the folder in mono cut from its start and a Refresh button on the bar, a
   **Filter documents** field (Escape clears it before it closes Files), then one row per file: its
   glyph, its name, the folder it is in (`.md-docs-folder`, dim mono, cut from its start, the first
   thing to give way) and when it changed (`.md-docs-time`, `lastSeen`'s words, the full time as
-  its tooltip). A row opens the file viewer, which renders it with its outline. Nothing polls:
+  its tooltip). A row switches to the files view and opens the file in its reader, as a pick in the
+  tree would, rendered with its outline. Nothing polls:
   Refresh reads it again. Empty, filtered-out, cut and refused lists say so in the list's own
   words (`No Markdown files in this folder`, `No matching documents`, `Some Markdown files here
   are not listed.`, a bridge too old for the route).
-- Four tabs do not fit beside the title and Close on a phone (480px or less) or a panel of 480px
-  or less: there the tabs take the row under them, each a share of it, with tighter padding, and
-  Close keeps the row's end where the narrow panel drops the title. Three tabs keep one row.
+- Beside the pane (Settings → Files beside the pane, or a file that opens there with Open files
+  beside the pane) the whole browser is the panel on the right of the pane (`aside.file-panel
+  .files-panel`, the docked viewer's place and resizer), not a dialog over it: no scrim, trap,
+  swipe or Back entry, the pane live beside it, and Escape closes it only from inside it. A web
+  page opened beside the pane covers it, kept mounted; the header's Files button (pressed while it
+  shows) closes it, or brings it out from under the page. It closes with the dock when the window
+  narrows past it.
 - Reference: Paseo's `paseo-markdown-viewer` plugin (a Markdown list beside the agent that opens
   each in a reader) and the Codex app's side panel, which opens a `.md` beside Review. Ovis keeps
   it read only and inside Files, behind its setting, until the safe write route of #771 lands;

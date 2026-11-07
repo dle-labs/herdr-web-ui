@@ -101,7 +101,11 @@ function DiffSection({ paneId, inventory, path, owner, connected, split, scrollR
   </section>;
 }
 
-export default function ChangesView({ paneId, start, connected, editable = false, initialIntent = "browse", initialComment = null, initialPath = null, initialCommentId = null, showFile, onShowFile, refreshToken, keyboardActive, onHideFile, onDiffsChange, toolsHost, gitToolsHost, searchOpen, searchActive, onSearchOpen, onSearchClose }: {
+export default function ChangesView({ hidden = false, openRequest = null, paneId, start, connected, editable = false, initialIntent = "browse", initialComment = null, initialPath = null, initialCommentId = null, showFile, onShowFile, refreshToken, keyboardActive, onHideFile, onDiffsChange, toolsHost, gitToolsHost, searchOpen, searchActive, onSearchOpen, onSearchClose }: {
+  /** another view of Files (Pull request, Documents) is shown: kept mounted, with its tree and reader */
+  hidden?: boolean;
+  /** a file to open in the reader, asked from outside the tree (a document picked in Documents); a new token asks again */
+  openRequest?: { path: string; token: number } | null;
   paneId: string | null; start: string; connected: boolean;
   /** this browser drives the PC: with Settings → Edit text files on, a text file can be edited */
   editable?: boolean; initialIntent?: WorkspaceFileIntent; initialComment?: FileComment | null;
@@ -239,6 +243,13 @@ export default function ChangesView({ paneId, start, connected, editable = false
     setComparisonPath(baseCommit ? changed : null);
     setPreview(document); setPath(changed); setJump(document === null ? changed : null);
   }
+  // a document picked in another view of Files opens here as one picked in the tree would
+  const handledOpen = useRef<number | null>(null);
+  useEffect(() => {
+    if (openRequest === null || handledOpen.current === openRequest.token) return;
+    handledOpen.current = openRequest.token;
+    select(openRequest.path, "preview");
+  });
   function revealInTree(relative: string) {
     if (!canLeave()) return;
     resolvedInitial.current = true;
@@ -298,7 +309,7 @@ export default function ChangesView({ paneId, start, connected, editable = false
   // Canonical navigation must not replace the document opened by the initial link.
   const readerPath = initialRequestActive && initialPath ? initialPath : preview;
   const owner = paneId === null ? null : paneStorageId(machineId, paneId);
-  return <div ref={surface} data-show-file={showFile || undefined} className={`changes-view${narrow && showFile ? " is-showing-file" : ""}`}>
+  return <div ref={surface} hidden={hidden} data-show-file={showFile || undefined} className={`changes-view${narrow && showFile ? " is-showing-file" : ""}`}>
     {paneId !== null && toolsHost !== null && createPortal(
       <button type="button" className="icon-button" aria-label={t("Find files…")} title={t("Find files…")} aria-haspopup="dialog" aria-expanded={searchOpen}
         onClick={onSearchOpen}><FolderSearch aria-hidden="true" /></button>, toolsHost)}
