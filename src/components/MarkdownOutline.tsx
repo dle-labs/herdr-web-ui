@@ -86,7 +86,7 @@ export function MarkdownOutline({ id, entries, scroller, drawer, toggle, onClose
     };
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== "Escape" || event.isComposing) return;
-      const viewer = list.current?.closest("[role=dialog], .file-panel, .file-reader");
+      const viewer = list.current?.closest("[role=dialog], .file-panel, .file-reader, .file-viewer-embedded");
       if (!viewer?.contains(document.activeElement)) return;
       if (document.activeElement?.closest("[role=menu]")) return;
       event.stopPropagation();
