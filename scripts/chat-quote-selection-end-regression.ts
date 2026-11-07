@@ -172,6 +172,8 @@ try {
             await composer.blur();
             await page.evaluate(() => getSelection()?.removeAllRanges());
             await frames(page);
+            await page.locator(".chat-turn-agent > .markdown").last().scrollIntoViewIfNeeded();
+            await frames(page);
             await select(page, !shape.mobile);
             await frames(page);
             assert.ok((await page.evaluate(() => getSelection()?.toString() ?? "")).includes(words), `${label} ${gesture}: the paragraph is selected`);
@@ -189,7 +191,20 @@ try {
               assert.fail(`${label} ${gesture}: no Quote or Comment; the range ${where}`);
             });
             assert.equal(await page.locator(".selection-quote").count(), 1, `${label} ${gesture}: Quote offered`);
-            assert.equal(await page.locator(".reply-comment-offer").count(), 1, `${label} ${gesture}: Comment offered`);
+            // The unified editor comments on settled replies; the demo Codex reply is still live.
+            const settled = agent === "claude";
+            assert.equal(await page.locator(".reply-comment-offer").count(), settled ? 1 : 0, `${label} ${gesture}: only settled replies take comments`);
+            if (settled) {
+              await page.locator(".reply-comment-offer").click();
+              const comment = page.getByRole("textbox", { name: "Comment", exact: true });
+              await comment.waitFor(WAIT);
+              await comment.press("Escape");
+              await page.locator(".comment-popover").waitFor({ state: "detached", ...WAIT });
+              await composer.blur();
+              await page.locator(".chat-turn-agent > .markdown").last().scrollIntoViewIfNeeded();
+              await frames(page);
+              await select(page, !shape.mobile);
+            }
             await page.locator(".selection-quote").click();
             await page.locator(".selection-offer").waitFor({ state: "detached", ...WAIT });
             assert.equal(await composer.inputValue(), `> ${words}\n\n`, `${label} ${gesture}: the reply's words alone, no copy row or time`);

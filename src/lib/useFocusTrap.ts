@@ -8,6 +8,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, type MutableRefObject, type RefObject } from "react";
 import { typeAheadFocused } from "./typeAhead.ts";
+import { commentTabTarget } from "./commentDom.ts";
 
 /** Tab stops in DOM order; what a user reaches with Tab inside the surface. */
 const FOCUSABLE = [
@@ -135,6 +136,12 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
       // another dialog or menu that has the focus (a row's action sheet over the drawer) keeps its own Tab
       const holder = document.activeElement;
       if (holder instanceof Element && !node.contains(holder) && holder.closest('[role="dialog"], [role="alertdialog"], [role="menu"]') !== null) return;
+      const logical = commentTabTarget(node, document.activeElement, event.shiftKey);
+      if (logical !== null && node.contains(logical)) {
+        event.preventDefault();
+        logical.focus({ preventScroll: true });
+        return;
+      }
       const stops = tabStops(node, latest.current);
       // every control disabled (a deed that cannot be undone): Tab goes nowhere rather than out
       if (stops.length === 0) { event.preventDefault(); return; }

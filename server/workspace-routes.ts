@@ -13,11 +13,13 @@ import { argumentText, firstMessageFault } from "../shared/launch-rules.ts";
 import type { DirectoryCreated, PendingMessage, ServerMessage, TabMoved, TabMovedToWorkspace, WorkspaceMoved } from "../shared/protocol.ts";
 import type { MoveReceipt } from "./order-sequence.ts";
 import { agentFault, agentLaunch, type AgentPayload } from "./agent-launch.ts";
-import { createDirectory, listDirectories } from "./directories.ts";
+import { createDirectory, ignoredDirectories, listDirectories } from "./directories.ts";
 import { HerdrError, paneMoveToNewTab, sessionSnapshot, tabClose, tabCreate, tabMove, tabRename, workspaceClose, workspaceCreate, workspaceMove, workspaceRename, worktreeCreate, worktreeList, worktreeOpen, worktreeRemove } from "./herdr/client.ts";
-import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse, readJsonObject, setRequestRoute } from "./http.ts";
+import { badRequest, conflictResponse, errorResponse, isJsonObject, jsonResponse, publicErrorResponse, readJsonObject, setRequestRoute } from "./http.ts";
 import { paneContext } from "./pane-context.ts";
 import { PullRequestError, mergeInputOf, mergePullRequest, pullRequestLog, pullRequestView } from "./pull-request.ts";
+import { GitDiffError, gitChanges, gitFileDiff, isGitDiffMode, paneGitCwd, validateBaseCommit } from "./git-diff.ts";
+import { gitCommits, workspaceFiles } from "./workspace-search.ts";
 import { repoDiffResponse } from "./repo-diff.ts";
 import { repoLogResponse } from "./repo-log.ts";
 import type { ShellAgentLocator } from "./shell-agent.ts";
@@ -100,6 +102,43 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
   workspaceMoved: () => MoveReceipt, shellAgents?: ShellAgentLocator,
   /** false: the folders are another machine's, which hc checks as it starts the shell there */
   localFolders = true): Promise<Response | null> {
+  if (pathname === "/api/workspace/commits" || pathname === "/api/workspace/files") {
+    if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+    const paneId = url.searchParams.get("pane_id");
+    if (!paneId?.trim()) return badRequest("missing_pane_id", "pane_id query parameter is required");
+    bunServer.timeout(request, 35);
+    try {
+      const cwd = await paneGitCwd(paneId);
+      const query = url.searchParams.get("query") ?? "";
+      const body = pathname.endsWith("/commits") ? await gitCommits(cwd, query) : await workspaceFiles(cwd, query);
+      return jsonResponse(body, 200, { "cache-control": "no-store" });
+    } catch (error) {
+      if (error instanceof GitDiffError) return publicErrorResponse(error.code, error.message, error.status, { "cache-control": "no-store" });
+      return errorResponse(error);
+    }
+  }
+
+  if (pathname === "/api/workspace/changes" || pathname === "/api/workspace/diff") {
+    if (request.method !== "GET") return badRequest("method_not_allowed", "use GET");
+    const paneId = url.searchParams.get("pane_id");
+    if (!paneId?.trim()) return badRequest("missing_pane_id", "pane_id query parameter is required");
+    const mode = url.searchParams.get("mode");
+    if (!isGitDiffMode(mode)) return badRequest("invalid_mode", "mode must be all, unstaged or staged");
+    const path = url.searchParams.get("path");
+    if (pathname.endsWith("/diff") && !path) return badRequest("missing_path", "path query parameter is required");
+    bunServer.timeout(request, 35);
+    try {
+      const cwd = await paneGitCwd(paneId);
+      const baseCommit = url.searchParams.get("base_commit") ?? undefined;
+      validateBaseCommit(mode, baseCommit);
+      const body = pathname.endsWith("/changes") ? await gitChanges(cwd, mode, baseCommit) : await gitFileDiff(cwd, mode, path!, baseCommit);
+      return jsonResponse(body, 200, { "cache-control": "no-store" });
+    } catch (error) {
+      if (error instanceof GitDiffError) return publicErrorResponse(error.code, error.message, error.status, { "cache-control": "no-store" });
+      return errorResponse(error);
+    }
+  }
+
   if (pathname === "/api/workspace/directories" && request.method === "POST") {
     setRequestRoute(pathname);
     let payload: unknown;
@@ -128,7 +167,9 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
       if (base === undefined && path !== "" && path !== "~" && !path.startsWith("~/") && !isAbsolute(path)) return badRequest("invalid_cwd", "the pane a relative path belongs to is gone");
     }
     const listing = listDirectories(url.searchParams.get("path") ?? "", url.searchParams.get("hidden") === "1", url.searchParams.get("files") === "1", base);
-    return listing === null ? badRequest("invalid_cwd", "path must be a directory this user can read") : jsonResponse(listing);
+    if (listing === null) return badRequest("invalid_cwd", "path must be a directory this user can read");
+    if (url.searchParams.get("files") === "1") listing.ignored_directories = await ignoredDirectories(listing.path, listing.directories);
+    return jsonResponse(listing);
   }
 
   if (pathname === "/api/workspace/diff/files" || pathname === "/api/workspace/diff/file" || pathname === "/api/workspace/diff/refs") {

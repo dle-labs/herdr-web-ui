@@ -1,14 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-
-import { openPresentation, type FilePresentation } from "./filePresentation.ts";
-import { backUnderCurrentEntry } from "./historyNavigation.ts";
-import { useFocusReturn } from "./useFocusTrap.ts";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { Machine } from "../../shared/protocol.ts";
+import { CHANGED_ATTR, changedField, revealField } from "./commentDom.ts";
+import type { FileComment } from "./fileComments.ts";
+import type { Settings } from "./settings.ts";
 import { useFileViewer } from "./useFileViewer.ts";
 import { useRepoDiffViewer } from "./useRepoDiffViewer.ts";
 import { useWebPanel } from "./useWebPanel.ts";
-import type { Settings } from "./settings.ts";
+import type { WorkspaceFileIntent } from "./workspaceBrowser.ts";
 
-export interface FilePanelsParams {
+interface FilePanelsParams {
+  machines: readonly Machine[];
   settings: Settings;
   filePanelAvailable: boolean;
   selectedPaneId: string | null;
@@ -19,125 +20,49 @@ type Preview = Parameters<ReturnType<typeof useFileViewer>["openFile"]>[0];
 const LEFT_FILES_KEPT = 10;
 const paneKey = (machineId: string, paneId: string): string => `${machineId}\n${paneId}`;
 
-/**
- * The viewer's React key: a path is read from its pane's folder, so two panes' files of the same path
- * are two files, and a switch from one to the other must not keep the first one's loaded content.
- */
-export const fileViewerKey = (preview: { machineId: string; paneId: string | null; path: string }): string =>
-  `${preview.machineId}\n${preview.paneId ?? ""}\n${preview.path}`;
-
-/**
- * The Files dialog, the file viewer, a repository diff and the web panel, which share the place beside
- * the pane and the history entries over it; and, with Reopen files on return, the files tab switches left.
- */
-export function useFilePanels({ settings, filePanelAvailable, selectedPaneId, selectedMachineId }: FilePanelsParams) {
-  // the Files dialog, and the file open in the viewer (a path as the chat or the dialog gave it)
+export function useFilePanels({ machines, settings, filePanelAvailable, selectedPaneId, selectedMachineId }: FilePanelsParams) {
+  // One Files browser, whether opened from its button, a path link or a comment.
   const [filesOpen, setFilesOpen] = useState(false);
-  const { viewing, openFile: openPreview, closeFile, setPresentation, releaseFile, hideFile, fileFromPop } = useFileViewer();
-  // a repository diff from the Files dialog's Changes tab, an entry of its own like a file
-  const { viewing: diffViewing, openDiff, closeDiff, releaseDiff } = useRepoDiffViewer();
-  const presentation = viewing?.presentation ?? openPresentation(viewing?.path ?? "", settings.fileOpen);
-  const fileDocked = filePanelAvailable && presentation === "panel";
-  // Files beside the pane (opt-in, wide windows) shares the docked file's place: a file docking there
-  // covers it, and closing the file shows Files again
-  const filesDocked = filePanelAvailable && settings.filesPanel;
-  useEffect(() => {
-    if (viewing !== null && fileDocked && !filesDocked) setFilesOpen(false);
-  }, [viewing, fileDocked, filesDocked]);
-  // a same-host web page shares the docked file's place on wide windows and opens as a popup on narrow ones.
-  // Either replacing the other takes over its history entry in place: no push over it, no Back to wait on.
-  const { webPage, openWebPage: openWebPanel, closeWebPage, yieldEntry, holdsEntry } = useWebPanel({ settings, filePanelAvailable });
-  const openWebPage = useCallback((uri: string, shiftKey: boolean, machineId: string) =>
-    openWebPanel(uri, shiftKey, machineId, viewing !== null && fileDocked ? releaseFile : undefined),
-  [openWebPanel, viewing, fileDocked, releaseFile]);
-  const openFile = useCallback((preview: Parameters<typeof openPreview>[0], replace = false) => {
-    const docks = filePanelAvailable && (preview.presentation ?? openPresentation(preview.path, settings.fileOpen)) === "panel";
-    openPreview(preview, (docks && webPage !== null && yieldEntry()) || replace);
-  }, [openPreview, filePanelAvailable, settings.fileOpen, webPage, yieldEntry]);
-  useEffect(() => {
-    if (viewing !== null && fileDocked && webPage !== null) closeWebPage(true);
-  }, [viewing, fileDocked, webPage, closeWebPage]);
-  // a docked file or web page over Files beside the pane; opening Files again (its button, the palette) closes it
-  const filesCovered = (viewing !== null && fileDocked) || webPage !== null;
-  const revealFiles = useCallback(() => {
+  const [filesTarget, setFilesTarget] = useState<{ machineId: string; paneId: string; start: string } | null>(null);
+  const canLeaveFiles = useCallback(() => {
+    const field = changedField(document.querySelector(".files-dialog"));
+    if (field === null) return true;
+    revealField(field);
+    return false;
+  }, []);
+  const openFilesFor = useCallback((paneId: string, machineId: string, intent: WorkspaceFileIntent) => {
+    if (!canLeaveFiles()) return;
+    const pane = machines.find((machine) => machine.id === machineId)?.snapshot?.panes.find((pane) => pane.pane_id === paneId);
+    setFilesTarget({ machineId, paneId, start: pane?.foreground_cwd ?? pane?.cwd ?? "" });
+    setDiffCommentView(null);
+    setFilesIntent(intent);
     setFilesOpen(true);
-    if (!filesDocked) return;
-    if (viewing !== null && fileDocked) closeFile();
-    else if (webPage !== null) closeWebPage();
-  }, [filesDocked, viewing, fileDocked, closeFile, webPage, closeWebPage]);
-  // no dialog, so no trap gives the focus back when it closes: what opened it gets it, as for the docked file
-  useFocusReturn(filesOpen && filesDocked);
-  // Files closes with the dock it lived in when the window narrows: a dialog mounted then would come up
-  // under a popup file or web page already open and take their focus and Escape
-  const wasDocked = useRef(filesDocked);
-  useEffect(() => {
-    if (wasDocked.current && !filesDocked) setFilesOpen(false);
-    wasDocked.current = filesDocked;
-  }, [filesDocked]);
-  // the panel is no dialog, so no trap gives the focus back when it closes: what opened the file
-  // (a link in the chat, a row of Files) gets it, as it does from the popup
-  useFocusReturn(viewing !== null && fileDocked);
-  // a collapse (below) whose two steps back have not landed: a second click on Show beside the
-  // pane, or the kind correction in the same moment, must not queue two steps more and the file twice
-  const collapsing = useRef(false);
-  // a collapse whose step back never lands must not lock the toggle once the file and diff are gone
-  useEffect(() => { if (viewing === null && diffViewing === null) collapsing.current = false; }, [viewing, diffViewing]);
-  const presentFile = useCallback((next: FilePresentation) => {
-    if (collapsing.current) return;
-    if (next === "panel" && filePanelAvailable && diffViewing !== null && viewing !== null) {
-      // Collapse the stacked diff and popup to one panel entry. Pushing from their opener
-      // also discards the old forward entries, so Forward cannot resurrect the popup or diff.
-      const preview = { ...viewing, presentation: next };
-      collapsing.current = true;
-      window.addEventListener("popstate", () => {
-        collapsing.current = false;
-        releaseDiff();
-        openFile(preview);
-      }, { once: true });
-      window.history.go(-2);
-    } else if (next === "panel" && filePanelAvailable && viewing !== null && webPage !== null && holdsEntry()) {
-      // A popup file over the report's entry docks in the report's place: like the collapse above,
-      // step back past both entries (the Back closes the report) and push the docked file from their
-      // opener, so the two panels leave one entry and Forward cannot bring the popup back.
-      const preview = { ...viewing, presentation: next };
-      collapsing.current = true;
-      const land = (): void => {
-        collapsing.current = false;
-        openFile(preview);
-      };
-      window.addEventListener("popstate", land, { once: true });
-      // a step back the browser refuses lands nowhere: the file stays a popup and the toggle is free again
-      backUnderCurrentEntry(2)?.catch(() => { window.removeEventListener("popstate", land); collapsing.current = false; });
-    } else setPresentation(next);
-  }, [filePanelAvailable, diffViewing, viewing, releaseDiff, openFile, setPresentation, webPage, holdsEntry]);
-  // A diff's file docking in the place of a docked report that holds the entry under the diff: like the
-  // popup collapse above, step back past the diff and the report's entry and push the file from their
-  // opener, so Back closes the file and then leaves, as when the report held no entry.
-  const openDiffFile = useCallback(async (preview: Parameters<typeof openPreview>[0]) => {
-    const docks = filePanelAvailable && openPresentation(preview.path, settings.fileOpen) === "panel";
-    if (!docks || webPage === null || !holdsEntry()) return false;
-    if (collapsing.current) return true;
-    collapsing.current = true;
-    const land = (): void => {
-      collapsing.current = false;
-      openFile(preview);
+  }, [machines, canLeaveFiles]);
+  const [filesIntent, setFilesIntent] = useState<WorkspaceFileIntent>("browse");
+  const [diffCommentView, setDiffCommentView] = useState<{ paneId: string; machineId: string; comment: FileComment } | null>(null);
+  const { viewing, openFile, closeFile, releaseFile, hideFile, fileFromPop } = useFileViewer(canLeaveFiles);
+  // Match upstream's Files list: a pane/PC switch starts at the newly selected pane.
+  // An explicit preview retains its own history owner. A dirty editor must finish before
+  // its browser can be replaced; observe the editor so saving/discarding catches up at once.
+  useLayoutEffect(() => {
+    if (!filesOpen || viewing !== null || diffCommentView !== null) return;
+    if (filesTarget?.machineId === selectedMachineId && filesTarget.paneId === selectedPaneId) return;
+    const follow = (): boolean => {
+      if (changedField(document.querySelector(".files-dialog")) !== null) return false;
+      const pane = machines.find((machine) => machine.id === selectedMachineId)?.snapshot?.panes.find((pane) => pane.pane_id === selectedPaneId);
+      setFilesTarget(pane ? { machineId: selectedMachineId, paneId: pane.pane_id, start: pane.foreground_cwd ?? pane.cwd ?? "" } : null);
+      setDiffCommentView(null);
+      setFilesIntent("browse");
+      return true;
     };
-    window.addEventListener("popstate", land, { once: true });
-    try {
-      await backUnderCurrentEntry(2);
-    } catch (error) {
-      window.removeEventListener("popstate", land);
-      collapsing.current = false;
-      throw error;
-    }
-    return true;
-  }, [filePanelAvailable, settings.fileOpen, webPage, holdsEntry, openFile]);
-  // the kind corrects a guess from the extension; with files set to open in the popup there is no guess to correct
-  const reportFileKind = useCallback((kind: FilePresentation) => {
-    const wanted = settings.fileOpen === "panel" ? kind : "popup";
-    if (viewing !== null && viewing.presentation === undefined && wanted !== openPresentation(viewing.path, settings.fileOpen)) presentFile(wanted);
-  }, [viewing, presentFile, settings.fileOpen]);
-  // Settings > File viewer > Reopen files on return (#3179): the file a tab switch left behind, by its
+    if (follow()) return;
+    const surface = document.querySelector(".files-dialog");
+    if (surface === null) return;
+    const observer = new MutationObserver(() => { if (follow()) observer.disconnect(); });
+    observer.observe(surface, { childList: true, subtree: true, attributes: true, attributeFilter: [CHANGED_ATTR] });
+    return () => observer.disconnect();
+  }, [filesOpen, filesTarget, viewing, diffCommentView, selectedMachineId, selectedPaneId, machines]);
+  // Settings > Files > Reopen files on return (#3179): the file a tab switch left behind, by its
   // pane, shown again when an in-app switch comes back to that pane. Back needs none of it: the file's
   // own entry stays under the switch and shows the file again.
   const leftFiles = useRef(new Map<string, Preview>());
@@ -180,13 +105,24 @@ export function useFilePanels({ settings, filePanelAvailable, selectedPaneId, se
     leftFiles.current.delete(key);
     openFile(left);
   }, [settings.reopenFileOnReturn, openFile]);
-  const toggleFilePresentation = filePanelAvailable && viewing !== null
-    ? () => presentFile(fileDocked ? "popup" : "panel")
-    : undefined;
   const viewFile = useCallback((path: string) => {
-    // the Files dialog would cover the docked panel the file opens in
-    if (!filesDocked && filePanelAvailable && openPresentation(path, settings.fileOpen) === "panel") setFilesOpen(false);
     openFile({ path, paneId: selectedPaneId, machineId: selectedMachineId });
-  }, [openFile, selectedPaneId, selectedMachineId, filePanelAvailable, settings.fileOpen, filesDocked]);
-  return { filesOpen, setFilesOpen, filesDocked, filesCovered, revealFiles, viewing, openFile, closeFile, setPresentation, releaseFile, leaveFile, restoreFile, fileFromPop, forgetLeftFiles, diffViewing, openDiff, closeDiff, releaseDiff, presentation, fileDocked, webPage, closeWebPage, openWebPage, collapsing, presentFile, openDiffFile, reportFileKind, toggleFilePresentation, viewFile };
+  }, [openFile, selectedPaneId, selectedMachineId]);
+  // Chat turn change links retain their repository comparison and history entry.
+  const { viewing: diffViewing, closeDiff } = useRepoDiffViewer();
+  // the composer's walk stops at a file comment: its file opens in the viewer, at that comment
+  const viewFileComment = useCallback((paneId: string, machineId: string, comment: FileComment) => {
+    if (!canLeaveFiles()) return;
+    if (comment.diff !== undefined) {
+      setFilesTarget({ paneId, machineId, start: comment.diff.repository });
+      setDiffCommentView({ paneId, machineId, comment });
+      setFilesIntent("changes");
+      setFilesOpen(true);
+      return;
+    }
+    openFile({ path: comment.path, paneId, machineId, comment: comment.id });
+  }, [openFile, canLeaveFiles]);
+  const [paneRole, setPaneRole] = useState<{ machineId: string; paneId: string; mode: "observe" | "interact" } | null>(null);
+  const { webPage, closeWebPage, openWebPage } = useWebPanel({ settings, filePanelAvailable });
+  return { filesOpen, setFilesOpen, filesTarget, filesIntent, diffCommentView, setDiffCommentView, canLeaveFiles, openFilesFor, viewing, openFile, closeFile, releaseFile, leaveFile, restoreFile, fileFromPop, forgetLeftFiles, viewFile, diffViewing, closeDiff, viewFileComment, paneRole, setPaneRole, webPage, closeWebPage, openWebPage };
 }

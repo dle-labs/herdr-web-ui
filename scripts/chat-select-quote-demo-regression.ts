@@ -206,8 +206,8 @@ try {
           await select(page, FIRST, !shape.mobile);
           await page.locator(".reply-comment-offer").click();
           await page.getByRole("textbox", { name: "Comment", exact: true }).waitFor(WAIT);
-          await page.getByRole("button", { name: "Cancel", exact: true }).click();
-          await page.locator(".reply-comment-form").waitFor({ state: "detached", ...WAIT });
+          await page.getByRole("textbox", { name: "Comment", exact: true }).press("Escape");
+          await page.locator(".comment-popover").waitFor({ state: "detached", ...WAIT });
           assert.equal(await composer.inputValue(), stacked, `${label}: Comment leaves the message box alone`);
 
           // the message goes as written, for an agent alone: a shell would read its `>` lines as redirects

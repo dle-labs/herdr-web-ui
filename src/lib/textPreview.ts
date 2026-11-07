@@ -81,13 +81,19 @@ function blockElements(blocks: readonly MarkdownBlock[]): number {
     count += 1;
     if (block.type === "heading") count += inlineElements(block.content);
     else if (block.type === "paragraph") for (const line of block.lines) count += 2 + inlineElements(line);
-    else if (block.type === "list") for (const item of block.items) count += 1 + (item.checked === undefined ? 0 : 4) + inlineElements(item.content) + blockElements(item.blocks ?? []);
+    // Each item draws both its <li> and the stable commentable .markdown-item wrapper.
+    else if (block.type === "list") for (const item of block.items) count += 2 + (item.checked === undefined ? 0 : 4) + inlineElements(item.content) + blockElements(item.blocks ?? []);
     else if (block.type === "blockquote") count += blockElements(block.blocks);
     else if (block.type === "table") {
       count += 3;
       for (const row of [block.header, ...block.rows]) { count += 1; for (const cell of row) count += 1 + inlineElements(cell); }
     }
-    else if (block.type === "code") count += Math.min(30, block.value.split("\n").length);
+    else if (block.type === "code") {
+      const shown = block.value.split("\n").slice(0, 30).join("\n");
+      // Comment wrapper, header/label, copy button and SVG, pre/code, fold and error rows.
+      // Plain fences can also link paths: each slash bounds another possible path button.
+      count += 14 + Math.min(30, block.value.split("\n").length) + shown.split("/").length - 1;
+    }
     else if (block.type === "math") count += block.value.length * MATH_ELEMENTS_PER_CHAR;
   }
   return count;

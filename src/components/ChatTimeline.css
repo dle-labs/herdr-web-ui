@@ -8,6 +8,10 @@
 
 .chat-frame-body {
   position: relative;
+  /* The relative chat view must shrink inside this row, not size it to the transcript.
+     A docked comment reserves space in the outer layout. */
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
 }

@@ -17,7 +17,7 @@ beforeEach(() => {
     descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
   }
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
-  Object.defineProperty(globalThis, "document", { configurable: true, value: { activeElement: null } });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { activeElement: null, querySelector: () => null } });
   Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: class {} });
   entries = [{ "ovis:nav": true }];
   index = 0;
@@ -53,6 +53,7 @@ afterEach(async () => {
 async function mount(reopenFileOnReturn: boolean): Promise<void> {
   function Probe() {
     panels = useFilePanels({
+      machines: [],
       settings: { ...DEFAULT_SETTINGS, reopenFileOnReturn },
       filePanelAvailable: true, selectedPaneId: "p1", selectedMachineId: "local",
     });

@@ -127,4 +127,6 @@ export const TERMINAL_ZH: Record<string, string> = {
   "Recover unsent text": "恢复未发送的文本",
   "Codex selected this: Shift+drag copies or quotes it here": "Codex 已选择：按住 Shift 拖动可在此复制或引用",
   "Codex selected this: Option+drag copies or quotes it here": "Codex 已选择：按住 Option 拖动可在此复制或引用",
+  "Comments only": "仅评论",
+  "Comments with this message: {count}": "此消息的评论：{count}",
 };

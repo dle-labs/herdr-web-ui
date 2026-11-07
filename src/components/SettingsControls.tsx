@@ -1,4 +1,4 @@
-import { createContext, isValidElement, useContext, type ComponentProps, type ReactNode } from "react";
+import { createContext, isValidElement, useContext, type ComponentProps, type ReactNode, type Ref } from "react";
 import { ChevronDown, ChevronRight, Minus, Plus, RotateCcw, type LucideIcon } from "lucide-react";
 
 import { DEFAULT_SETTINGS, useSettings, type Settings } from "../lib/settings.ts";
@@ -145,9 +145,9 @@ export function SettingsRow({ label, description, keywords, held = false, htmlFo
 }
 
 /** `id` for a `<label htmlFor>` beside it; `describedBy`: the id of the hint read with it */
-export function Toggle({ checked, label, onChange, disabled, id, describedBy }: { checked: boolean; label: string; onChange: (checked: boolean) => void; disabled?: boolean; id?: string; describedBy?: string }) {
+export function Toggle({ checked, label, onChange, disabled, id, describedBy, buttonRef }: { checked: boolean; label: string; onChange: (checked: boolean) => void; disabled?: boolean; id?: string; describedBy?: string; buttonRef?: Ref<HTMLButtonElement> }) {
   return (
-    <button type="button" id={id} className="settings-toggle" role="switch" aria-checked={checked} aria-label={label} aria-describedby={describedBy} disabled={disabled} onClick={() => onChange(!checked)}>
+    <button ref={buttonRef} type="button" id={id} className="settings-toggle" role="switch" aria-checked={checked} aria-label={label} aria-describedby={describedBy} disabled={disabled} onClick={() => onChange(!checked)}>
       <span className="settings-toggle-thumb" />
     </button>
   );

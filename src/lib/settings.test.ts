@@ -1078,6 +1078,11 @@ describe("microphone button", () => {
     expect(wantsVoiceInput("auto", "chat", false)).toBe(true);
     expect(wantsVoiceInput("auto", "chat", true)).toBe(false);
     expect(wantsVoiceInput("auto", "terminal", false)).toBe(false);
+    for (const phone of [false, true]) {
+      expect(wantsVoiceInput("auto", "comment", phone)).toBe(true);
+      expect(wantsVoiceInput("on", "comment", phone)).toBe(true);
+      expect(wantsVoiceInput("off", "comment", phone)).toBe(false);
+    }
     for (const mode of ["chat", "terminal"] as const) {
       for (const phone of [false, true]) {
         expect(wantsVoiceInput("on", mode, phone)).toBe(true);
@@ -1437,6 +1442,31 @@ it("keeps where web links open to a tab or the panel, a tab by default", () => {
   }
   for (const bad of ["ultra", "ultracode", "High", "", null, 3]) expect(sanitizeSettings({ claudeLaunchEffort: bad }).claudeLaunchEffort).toBe("");
   for (const bad of ["minimal", "High", null]) expect(sanitizeSettings({ codexLaunchEffort: bad }).codexLaunchEffort).toBe("");
+});
+
+describe("review preferences", () => {
+  for (const key of ["comments"] as const) {
+    it(`${key} defaults on, stays on this device, and only keeps booleans`, () => {
+      expect(DEFAULT_SETTINGS[key]).toBe(true);
+      expect(SETTING_SCOPE[key]).toBe("device");
+      for (const value of [true, false]) {
+        const saved = sanitizeSettings({ [key]: value });
+        expect(sanitizeSettings(JSON.parse(JSON.stringify(saved)))[key]).toBe(value);
+      }
+      for (const value of [undefined, null, 1, "false"]) expect(sanitizeSettings({ [key]: value })[key]).toBe(true);
+      expect(telemetrySettingsSnapshot(sanitizeSettings({ [key]: false }))).not.toHaveProperty(key);
+    });
+  }
+
+  it("uses only diffStyle, unified by default, without restoring removed preferences", () => {
+    expect(DEFAULT_SETTINGS.diffStyle).toBe("unified");
+    for (const diffStyle of ["unified", "split"] as const) expect(sanitizeSettings({ diffStyle }).diffStyle).toBe(diffStyle);
+    for (const diffStyle of [null, true, "side-by-side"]) expect(sanitizeSettings({ diffStyle }).diffStyle).toBe("unified");
+    const obsolete = { splitDiff: true, highlightCode: false, chatPageKeys: true, pageOverlapRows: 3, fontSmoothing: "auto" };
+    const cleaned = sanitizeSettings(obsolete);
+    for (const key of Object.keys(obsolete)) expect(cleaned).not.toHaveProperty(key);
+    expect(cleaned.diffStyle).toBe("unified");
+  });
 });
 
 describe("shared settings", () => {

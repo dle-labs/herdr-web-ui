@@ -1,157 +1,83 @@
-import { afterEach, beforeEach, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, expect, it } from "bun:test";
 import { createElement } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
+import type { Machine } from "../../shared/protocol.ts";
 import { DEFAULT_SETTINGS } from "./settings.ts";
 import { useFilePanels } from "./useFilePanels.ts";
 
-const descriptors = new Map<string, PropertyDescriptor | undefined>();
+const machines = [{ id: "local", snapshot: { panes: [
+  { pane_id: "p1", cwd: "/one", foreground_cwd: "/one/project" },
+  { pane_id: "p2", cwd: "/two" },
+] } }, { id: "remote", snapshot: { panes: [{ pane_id: "p1", cwd: "/remote" }] } }] as unknown as Machine[];
 let renderer: ReactTestRenderer | undefined;
-let panels: ReturnType<typeof useFilePanels>;
-
+let hook: ReturnType<typeof useFilePanels>;
+let dirty = false;
+let mutation: (() => void) | undefined;
+const descriptors = new Map<string, PropertyDescriptor | undefined>();
+function Probe({ machine = "local", pane = "p1" }: { machine?: string; pane?: string | null }) {
+  hook = useFilePanels({ machines, settings: DEFAULT_SETTINGS, filePanelAvailable: true, selectedMachineId: machine, selectedPaneId: pane });
+  return null;
+}
 beforeEach(() => {
-  for (const key of ["window", "document", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"]) {
-    descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
-  }
+  dirty = false; mutation = undefined;
+  for (const key of ["window", "document", "MutationObserver", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+  const events = new EventTarget();
+  const history = { state: {}, replaceState(state: object) { this.state = state; }, pushState(state: object) { this.state = state; } };
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { history, location: { href: "http://fixture/" }, addEventListener: events.addEventListener.bind(events), removeEventListener: events.removeEventListener.bind(events) } });
+  const field = { scrollIntoView() {}, focus() {}, closest() { return null; } };
+  const surface = { querySelector: () => dirty ? field : null, ownerDocument: { querySelector: () => null } };
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { querySelector: () => surface } });
+  Object.defineProperty(globalThis, "MutationObserver", { configurable: true, value: class {
+    constructor(callback: () => void) { mutation = callback; }
+    observe() {}
+    disconnect() { mutation = undefined; }
+  } });
 });
-
 afterEach(async () => {
-  await act(async () => { renderer?.unmount(); });
-  renderer = undefined;
+  await act(async () => renderer?.unmount()); renderer = undefined;
   for (const [key, descriptor] of descriptors) {
     if (descriptor) Object.defineProperty(globalThis, key, descriptor);
     else Reflect.deleteProperty(globalThis, key);
   }
   descriptors.clear();
 });
-
-it("closes a diff's file docked over a file that holds the page count onto that file, not past it (#3095)", async () => {
-  // Given file A docked over two stacked pages (its entry holds their count), with a diff opened over it.
-  const events = new EventTarget();
-  const entries: Array<{ key: string; state: unknown }> = [
-    { key: "pane", state: null },
-    { key: "page", state: { "ovis:web-panel": { url: "http://localhost:3000/a" } } },
-    { key: "a", state: { "ovis:file-preview": { path: "/r/a.md", machineId: "local", paneId: "p1", presentation: "panel" }, "ovis:web-panel-below": 1 } },
-  ];
-  let index = 2;
-  // a docked file gives the focus back to what opened it on closing: nothing had it here
-  Object.defineProperty(globalThis, "document", { configurable: true, value: { activeElement: null } });
-  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: class {} });
-  const traverseTo = mock((_key: string) => ({ committed: Promise.resolve(undefined) }));
-  Object.defineProperty(globalThis, "window", { configurable: true, value: {
-    location: new URL("http://localhost:7317/"),
-    history: {
-      get state() { return entries[index]!.state; },
-      replaceState: (next: unknown) => { entries[index] = { ...entries[index]!, state: next }; },
-      pushState: (next: unknown) => { entries.splice(index + 1); entries.push({ key: `e${entries.length}`, state: next }); index += 1; },
-    },
-    navigation: { get currentEntry() { return { index }; }, entries: () => entries, traverseTo },
-    addEventListener: events.addEventListener.bind(events),
-    removeEventListener: events.removeEventListener.bind(events),
-  } });
-  function Probe() {
-    panels = useFilePanels({
-      settings: { ...DEFAULT_SETTINGS, fileOpen: "panel" },
-      filePanelAvailable: true, selectedPaneId: "p1", selectedMachineId: "local",
-    });
-    return null;
-  }
+async function open() {
   await act(async () => { renderer = create(createElement(Probe)); });
-  const diff = {
-    machineId: "local", paneId: "p1", directory: "/r", path: "b.md", oldPath: null,
-    scope: "workspace" as const, base: null, head: null, comparison: null,
-  };
-  await act(async () => { panels.openDiff(diff); });
-
-  // When the diff's file docks in the diff's place (App: releaseDiff, then openFile replacing the entry) and closes.
-  await act(async () => { panels.releaseDiff(); panels.openFile({ path: "/r/b.md", paneId: "p1", machineId: "local" }, true); });
-  await act(async () => { panels.closeFile(); });
-
-  // Then the close goes back one entry, onto file A, and not past it onto the page.
-  expect(traverseTo).toHaveBeenCalledWith("a");
+  await act(async () => hook.openFilesFor("p1", "local", "browse"));
+}
+it("follows the selected pane's folder and remote PC while Files stays open", async () => {
+  await open();
+  expect(hook.filesTarget?.start).toBe("/one/project");
+  await act(async () => renderer!.update(createElement(Probe, { pane: "p2" })));
+  expect(hook.filesOpen).toBe(true);
+  expect(hook.filesTarget).toEqual({ machineId: "local", paneId: "p2", start: "/two" });
+  await act(async () => renderer!.update(createElement(Probe, { machine: "remote", pane: "p1" })));
+  expect(hook.filesTarget).toEqual({ machineId: "remote", paneId: "p1", start: "/remote" });
 });
-
-it("closes a diff over a copy of its entry (a sheet's, after a reload) back past both (#3101)", async () => {
-  // Given a diff's entry and, over it, the copy a phone sheet left on reload, which counts one more under it.
-  const diff = {
-    machineId: "local", paneId: "p1", directory: "/r", path: "b.md", oldPath: null,
-    scope: "workspace" as const, base: null, head: null, comparison: null,
-  };
-  const entries: Array<{ key: string; state: unknown }> = [
-    { key: "pane", state: null },
-    { key: "diff", state: { "ovis:repo-diff": diff } },
-    { key: "copy", state: { "ovis:repo-diff": diff, "ovis:web-panel-below": 1 } },
-  ];
-  const events = new EventTarget();
-  const traverseTo = mock((_key: string) => ({ committed: Promise.resolve(undefined) }));
-  Object.defineProperty(globalThis, "window", { configurable: true, value: {
-    location: new URL("http://localhost:7317/"),
-    history: { get state() { return entries[2]!.state; }, replaceState: () => {}, pushState: () => {}, back: () => { traverseTo(entries[1]!.key); } },
-    navigation: { currentEntry: { index: 2 }, entries: () => entries, traverseTo },
-    addEventListener: events.addEventListener.bind(events),
-    removeEventListener: events.removeEventListener.bind(events),
-  } });
-  function Probe() {
-    panels = useFilePanels({ settings: DEFAULT_SETTINGS, filePanelAvailable: false, selectedPaneId: "p1", selectedMachineId: "local" });
-    return null;
-  }
-  await act(async () => { renderer = create(createElement(Probe)); });
-
-  // When the diff closes.
-  await act(async () => { panels.closeDiff(); });
-
-  // Then the close goes back to the pane, not onto the diff's own entry.
-  expect(traverseTo).toHaveBeenCalledWith("pane");
+it("keeps an unsaved editor until it is saved or discarded, then follows the latest selection", async () => {
+  await open(); dirty = true;
+  await act(async () => renderer!.update(createElement(Probe, { pane: "p2" })));
+  expect(hook.filesTarget?.paneId).toBe("p1");
+  await act(async () => renderer!.update(createElement(Probe, { machine: "remote", pane: "p1" })));
+  dirty = false;
+  await act(async () => mutation?.());
+  expect(hook.filesTarget).toEqual({ machineId: "remote", paneId: "p1", start: "/remote" });
 });
-
-it("keeps Files and the diff open without replacing history when the traversal rejects", async () => {
-  // Given a docked report owning an entry, with Files and a diff opened over it.
-  const events = new EventTarget();
-  let state: unknown = { "ovis:web-panel": { url: "http://localhost:3000/report" } };
-  const replaceState = mock((next: unknown) => { state = next; });
-  const pushState = mock((next: unknown) => { state = next; });
-  const traversal = Promise.withResolvers<unknown>();
-  const traverseTo = mock(() => ({ committed: traversal.promise }));
-  Object.defineProperty(globalThis, "window", { configurable: true, value: {
-    location: new URL("http://localhost:7317/"),
-    history: { get state() { return state; }, replaceState, pushState },
-    navigation: {
-      currentEntry: { index: 2 },
-      entries: () => [{ key: "pane" }, { key: "report" }, { key: "diff" }],
-      traverseTo,
-    },
-    addEventListener: events.addEventListener.bind(events),
-    removeEventListener: events.removeEventListener.bind(events),
-  } });
-  function Probe() {
-    panels = useFilePanels({
-      settings: { ...DEFAULT_SETTINGS, fileOpen: "panel" },
-      filePanelAvailable: true, selectedPaneId: "p1", selectedMachineId: "local",
-    });
-    return null;
-  }
-  await act(async () => { renderer = create(createElement(Probe)); });
-  const diff = {
-    machineId: "local", paneId: "p1", directory: "/repo", path: "file.ts", oldPath: null,
-    scope: "workspace" as const, base: null, head: null, comparison: null,
-  };
-  await act(async () => { panels.setFilesOpen(true); panels.openDiff(diff); });
-  replaceState.mockClear();
-  pushState.mockClear();
-
-  // When the Navigation API rejects the pending step instead of committing it.
-  const opening = panels.openDiffFile({ path: "file.ts", paneId: "p1", machineId: "local" });
-  const error = new DOMException("Traversal cancelled", "AbortError");
-  const rejected = opening.then(() => null, (reason: unknown) => reason);
-  expect(traverseTo).toHaveBeenCalledWith("pane");
-  expect(panels.filesOpen).toBe(true);
-  await act(async () => { traversal.reject(error); expect(await rejected).toBe(error); });
-
-  // Then the caller receives the failure and no file takes over an unknown history entry.
-  expect(panels.filesOpen).toBe(true);
-  expect(panels.diffViewing).toEqual(diff);
-  expect(panels.viewing).toBeNull();
-  expect(panels.collapsing.current).toBe(false);
-  expect(replaceState).not.toHaveBeenCalled();
-  expect(pushState).not.toHaveBeenCalled();
+it("keeps an explicit file preview owned by its opening pane", async () => {
+  await open();
+  await act(async () => hook.viewFile("/one/project/readme.md"));
+  await act(async () => renderer!.update(createElement(Probe, { pane: "p2" })));
+  expect(hook.viewing).toMatchObject({ paneId: "p1", machineId: "local", path: "/one/project/readme.md" });
+});
+it("keeps a diff-comment preview owned by its pane, even when opened from another selection", async () => {
+  await open();
+  await act(async () => renderer!.update(createElement(Probe, { pane: "p2" })));
+  const comment = { id: "comment-p1", diff: { repository: "/one/project" } } as Parameters<typeof hook.viewFileComment>[2];
+  await act(async () => hook.viewFileComment("p1", "local", comment));
+  expect(hook.diffCommentView?.comment.id).toBe("comment-p1");
+  expect(hook.filesTarget?.paneId).toBe("p1");
+  await act(async () => renderer!.update(createElement(Probe, { machine: "remote", pane: "p1" })));
+  expect(hook.diffCommentView?.comment.id).toBe("comment-p1");
+  expect(hook.filesTarget?.machineId).toBe("local");
 });

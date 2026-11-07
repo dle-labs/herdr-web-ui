@@ -1,33 +1,3 @@
-import { createHighlighter, type HighlightTokenClass } from "@tanstack/highlight/core";
-import { apache } from "@tanstack/highlight/languages/apache";
-import { cmake } from "@tanstack/highlight/languages/cmake";
-import { cpp } from "@tanstack/highlight/languages/cpp";
-import { css } from "@tanstack/highlight/languages/css";
-import { diff } from "@tanstack/highlight/languages/diff";
-import { dockerfile } from "@tanstack/highlight/languages/dockerfile";
-import { ejs } from "@tanstack/highlight/languages/ejs";
-import { env } from "@tanstack/highlight/languages/env";
-import { go } from "@tanstack/highlight/languages/go";
-import { html } from "@tanstack/highlight/languages/html";
-import { http } from "@tanstack/highlight/languages/http";
-import { js } from "@tanstack/highlight/languages/js";
-import { json } from "@tanstack/highlight/languages/json";
-import { jsx } from "@tanstack/highlight/languages/jsx";
-import { markdown } from "@tanstack/highlight/languages/markdown";
-import { mermaid } from "@tanstack/highlight/languages/mermaid";
-import { nginx } from "@tanstack/highlight/languages/nginx";
-import { php } from "@tanstack/highlight/languages/php";
-import { python } from "@tanstack/highlight/languages/python";
-import { scheme } from "@tanstack/highlight/languages/scheme";
-import { shell } from "@tanstack/highlight/languages/shell";
-import { sql } from "@tanstack/highlight/languages/sql";
-import { svelte } from "@tanstack/highlight/languages/svelte";
-import { toml } from "@tanstack/highlight/languages/toml";
-import { ts } from "@tanstack/highlight/languages/ts";
-import { tsx } from "@tanstack/highlight/languages/tsx";
-import { vue } from "@tanstack/highlight/languages/vue";
-import { yaml } from "@tanstack/highlight/languages/yaml";
-
 import { pathParts } from "./filePaths.ts";
 
 /** What a token means, independent of any theme; CSS maps each role to a token color. */
@@ -49,12 +19,7 @@ export interface Token {
   role: SyntaxRole | null;
 }
 
-/**
- * One array of tokens per source line, without the line break. Never has a trailing empty line (a
- * final "\n" ends the last line, it does not start another) and always has at least one line; an
- * empty line is an empty array. A multi-line construct (comment, template string) keeps its role on
- * every line it spans.
- */
+/** One entry per source line, including the empty entry after a final newline. */
 export type Lines = Token[][];
 
 /**
@@ -66,6 +31,8 @@ export interface Runs {
   roles: Uint8Array;
 }
 
+export const ROLES: readonly (SyntaxRole | null)[] = [null, "keyword", "string", "number", "comment", "function", "type", "variable", "meta", "inserted", "deleted"];
+
 /**
  * Code blocks in chat are highlighted up to this many characters (`limit` counts characters). The
  * worker's budget bounds the time; this bounds what a reply can make it hold: a pasted log or a
@@ -74,78 +41,40 @@ export interface Runs {
 export const CHAT_HIGHLIGHT_LIMIT = 100 * 1024;
 
 /**
- * Up to this many characters, code is highlighted at once, while the page draws. TanStack Highlight
- * is linear on ordinary code but quadratic on some shapes (a long run of `"\"` in JSON, `--` in
- * YAML): at 2 KB the worst of those measured stays under 5 ms. Anything longer is highlighted in a
- * worker (`highlightOffThread`), so no text can hold the page.
- */
-export const SYNC_HIGHLIGHT_LIMIT = 2 * 1024;
-
-/**
  * Past this many lines, code is drawn as one text, without colors: every line is an element of its
  * own, and in Chromium 20 000 of them take about 0.3 s to draw, while 256 KB of line breaks (262 144
  * lines) held the page for 4 s. Bytes do not bound that, so the lines are counted.
  */
 export const LINE_ELEMENT_LIMIT = 20_000;
 
-/** How many lines a normalized source (`normalizeCode`) has: one more than its line breaks. */
-export function countLines(source: string): number {
-  let lines = 1;
-  for (let at = source.indexOf("\n"); at !== -1; at = source.indexOf("\n", at + 1)) lines += 1;
-  return lines;
-}
-
-// the languages an agent's files and replies are likely to hold; TSRX (Octane) and plain text are left out
-const highlighter = createHighlighter({
-  languages: [apache, cmake, cpp, css, diff, dockerfile, ejs, env, go, html, http, js, json, jsx, markdown, mermaid, nginx, php, python, scheme, shell, sql, svelte, toml, ts, tsx, vue, yaml],
-});
-const REGISTERED = new Set(highlighter.listLanguages());
-
-// a fence word or a file extension to its registered language, beyond the aliases TanStack knows
-// itself (javascript, typescript, bash, sh, zsh, yml, py, md, xml, golang, patch, docker, …)
+/** Lightweight application language names; grammar loading belongs exclusively to the worker. */
+const LANGUAGES = new Set(["apache", "cmake", "cpp", "css", "diff", "dockerfile", "ejs", "env", "go", "html", "http", "js", "json", "jsx", "markdown", "mermaid", "nginx", "php", "python", "scheme", "shell", "sql", "svelte", "toml", "ts", "tsx", "vue", "yaml"]);
 const LANGUAGE_ALIASES: Record<string, string> = {
-  mts: "ts", cts: "ts",
-  c: "cpp", h: "cpp",
-  scss: "css", less: "css",
-  svg: "html", xhtml: "html",
-  mkd: "markdown", mdown: "markdown", mkdn: "markdown", markdown: "markdown",
+  javascript: "js", mjs: "js", cjs: "js", "js-vue": "js", typescript: "ts", mts: "ts", cts: "ts", "angular-ts": "ts",
+  bash: "shell", sh: "shell", zsh: "shell", ksh: "shell", fish: "shell", shellscript: "shell", cmd: "shell", console: "shell",
+  yml: "yaml", py: "python", golang: "go", patch: "diff", docker: "dockerfile", dotenv: "env",
+  c: "cpp", h: "cpp", "c++": "cpp", cxx: "cpp", cc: "cpp", hpp: "cpp", hxx: "cpp", scss: "css", less: "css",
+  xml: "html", svg: "html", xhtml: "html", htm: "html", "angular-html": "html",
+  jsonc: "json", json5: "json", scm: "scheme", racket: "scheme",
+  md: "markdown", mkd: "markdown", mdown: "markdown", mkdn: "markdown",
   ini: "toml", cfg: "toml",
-  ksh: "shell", fish: "shell",
 };
 
-// plain text is no language: a request for one must come out as `null`, or a long .txt would be
-// reported "too long to highlight"
-const PLAIN_TEXT = new Set(["plaintext", "text", "txt"]);
-
-/** The registered language a lowercase word names (a fence word, an extension), or `null`. */
-function languageForWord(word: string): string | null {
-  if (!word || PLAIN_TEXT.has(word)) return null;
-  const language = highlighter.normalizeLanguage(LANGUAGE_ALIASES[word] ?? word);
-  return REGISTERED.has(language) ? language : null;
-}
-
-/** Whether `language` is one this module highlights (a name `languageForFence`/`languageForPath` give). */
 export function canHighlight(language: string | null): language is string {
-  return language !== null && REGISTERED.has(language);
+  return language !== null && LANGUAGES.has(language);
 }
-
-/**
- * The registered language for a Markdown fence's info string ("ts", "TSX title=x"): only its first
- * word counts, case-insensitively. `null` for an empty, plain-text or unknown one.
- */
+function languageForWord(word: string): string | null {
+  const language = LANGUAGE_ALIASES[word] ?? word;
+  return canHighlight(language) ? language : null;
+}
+/** First fence word only, case-insensitive; unknown and plain text deliberately have no grammar. */
 export function languageForFence(info: string): string | null {
   return languageForWord(info.trim().split(/\s+/)[0]?.toLowerCase() ?? "");
 }
-
-/**
- * The registered language for a file path (either separator), from its name alone, or `null` when
- * there is none. This is the only place that maps file names to languages: "is this file Markdown"
- * is `languageForPath(path) === "markdown"`.
- */
+/** Sole filename-to-language policy for the app, without importing a highlighting engine. */
 export function languageForPath(path: string): string | null {
   const { stem, extension } = pathParts(path.toLowerCase());
   const name = stem + extension;
-  // before the name rules: Dockerfile.md is a document about a Dockerfile
   if (name.endsWith(".md") || name.endsWith(".markdown")) return "markdown";
   if (name === "dockerfile" || name.startsWith("dockerfile.") || name.endsWith(".dockerfile") || name === "containerfile") return "dockerfile";
   if (name === "cmakelists.txt") return "cmake";
@@ -156,49 +85,21 @@ export function languageForPath(path: string): string | null {
   return languageForWord(extension.slice(1));
 }
 
-// TanStack's semantic classes to roles; an unlisted class (`operator`) is plain
-const CLASS_ROLES: Partial<Record<HighlightTokenClass, SyntaxRole>> = {
-  keyword: "keyword", literal: "keyword",
-  string: "string", "code-inline": "string",
-  number: "number",
-  comment: "comment",
-  function: "function", command: "function", heading: "function",
-  type: "type", tag: "type", selector: "type",
-  variable: "variable", property: "variable", attr: "variable", link: "variable",
-  meta: "meta",
-  inserted: "inserted",
-  deleted: "deleted",
-};
-
-/** Roles by their index in `Runs.roles`; 0 is plain. */
-const ROLES: readonly (SyntaxRole | null)[] = [null, "keyword", "string", "number", "comment", "function", "type", "variable", "meta", "inserted", "deleted"];
-const ROLE_INDEX = new Map(ROLES.map((role, index) => [role, index]));
+/** How many lines a normalized source (`normalizeCode`) has: one more than its line breaks. */
+export function countLines(source: string): number {
+  let lines = 1;
+  for (let at = source.indexOf("\n"); at !== -1; at = source.indexOf("\n", at + 1)) lines += 1;
+  return lines;
+}
 
 /** Normalize line endings without discarding source whitespace from rendered text and selection. */
 export function normalizeCode(code: string): string {
-  return code.replace(/\r\n/g, "\n");
+  return code.replace(/\r\n?/g, "\n");
 }
 
 /** Uncolored lines, in the same shape as tokenized ones, so a view never tells the two apart. */
 export function plainLines(source: string): Lines {
   return source.split("\n").map((line) => (line === "" ? [] : [{ text: line, role: null }]));
-}
-
-/**
- * `source` (normalized) tokenized as runs, neighbors of one role merged. Runs in the worker as on
- * the page. Throws whatever the highlighter throws; `language` must be registered.
- */
-export function highlightRuns(source: string, language: string): Runs {
-  const lengths: number[] = [];
-  const roles: number[] = [];
-  for (const token of highlighter.tokenize(source, { lang: language }).tokens) {
-    if (token.value === "") continue;
-    const role = ROLE_INDEX.get((token.className && CLASS_ROLES[token.className]) ?? null) ?? 0;
-    const last = roles.length - 1;
-    if (last >= 0 && roles[last] === role) lengths[last] = lengths[last]! + token.value.length;
-    else { lengths.push(token.value.length); roles.push(role); }
-  }
-  return { lengths: Uint32Array.from(lengths), roles: Uint8Array.from(roles) };
 }
 
 /**
@@ -235,24 +136,4 @@ export function extendLines(lines: Lines, tail: string): Lines {
   if (first) next[next.length - 1] = [...next[next.length - 1]!, { text: first, role: null }];
   for (const line of rest) next.push(line === "" ? [] : [{ text: line, role: null }]);
   return next;
-}
-
-/** The last code `highlightNow` highlighted, as it answered. */
-let lastHighlight: { source: string; language: string; lines: Lines } | null = null;
-
-/**
- * `source` (normalized) highlighted at once, on the calling thread. Never throws: a highlighter
- * error gives plain lines. The last call is remembered, so a block mounted anew with the same code
- * is not tokenized again. Only for short code (`SYNC_HIGHLIGHT_LIMIT`) or in a worker.
- */
-export function highlightNow(source: string, language: string): Lines {
-  if (lastHighlight !== null && lastHighlight.source === source && lastHighlight.language === language) return lastHighlight.lines;
-  let lines: Lines;
-  try {
-    lines = linesFromRuns(source, highlightRuns(source, language));
-  } catch {
-    lines = plainLines(source);
-  }
-  lastHighlight = { source, language, lines };
-  return lines;
 }

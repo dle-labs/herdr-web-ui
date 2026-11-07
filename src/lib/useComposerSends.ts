@@ -1,3 +1,4 @@
+import { composeWithComments, hasQuotedLine, type PaneComment } from "./blockComments.ts";
 import { useCallback, useMemo, useRef, type MutableRefObject } from "react";
 import { ApiError } from "./api.ts";
 import { answerFromText, answerRefusal, needsConfirmation, type TypedAnswer } from "./promptAnswer.ts";
@@ -8,7 +9,7 @@ import { paneStorageId } from "../../shared/machines.ts";
 import { rememberWaitingSend, stampedBaseline, waitingBaseline, waitingKey } from "./sentWaiting.ts";
 import { composerDrafts } from "./composerDraft.ts";
 import type { AgentStatus, InteractivePrompt, PromptAnswer } from "../../shared/protocol.ts";
-import type { HerdrSocket, SubmitDelivery, SubmitResult } from "./ws.ts";
+import type { HerdrSocket, SubmitDelivery, SubmitOptions, SubmitResult } from "./ws.ts";
 import { plainError } from "./paneTerminalShared.ts";
 import type { Translate } from "./i18n.ts";
 import type { MachineSession } from "./machineSession.ts";
@@ -51,7 +52,7 @@ export interface ComposerSendsDeps {
   stillOpenNote: (open: { pane: string; agent: string; command: string; named: boolean; history: string | undefined }) => string;
   stillOpenNotedRef: MutableRefObject<boolean>;
   stillOpenRef: MutableRefObject<{ pane: string; agent: string; command: string; named: boolean; history: string | undefined } | null>;
-  submitComposerMessage: (text: string, delivery: SubmitDelivery, clearDraft?: string, sendAnyway?: boolean, pendingId?: string, resendGeneration?: number, agentOnly?: boolean) => Promise<SubmitResult> | null;
+  submitComposerMessage: (text: string, options?: SubmitOptions) => Promise<SubmitResult> | null;
   submitRetention: PaneSubmitRetention | null;
   t: Translate;
 }
@@ -89,7 +90,7 @@ export function useComposerSends(deps: ComposerSendsDeps) {
   const sendNowRef = useRef<(id: string) => Promise<void>>(async () => {});
 
   const composerSend = useCallback(
-    (text: string, clearDraft?: string, sendAnyway = false, agentOnly = false, now = false): boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal> => {
+    (text: string, { comments = [], clearDraft, sendAnyway = false, agentOnly = false, now = false }: { comments?: readonly PaneComment[]; clearDraft?: string; sendAnyway?: boolean; agentOnly?: boolean; now?: boolean } = {}): boolean | string | DraftRefusal | Promise<boolean | string | DraftRefusal> => {
       const pane = paneRef.current;
       // A refused send keeps the draft; no second choice goes to the card waiting on its read.
       if (pane !== null && answerPending) return false;
@@ -141,13 +142,12 @@ export function useComposerSends(deps: ComposerSendsDeps) {
       const socket = socketRef.current, session = sessionRef.current;
       const sentAt = Date.now();
       const sentAfter = pane === null ? null : waitingBaseline(waitingKey(machineId, pane));
-      const result = submitComposerMessage(text, delivery, delivery === "immediate" ? clearDraft : undefined, sendAnyway, undefined, undefined, agentOnly);
+      const outgoingText = composeWithComments(comments, text);
+      const result = submitComposerMessage(outgoingText, { delivery, agentOnly: agentOnly || comments.length > 0, ...(delivery === "immediate" && clearDraft !== undefined ? { clearDraft } : {}), ...(sendAnyway ? { sendAnyway } : {}) });
       return result === null ? false : result.then((answer) => {
-        // Neither a dropped connection nor a cleared old draft proves this message was typed.
-        // Without a receipt, leave the retryable composer text and report the uncertainty.
-        if (!answer.ok) return submitRefusal(answer.code, answer.message, answer.draft, answer.box, agent);
+        if (!answer.ok) return submitRefusal(answer.code, answer.message, answer.draft, answer.box, agent, comments.length > 0);
         // an older bridge took it with no receipt: the box lets it go, a row keeps it as not confirmed
-        if (answer.unconfirmed && pane !== null) pendingMessages.keepUnconfirmed(paneStorageId(machineId, pane), text);
+        if (answer.unconfirmed && pane !== null) pendingMessages.keepUnconfirmed(paneStorageId(machineId, pane), composeWithComments(comments, text));
         // A confirmed send belongs to the original pane even if navigation outruns its receipt. A queued
         // follow-up was typed now only when its receipt says so: an ok with no `pending` also answers a
         // replayed id, or a row sent or discarded since
@@ -157,7 +157,7 @@ export function useComposerSends(deps: ComposerSendsDeps) {
             setChatLocalSend((current) => ({ key: current.key + 1, navigationGeneration: navigation }));
           }
           // the PC's stamp before it typed bounds the send's turn on its clock alone (lib/sentWaiting.ts)
-          if (pane !== null) rememberWaitingSend(waitingKey(machineId, pane), text, sentAt, stampedBaseline(sentAfter, answer.sendingAt, sentAt));
+          if (pane !== null) rememberWaitingSend(waitingKey(machineId, pane), composeWithComments(comments, text), sentAt, stampedBaseline(sentAfter, answer.sendingAt, sentAt));
         }
         if (pane !== null && typedNow) showSentCommand(pane, text, known, seen);
         // Ctrl+Enter: the row it was queued as goes now, by the same steer as its Send now. A refused steer
@@ -226,7 +226,7 @@ export function useComposerSends(deps: ComposerSendsDeps) {
             const releaseSubmit = submitRetention?.retain(pane);
             const answer = await result.finally(() => releaseSubmit?.());
             if (answer.ok && action === "steer" && delivered) showSentCommand(pane, message.text, known, seen);
-            if (!answer.ok) pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, pendingActionUncertain(answer.code, message.state),
+            if (!answer.ok) pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, pendingActionUncertain(answer, message.state),
               action === "steer" ? message.resendGeneration ?? 0 : undefined);
           } finally {
             off?.();
@@ -241,7 +241,7 @@ export function useComposerSends(deps: ComposerSendsDeps) {
           const known = knownOutcomes(pane);
           const seen = inputRowNow() === "ready";
           const sentAt = Date.now(), sentAfter = waitingBaseline(waitingKey(machineId, pane));
-          const result = submitComposerMessage(message.text, "immediate", undefined, false, id, message.resendGeneration ?? 0, message.agent_only === true);
+          const result = submitComposerMessage(message.text, { delivery: "immediate", agentOnly: message.agent_only === true || hasQuotedLine(message.text), resendId: id, generation: message.resendGeneration ?? 0 });
           if (!result) {
             pendingMessages.fail(owner, id, { code: "not_transmitted", message: "the connection dropped before this message was sent" }, false);
             return;
@@ -260,7 +260,7 @@ export function useComposerSends(deps: ComposerSendsDeps) {
           // A concurrent Edit can remove storage while this copy is busy. Its exact
           // withdrawal refusal settles that copy instead of recreating a held row.
           else if (answer.code === "pending_discarded") pendingMessages.removeCopy(owner, id);
-          else pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, !submitNotTyped(answer.code), message.resendGeneration ?? 0);
+          else pendingMessages.fail(owner, id, { code: answer.code, message: answer.message }, !submitNotTyped(answer), message.resendGeneration ?? 0);
         }
       } catch {
         pendingMessages.fail(owner, id, { code: "disconnected", message: t("Not confirmed. Check the terminal before sending again.") }, true);

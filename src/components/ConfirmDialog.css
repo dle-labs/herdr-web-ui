@@ -1,3 +1,10 @@
+/* a question is asked over whatever opened it: a raised Settings (SettingsDialog.css), a comment's dialog
+   (CommentPopover.css), the file preview. Its portal comes last in the body, so it wins the tie with a
+   raised Settings */
+.confirm-scrim {
+  z-index: calc(var(--z-modal) + 3);
+}
+
 .confirm-dialog {
   width: min(100%, 420px);
 }

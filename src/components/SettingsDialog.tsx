@@ -4,6 +4,8 @@ import { ALargeSmall, AppWindow, ArrowDownUp, ArrowLeft, AudioLines, Bell, Bot, 
 import "./SettingsDialog.css";
 
 import type { AddPcPreset, AppActions } from "../lib/actions.ts";
+import { blockComments } from "../lib/blockComments.ts";
+import { hasChangedComment, hasCommentDialog } from "../lib/commentDom.ts";
 import { useInstallPrompt } from "../lib/install.ts";
 import { changePc, inNativeApp } from "../lib/nativeApp.ts";
 import { canReuseExternalLinkTab } from "../lib/terminalFileLinks.ts";
@@ -577,6 +579,22 @@ function ChatPage() {
   const touch = useMediaQuery("(pointer: coarse)");
   const filePanelAvailable = useMediaQuery(FILE_PANEL_DOCK_QUERY);
   const chip = (Icon: LucideIcon, label: string, on: boolean, change: (on: boolean) => void) => <button type="button" className="settings-chip" aria-pressed={on} onClick={() => change(!on)}><Icon aria-hidden="true" />{label}</button>;
+  // Disabling comments deletes device-local drafts, only after an explicit confirmation.
+  const [deleting, setDeleting] = useState<number | null>(null);
+  const commentsToggle = useRef<HTMLButtonElement>(null);
+  const refocusToggle = useRef(false);
+  useEffect(() => {
+    if (deleting !== null || !refocusToggle.current) return;
+    refocusToggle.current = false;
+    commentsToggle.current?.focus({ preventScroll: true });
+  }, [deleting]);
+  const setComments = (on: boolean): void => {
+    if (on) { update({ comments: true }); return; }
+    const stored = blockComments.countAll();
+    const count = stored > 0 ? stored : hasChangedComment(document) ? 1 : 0;
+    if (count === 0) update({ comments: false });
+    else setDeleting(count);
+  };
   // herdr-app rows (a label and its control) under short group headings; the sentences stay for search only
   return (
     <SettingsBare.Provider value="rows">
@@ -648,6 +666,9 @@ function ChatPage() {
       </SettingsGroup>
 
       <SettingsGroup title={t("Files")} section="file-viewer">
+        <SettingsRow icon={MessageSquare} label={t("Comments")} description={t("Comment on settled agent replies and files. Turning this off deletes every comment on this device.")} reset={["comments"]}>
+          <Toggle label={t("Comments")} checked={settings.comments} onChange={setComments} buttonRef={commentsToggle} />
+        </SettingsRow>
         <SettingsRow icon={PanelRight} label={t("Open files")} description={t("On a wide window, text and code can open beside the pane. Media, PDFs and folders always open in a popup, and the viewer's header button moves the file open now.")} wide reset={["fileOpen"]}>
           <Segmented label={t("Open files")} value={settings.fileOpen} onChange={(fileOpen) => update({ fileOpen })} options={FILE_OPEN_TARGETS.map((fileOpen) => ({ value: fileOpen, label: fileOpen === "panel" ? t("Beside the pane") : t("In a popup") }))} />
         </SettingsRow>
@@ -682,6 +703,12 @@ function ChatPage() {
         </SettingsGroup>
         <VoiceMore />
       </SettingsFold>
+      {deleting !== null && <ConfirmDialog
+        title={deleting === 1 ? t("Delete 1 comment?") : t("Delete {count} comments?", { count: deleting })}
+        body={t("Every saved comment on this device is deleted. This cannot be undone.")}
+        confirmLabel={t("Turn off and delete")}
+        onConfirm={async () => { blockComments.clearAll(); update({ comments: false }); refocusToggle.current = true; setDeleting(null); }}
+        onClose={() => setDeleting(null)} />}
     </SettingsBare.Provider>
   );
 }
@@ -1763,7 +1790,7 @@ function SettingsCrash({ onClose, overPreview }: { onClose: () => void; overPrev
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose]);
   return (
-    <div className={overPreview ? "modal-scrim settings-over-preview" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className={overPreview ? "modal-scrim settings-raised" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <div ref={surface} className="modal" role="dialog" aria-modal="true" aria-label={t("Settings")} tabIndex={-1}>
         <RegionCrash message={t("Settings can't be shown.")} retry={onClose} retryLabel={t("Close")} buttonRef={closeRef} />
       </div>
@@ -1825,6 +1852,8 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
   // Tab stays inside the dialog, and the focus returns to whatever opened it
   const surface = useFocusTrap<HTMLElement>(true, { initialFocus: backRef });
   useSheetSwipe(surface, onClose);
+  // A comment dialog can already be open when the global Settings shortcut runs.
+  const [overComment] = useState(() => hasCommentDialog(document));
   const shown = useRef<{ page: SettingsPage | null; keyBar: boolean } | null>(null);
   // the group a landing named, followed into view until the reader moves the page
   const following = useRef<{ group: HTMLElement; page: SettingsPage | null } | null>(null);
@@ -1989,7 +2018,7 @@ function OpenSettingsDialog({ section = null, linkPage = null, linkSection = nul
   const focusable = page ?? PAGES[0]!.id;
 
   return (
-    <div className={overPreview ? "modal-scrim settings-over-preview" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className={overPreview || overComment ? "modal-scrim settings-raised" : "modal-scrim"} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       {/* named Settings on every page: the page's own name is the visible title */}
       <section ref={surface} className={searching ? "modal settings-dialog is-searching" : "modal settings-dialog"} role="dialog" aria-modal="true" aria-label={keyBarOpen ? t("Key bar") : t("Settings")} tabIndex={-1}>
         <header className="modal-header settings-header">

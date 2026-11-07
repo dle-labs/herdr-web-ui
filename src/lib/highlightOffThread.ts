@@ -1,9 +1,9 @@
-import { highlightNow, linesFromRuns, plainLines, SYNC_HIGHLIGHT_LIMIT, type Lines, type Runs } from "./highlight.ts";
+import { linesFromRuns, plainLines, type Lines, type Runs } from "./highlight.ts";
 import { createOffThreadQueue, type OffThreadJob, type WorkerLike } from "./offThread.ts";
 
 /**
- * How long a worker may take to highlight one text. Ordinary code of a megabyte takes well under a
- * second even on a phone; past this the text is shown plain and said to be too long to highlight.
+ * Maximum elapsed worker job time, including engine/grammar initialization. Text exceeding the
+ * budget stays plain; even short or ordinary input can exceed it on a slow device.
  */
 export const HIGHLIGHT_BUDGET_MS = 2_000;
 
@@ -67,12 +67,10 @@ export function highlightedFrom(source: string, lines: Lines | null): Highlighte
 }
 
 /**
- * `source` (normalized, `language` registered) highlighted without waiting, where that can be: short
- * code at once (`SYNC_HIGHLIGHT_LIMIT`), longer code as the worker answered it before and the cache
- * still holds it. `null`: ask `highlightOffThread`.
+ * A previously completed worker result, or `null` to ask `highlightOffThread`.
+ * Never tokenizes on the calling thread, regardless of source length.
  */
 export function highlightKnown(source: string, language: string): Highlighted | null {
-  if (source.length <= SYNC_HIGHLIGHT_LIMIT) return { lines: highlightNow(source, language), tooLong: false };
   const cached = cache.get(source, language);
   return cached === undefined ? null : highlightedFrom(source, cached);
 }
