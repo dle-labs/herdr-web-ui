@@ -40,7 +40,10 @@ export const GROK_SEND_UNCONFIRMED_MESSAGE = "Grok's screen did not show where t
  */
 export const PASTED_NOT_SENT_MESSAGE = "The message is in the terminal's input line, not sent; clear it or press Enter there";
 
-export function submitNotTyped(code: string): boolean {
+export function submitNotTyped(input: string | { code: string; typed?: false }): boolean {
+  const code = typeof input === "string" ? input : input.code;
+  if (code === "submit_partial") return false;
+  if (typeof input !== "string" && input.typed === false) return true;
   return ["agent_blocked", "read_only", "submit_timeout", "agent_not_ready", "pending_input_unsupported", "invalid_delivery", "invalid_submit_text",
     "invalid_submit_id", "pending_limit", "pending_not_found", "pending_busy", "invalid_pending_action", "pending_target_changed", "first_message_launch_ended", "pending_lease_lost", "not_attached", "input_not_ready", "attach_held", "pane_not_found", "retired_submit_id", "input_draft",
     // Claude Code's rewind dialog was on screen: nothing went into it
@@ -49,7 +52,7 @@ export function submitNotTyped(code: string): boolean {
     "not_transmitted",
     "capabilities_unknown",
     // a message for an agent alone was not sent to a bridge that cannot keep that rule (HerdrSocket)
-    "agent_only_unsupported",
+    "agent_only", "agent_only_not_ready", "agent_only_busy", "agent_only_unsupported", "agent_not_found", "agent_queue_busy",
     // a hold that must never go on its own was not sent to a bridge that cannot hold one (HerdrSocket)
     "pending_hold_unsupported"].includes(code);
 }

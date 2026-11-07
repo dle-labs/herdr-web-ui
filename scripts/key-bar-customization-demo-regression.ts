@@ -290,7 +290,7 @@ try {
       try {
         await context.addInitScript(({ pane, key }) => {
           if (localStorage.getItem(key) === null) localStorage.setItem(key, JSON.stringify({
-            language: "en", terminalInputMode: "direct",
+            language: "en", terminalInputMode: "direct", voiceInput: "off",
             keyBarExtras: ["alt", "shift-tab", "home-end", "page-up-down", "ctrl-d", "ctrl-z", "pipe", "tilde", "slash"],
           }));
           localStorage.setItem(`ovis:view:${pane}`, "terminal");

@@ -53,13 +53,24 @@
   --control-h: var(--chat-control-h);
 }
 
-.chat-view {
+.chat-surface-layout {
   --chat-edge: var(--space-4);
   --chat-edge-end: var(--space-5);
   position: absolute;
   inset: 0;
   top: calc(-1 * var(--header-over, 0px));
   z-index: 1;
+}
+
+.chat-surface-layout > .chat-frame {
+  position: relative;
+  flex: 1 1 auto;
+}
+
+.chat-view {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   /* at its top, a drag down for older messages is still the transcript's: handed on to the
      page, Android Chrome takes it for pull-to-refresh and reloads the app */

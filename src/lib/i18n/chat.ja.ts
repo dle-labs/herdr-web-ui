@@ -8,6 +8,7 @@
  * Register and fixed terms follow ../i18n.ja.ts; a key another feature also uses goes there.
  */
 export const CHAT_JA: Record<string, string> = {
+  "Comment on “{quote}”: {comment}": "「{quote}」へのコメント: {comment}",
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravityのチャットを利用できません。ターミナルを開いて動作状況とツール呼び出しを確認してください。",
   "Not in the conversation. If the agent showed an error, it is in the terminal.": "会話に記録されていません。エージェントがエラーを出した場合はターミナルにあります。",
   "Not in the conversation. If {agent} showed an error, it is in the terminal.": "会話に記録されていません。{agent} がエラーを出した場合はターミナルにあります。",

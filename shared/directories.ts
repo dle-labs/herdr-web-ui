@@ -11,6 +11,8 @@ export interface DirectoryListing {
   /** more folders than the list holds */
   truncated: boolean;
   /** the files beside the folders, when asked for (`files=1`), sorted, within the same cap */
+  /** Listed folder names ignored by Git, absent on older bridges. */
+  ignored_directories?: string[];
   files?: { name: string; size: number }[];
 }
 

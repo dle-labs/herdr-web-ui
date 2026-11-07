@@ -8,6 +8,7 @@
  * Register and fixed terms follow ../i18n.zh.ts; a key another feature also uses goes there.
  */
 export const CHAT_ZH: Record<string, string> = {
+  "Comment on “{quote}”: {comment}": "对“{quote}”的评论：{comment}",
   "Antigravity chat is unavailable. Open Terminal to see activity and tool calls.": "Antigravity 聊天暂不可用。请打开终端查看运行状态和工具调用。",
   "Not in the conversation. If the agent showed an error, it is in the terminal.": "未记录在对话中。如果智能体显示了错误，它在终端里。",
   "Not in the conversation. If {agent} showed an error, it is in the terminal.": "未记录在对话中。如果 {agent} 显示了错误，它在终端里。",

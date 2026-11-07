@@ -251,7 +251,8 @@ it("answers a held message's Send now over one of Codex's own screens with the r
   expect(await drain({ mode: "codex", screen: CODEX_COMPOSER, after: (pane) => { pane.screen = CODEX_OWN_SCREENS["/rename's field"]; } })).toEqual([]);
   const answer = told.find((frame) => frame.type === "pending-result");
   expect(answer).toMatchObject({ ok: false, code: "agent_blocked", message: "Codex has one of its own screens open in the terminal; close it there, then send" });
-  expect(Object.keys(answer ?? {}).sort()).toEqual(["code", "id", "message", "ok", "pane_id", "pending_id", "type"]);
+  // `typed: false`: nothing was typed, which the client reads to keep its copy (server/submit-route.ts untypedSubmitRefusal)
+  expect(Object.keys(answer ?? {}).sort()).toEqual(["code", "id", "message", "ok", "pane_id", "pending_id", "type", "typed"]);
 });
 
 it("holds a message queued over /model's levels, a card of a list the user opened, as over any screen of Codex's own", async () => {

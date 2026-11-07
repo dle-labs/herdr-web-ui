@@ -86,13 +86,13 @@ export function createOffThreadQueue<Q, R>(spawn: () => WorkerLike, budgetMs: nu
   };
 }
 
-export function serveOffThread<Q, R>(handle: (request: Q) => { result: R; transfer?: Transferable[] }): void {
+export function serveOffThread<Q, R>(handle: (request: Q) => { result: R; transfer?: Transferable[] } | Promise<{ result: R; transfer?: Transferable[] }>): void {
   const scope = globalThis as unknown as { onmessage: ((event: MessageEvent) => void) | null; postMessage: (message: unknown, transfer?: Transferable[]) => void };
-  scope.onmessage = (event: MessageEvent) => {
+  scope.onmessage = async (event: MessageEvent) => {
     const { id, request } = event.data as OffThreadRequest<Q>;
     let answer: { result: R | null; transfer?: Transferable[] };
     try {
-      answer = handle(request);
+      answer = await handle(request);
     } catch {
       answer = { result: null };
     }

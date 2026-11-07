@@ -60,7 +60,7 @@ async function resendRestored(restored: string): Promise<unknown[]> {
   await act(async () => { composerDrafts.set(draftKey, `${restored} please`); });
   await act(async () => { renderer!.update(<Composer {...props} agent={null} restored={null} />); });
   await act(async () => { renderer!.root.findByProps({ "aria-label": "Send message" }).props.onClick(); });
-  return calls.map((call) => call[3]);
+  return calls.map((call) => (call[1] as { agentOnly?: boolean } | undefined)?.agentOnly || undefined);
 }
 
 // #511: a comment message Claude put back on a cancel keeps its agent-only rule when it is edited and sent again
@@ -85,7 +85,7 @@ it.each([
   await act(async () => {
     box.props.onKeyDown({ key: "Enter", shiftKey: false, altKey: false, metaKey: false, ctrlKey: false, repeat: false, ...keys, nativeEvent: { isComposing: false, keyCode: 13 }, preventDefault() {} });
   });
-  expect(calls.map((call) => call[4])).toEqual([...expected]);
+  expect(calls.map((call) => (call[1] as { now?: boolean } | undefined)?.now)).toEqual([...expected]);
 });
 
 let prevented = false;
@@ -101,12 +101,12 @@ async function pressIn(keys: Record<string, unknown>, agentStatus: "working" | "
   await act(async () => {
     box.props.onKeyDown({ key: "Enter", shiftKey: false, altKey: false, metaKey: false, ctrlKey: false, repeat: false, nativeEvent: { isComposing: false, keyCode: 13 }, preventDefault() { prevented = true; }, ...keys });
   });
-  return calls.map((call) => [call[4], call[5]]);
+  return calls.map((call) => { const options = (call[1] ?? {}) as { now?: boolean; hold?: boolean }; return [options.now, options.hold]; });
 }
 
 for (const agentStatus of ["working", "idle"] as const) {
   it.each([
-    ["Alt+Enter", { altKey: true }, [[false, true]]],
+    ["Alt+Enter", { altKey: true }, [[undefined, true]]],
     ["Enter", {}, [[undefined, undefined]]],
     ["Ctrl+Enter", { ctrlKey: true }, [[true, undefined]]],
     ["Shift+Enter", { shiftKey: true }, []],
@@ -199,7 +199,7 @@ it("keeps the draft and says why when a hold is refused", async () => {
   await act(async () => {
     box.props.onKeyDown({ key: "Enter", shiftKey: false, altKey: true, metaKey: false, ctrlKey: false, repeat: false, nativeEvent: { isComposing: false, keyCode: 13 }, preventDefault() {} });
   });
-  expect(calls.map((call) => [call[4], call[5]])).toEqual([[false, true]]);
+  expect(calls.map((call) => { const options = (call[1] ?? {}) as { now?: boolean; hold?: boolean }; return [options.now, options.hold]; })).toEqual([[undefined, true]]);
   expect(composerDrafts.read(draftKey).text).toBe("keep this for later");
   type Node = ReturnType<ReactTestRenderer["root"]["findAll"]>[number];
   const textOf = (node: Node | string): string => typeof node === "string" ? node : node.children.map(textOf).join("");

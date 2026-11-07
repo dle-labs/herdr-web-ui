@@ -209,13 +209,13 @@ it("starts nothing for a connection that ended while a view's replacement waited
   expect(w.started).toHaveLength(1);
 });
 
-it("a stall ends the connection once and leaves its presence to the socket's close", () => {
+it("a stall ends the connection once and clears its presence before the socket closes", () => {
   const { client, clients, present, log, end } = harness();
   end(client, "stalled");
   end(client, "stalled");
   expect(log).toEqual(["pending closed", "detach claimed", "drop claims", `closed ${OUTPUT_STALLED_CLOSE_CODE} terminal output consumer stalled`]);
   expect(clients.has(client)).toBe(false);
-  expect(present.has(client)).toBe(true);
+  expect(present.has(client)).toBe(false);
   expect(send(client, { type: "session-changed" })).toBe(0);
   end(client, "closed");
   expect(present.has(client)).toBe(false);

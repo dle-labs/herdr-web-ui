@@ -44,6 +44,7 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Increase chat font size": "增大聊天字号",
   "Chat font": "聊天字体",
   "Wrap long lines": "长行自动换行",
+  "Message text; code stays monospace. Comma-separated, tried in order. A font this device does not have falls back to the default.": "用于消息正文，代码仍使用等宽字体。以逗号分隔，按顺序使用。此设备上没有的字体会回退到默认字体。",
   "Shortcuts": "快捷键",
   "Install app": "安装应用",
   "About": "关于",
@@ -288,4 +289,11 @@ export const SETTINGS_ZH: Record<string, string> = {
   "Remove PC {name}": "移除 PC {name}",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "无法读取此 PC 的外部提醒设置（{error}）。请关闭设置后重新打开。",
+  "Comment on settled agent replies and files. Turning this off deletes every comment on this device.": "为已完成的智能体回复和文件添加评论。关闭后，此设备上的所有评论都会被删除。",
+  "Comments": "评论",
+  "Delete 1 comment?": "删除 1 条评论？",
+  "Delete {count} comments?": "删除 {count} 条评论？",
+  "Every saved comment on this device is deleted. This cannot be undone.": "此设备上保存的所有评论都将被删除，且无法撤销。",
+  "Turn off and delete": "关闭并删除",
+  "On a wide window, text and code can open beside the pane. Media, PDFs and folders always open in a popup, and the viewer's header button moves the file open now.": "在宽窗口中，文本和代码可以在窗格旁打开。媒体、PDF 和文件夹始终以弹窗打开，查看器顶部的按钮可以移动当前打开的文件。",
 };

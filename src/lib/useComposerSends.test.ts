@@ -11,7 +11,7 @@ import { PendingMessageStore, pendingMessages } from "./pendingMessages.ts";
 import { paneLifetimes } from "./paneLifetime.ts";
 import { composerDrafts } from "./composerDraft.ts";
 import { useComposerSends, type ComposerSendsDeps } from "./useComposerSends.ts";
-import type { HerdrSocket, SubmitDelivery, SubmitResult } from "./ws.ts";
+import type { HerdrSocket, SubmitDelivery, SubmitOptions, SubmitResult } from "./ws.ts";
 import { currentWaitingSends, forgetWaitingSends, settleWaitingSends, waitingKey } from "./sentWaiting.ts";
 import type { InteractivePrompt } from "../../shared/protocol.ts";
 
@@ -101,8 +101,8 @@ for (const autoSendQueued of [false, true]) {
           const screen = readScreen(term.buffer.active, term.cols, term.rows);
           return claudeMainAtRest(inputRowState("claude", screen), readScreenLines(term.buffer.active, term.rows) ?? []);
         },
-        submitComposerMessage: (_text, delivery) => {
-          deliveries.push(delivery);
+        submitComposerMessage: (_text, options) => {
+          deliveries.push(options?.delivery ?? "immediate");
           return Promise.resolve({ ok: true });
         },
       });
@@ -204,7 +204,7 @@ it("a queued follow-up the bridge typed at once waits in the chat and follows it
   const actions = sends(pane, { ok: true, typedNow: true }, shown, {
     agentStatus: "working", inputAtRest: () => false, settings: { autoSendQueued: true },
     setChatLocalSend: () => { follows++; },
-    submitComposerMessage: (_text, delivery) => { expect(delivery).toBe("queue"); return Promise.resolve({ ok: true, typedNow: true }); },
+    submitComposerMessage: (_text, options) => { expect(options?.delivery).toBe("queue"); return Promise.resolve({ ok: true, typedNow: true }); },
   });
   try {
     expect(await actions.composerSend("then list the tests")).toBe(true);
@@ -247,7 +247,7 @@ it("timestamps a send before the receipt so a turn written during the request se
 it("Send it sends the named draft over itself, only at once and never as an answer", async () => {
   const calls: Array<[string, SubmitDelivery, string | undefined]> = [], shown: string[] = [];
   const t = (text: string) => text;
-  const submitComposerMessage = (text: string, delivery: SubmitDelivery, clearDraft?: string) => {
+  const submitComposerMessage = (text: string, { delivery = "immediate", clearDraft }: SubmitOptions = {}) => {
     calls.push([text, delivery, clearDraft]);
     return Promise.resolve({ ok: true } as const);
   };
@@ -255,18 +255,18 @@ it("Send it sends the named draft over itself, only at once and never as an answ
     id: "menu", agent: "claude", kind: "question", title: "Question", question: "?", body: null,
     options: [{ label: "Yes", description: null }], multi_select: false, custom_option_index: null,
   };
-  expect(await sends("send-it", { ok: true }, shown, { t, agentStatus: "idle", submitComposerMessage }).composerSend("fix the tests", "fix the tests")).toBe(true);
+  expect(await sends("send-it", { ok: true }, shown, { t, agentStatus: "idle", submitComposerMessage }).composerSend("fix the tests", { clearDraft: "fix the tests" })).toBe(true);
   expect(calls).toEqual([["fix the tests", "immediate", "fix the tests"]]);
   const working = await sends("send-it", { ok: true }, shown, { t, agentStatus: "working", inputAtRest: () => false, submitComposerMessage })
-    .composerSend("fix the tests", "fix the tests");
+    .composerSend("fix the tests", { clearDraft: "fix the tests" });
   expect(typeof working).toBe("string");
   expect(calls).toHaveLength(1);
   const blocked = await sends("send-it", { ok: true }, shown, { t, answering: prompt, submitComposerMessage })
-    .composerSend("1", "1");
+    .composerSend("1", { clearDraft: "1" });
   expect(typeof blocked).toBe("string");
   expect(calls).toHaveLength(1);
   expect(await sends("send-it", { ok: true }, shown, { t, agentStatus: "working", inputAtRest: () => false, submitComposerMessage })
-    .composerSend("my new message", "fix the tests")).toBe(true);
+    .composerSend("my new message", { clearDraft: "fix the tests" })).toBe(true);
   expect(calls).toEqual([["fix the tests", "immediate", "fix the tests"], ["my new message", "hold", undefined]]);
 });
 
@@ -281,9 +281,9 @@ it.each([
   const calls: unknown[][] = [];
   const submitComposerMessage = ((...args: unknown[]) => { calls.push(args); return Promise.resolve({ ok: true } as const); }) as ComposerSendsDeps["submitComposerMessage"];
   const deps: Partial<ComposerSendsDeps> = { ...extra, submitComposerMessage };
-  expect(await sends("hold-pane", { ok: true }, [], deps).composerSend("for later", undefined, false, false, false, true)).toBe(true);
+  expect(await sends("hold-pane", { ok: true }, [], deps).composerSend("for later", { hold: true })).toBe(true);
   expect(await sends("hold-pane", { ok: true }, [], deps).composerSend("for later")).toBe(true);
-  expect(calls.map((call) => [call[1], call[2], call[7]])).toEqual([["hold", undefined, true], [plain, undefined, false]]);
+  expect(calls.map((call) => { const options = call[1] as SubmitOptions; return [options.delivery, options.clearDraft, options.holdOnly ?? false]; })).toEqual([["hold", undefined, true], [plain, undefined, false]]);
 });
 
 it("a hold is never an answer to an open menu, nor stopped by a screen a peek left open, since nothing is typed", async () => {
@@ -295,16 +295,16 @@ it("a hold is never an answer to an open menu, nor stopped by a screen a peek le
   const submitComposerMessage = ((...args: unknown[]) => { calls.push(args); return Promise.resolve({ ok: true } as const); }) as ComposerSendsDeps["submitComposerMessage"];
   const open = { pane: "hold-open", agent: "claude", command: "/usage", named: true, history: undefined };
   expect(await sends("hold-open", { ok: true }, [], { answering: prompt, answerPanePrompt: async (answer) => { answers.push(answer); }, submitComposerMessage, t: (text) => text })
-    .composerSend("1", undefined, false, false, false, true)).toBe(true);
+    .composerSend("1", { hold: true })).toBe(true);
   expect(await sends("hold-open", { ok: true }, [], { stillOpenRef: { current: open }, stillOpenNote: () => "still open", submitComposerMessage })
-    .composerSend("after the peek", undefined, false, false, false, true)).toBe(true);
+    .composerSend("after the peek", { hold: true })).toBe(true);
   expect(answers).toEqual([]);
-  expect(calls.map((call) => [call[0], call[1], call[7]])).toEqual([["1", "hold", true], ["after the peek", "hold", true]]);
+  expect(calls.map((call) => { const options = call[1] as SubmitOptions; return [call[0], options.delivery, options.holdOnly ?? false]; })).toEqual([["1", "hold", true], ["after the peek", "hold", true]]);
 });
 
 it("a hold a PC too old to hold refuses keeps the draft with the reason", async () => {
   const result = await sends("hold-old", { ok: false, code: "pending_hold_unsupported", message: "Update this PC to hold messages. Nothing was sent." }, [], { agentStatus: "working", settings: { autoSendQueued: true } })
-    .composerSend("for later", undefined, false, false, false, true);
+    .composerSend("for later", { hold: true });
   expect(result).toBe("Update this PC to hold messages. Your draft stayed here.");
 });
 
@@ -326,7 +326,7 @@ it.each([[true, ["steer"]], [false, []]] as const)("a queued send with now=%p st
       agentStatus: "working", inputAtRest: () => false, socketRef: { current: socket },
       submitComposerMessage: () => { pendingMessages.accept(owner, pending, "scope"); return Promise.resolve({ ok: true, pending }); },
       submitRetention: { retain: () => () => { settled(); } } as unknown as ComposerSendsDeps["submitRetention"],
-    }).composerSend(pending.text, undefined, false, false, now);
+    }).composerSend(pending.text, { now });
     expect(result).toBe(true);
     if (now) await steered;
     expect(actions).toEqual([...expected]);
@@ -349,9 +349,9 @@ it("a hold leaves its held row waiting for Send now, then Send now sends it", as
   try {
     const actionsHook = sends(pane, { ok: true }, [], {
       agentStatus: "working", inputAtRest: () => false, settings: { autoSendQueued: true }, socketRef: { current: socket },
-      submitComposerMessage: (_text, delivery) => { deliveries.push(delivery); pendingMessages.accept(owner, pending, "scope"); return Promise.resolve({ ok: true, pending }); },
+      submitComposerMessage: (_text, options) => { deliveries.push(options?.delivery); pendingMessages.accept(owner, pending, "scope"); return Promise.resolve({ ok: true, pending }); },
     });
-    expect(await actionsHook.composerSend(pending.text, undefined, false, false, false, true)).toBe(true);
+    expect(await actionsHook.composerSend(pending.text, { hold: true })).toBe(true);
     expect(deliveries).toEqual(["hold"]);
     expect(actions).toEqual([]);
     expect(pendingMessages.read(owner)).toMatchObject([{ id: pending.id, state: "held", serverOwned: true }]);
@@ -373,7 +373,7 @@ it("sends a held copy of an agent-only message again as agent-only", async () =>
     // the bridge's held receipt proves it untyped for this page: only then is a saved held copy sent again
     pendingMessages.publish(owner, [], [{ id: message.id, outcome: "held", resumed: true, until: Date.now() + 60_000 }], "receipt");
     await sends(pane, { ok: true }, [], { pendingScopeRef: { current: "now" }, submitComposerMessage }).actOnPending(message.id, "steer");
-    expect(calls.map((call) => call[6])).toEqual([true]);
+    expect(calls.map((call) => (call[1] as SubmitOptions).agentOnly)).toEqual([true]);
   } finally {
     pendingMessages.removeCopy(owner, message.id);
     saved.restore();
@@ -402,4 +402,21 @@ it("puts an edited agent-only message back in the box agent-only", async () => {
     pendingMessages.removeCopy(owner, "srv-only");
     saved.restore();
   }
+});
+
+it("settles a comment-bearing send against the full message recorded in the transcript", async () => {
+  const pane = "waiting-with-comments", key = waitingKey("local", pane);
+  const comments = [{ kind: "file" as const, id: "note", anchor: "file:a", created: 1,
+    path: "/repo/a.ts", label: "a.ts", view: "code" as const, lines: [1, 1] as [number, number],
+    source: ["const a = 1;"], quoteLines: ["const a = 1;"], comment: "Fix this." }];
+  let submitted = "";
+  try {
+    expect(await sends(pane, { ok: true }, [], { submitComposerMessage: (text) => {
+      submitted = text; return Promise.resolve({ ok: true });
+    } }).composerSend("Please review", { comments })).toBe(true);
+    expect(submitted).toContain("Fix this.");
+    expect(currentWaitingSends(key)[0]?.text).toBe(submitted);
+    settleWaitingSends(key, [{ role: "user", ts: new Date().toISOString(), parts: [{ kind: "text", text: submitted }] }]);
+    expect(currentWaitingSends(key)).toEqual([]);
+  } finally { forgetWaitingSends(key); }
 });

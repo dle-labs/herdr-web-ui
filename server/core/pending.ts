@@ -18,6 +18,7 @@
  */
 import { AGENT_PICKER_MESSAGE, closeBackslash, closeMention, type createSubmitText, freeAgentInput, freeClaudeBox, freeHermesInput, InputDraftError, modelSwitchText, OMP_REPORT_POLL_MS, OMP_STARTUP_MS, ompStartingUntil, pendingFault, pendingIdentity, pendingText, submitFraming, untilOmpReported } from "./composer.ts";
 import { grokEcho, grokQueue, sendGrokQueuedNow } from "./grok-queue.ts";
+import { untypedSubmitRefusal } from "../submit-route.ts";
 import { type Client, connectionOf, send } from "./connections.ts";
 import { ATTACH_HELD_MESSAGE } from "./terminal-process.ts";
 import type { AttachmentView, TerminalSighting } from "./terminals.ts";
@@ -1309,6 +1310,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
         type: "submit-result", id: message.id, pane_id: message.pane_id, ok, ...(accepted ? { pending: accepted } : {}), ...(typedNow ? { typed_now: true as const } : {}), ...(code ? { code, message: text } : {}),
         ...(ok && sendingAt ? { sending_at: sendingAt } : {}),
         ...(draft ? { draft } : {}), ...(!draft && typeof box === "string" ? { box } : {}),
+        ...(!ok && untypedSubmitRefusal(code) ? { typed: false as const } : {}),
       });
       if (!Number.isSafeInteger(message.id) || typeof message.pane_id !== "string" || !message.pane_id
         || typeof message.text !== "string" || typeof message.payload !== "string") {
@@ -1379,7 +1381,7 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
             const held = queueHeld(message.pane_id, false);
             let waited = false;
             if (!context.working && !held) {
-              if (context.identity.agent === null) throw new HerdrError(AGENT_NOT_READY.code, AGENT_NOT_READY.message);
+              if (context.identity.agent === null) throw new HerdrError("agent_not_found", "No agent is in front of this pane now; nothing was typed");
               // A request that raced the turn's finish still needs cancellable
               // paste + Enter; agent.prompt commits its key inside herdr.
               // A held message is never typed by arriving after the turn: it waits for Send now.
@@ -1518,7 +1520,8 @@ export function createPendingDelivery({ options, clients, attachments, sight, se
     },
     async "pending-action"(client: Client, message: Frame<"pending-action">): Promise<void> {
       const known = ({ unannounced: _, ...reply }: SubmitReply): SubmitReply => reply.code === LAUNCH_GONE.code && message.launch_ended !== true ? { ...reply, code: TARGET_CHANGED.code } : reply;
-      const result = (reply: SubmitReply) => send(client, { type: "pending-result", id: message.id, pane_id: message.pane_id, pending_id: message.pending_id, ...known(reply) });
+      const result = (reply: SubmitReply) => send(client, { type: "pending-result", id: message.id, pane_id: message.pane_id, pending_id: message.pending_id, ...known(reply),
+        ...(!reply.ok && untypedSubmitRefusal(reply.code) ? { typed: false as const } : {}) });
       if (!Number.isSafeInteger(message.id) || typeof message.pane_id !== "string" || !message.pane_id
         || typeof message.pending_id !== "string" || !message.pending_id || !["steer", "discard"].includes(message.action)) {
         result({ ok: false, code: "invalid_pending_action", message: "Use steer or discard with a pending-message id" }); return;

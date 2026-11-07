@@ -127,4 +127,6 @@ export const TERMINAL_JA: Record<string, string> = {
   "Codex selected this: Shift+drag copies or quotes it here": "Codex が選択しました。ここでコピーや引用をするには Shift+ドラッグ",
   "Codex selected this: Option+drag copies or quotes it here": "Codex が選択しました。ここでコピーや引用をするには Option+ドラッグ",
   "Pane {index} of {count}": "ペイン {index}/{count}",
+  "Comments only": "コメントのみ",
+  "Comments with this message: {count}": "このメッセージのコメント: {count}",
 };

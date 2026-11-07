@@ -44,6 +44,7 @@ export const SETTINGS_KO: Record<string, string> = {
   "Increase chat font size": "채팅 글자 크게",
   "Chat font": "채팅 글꼴",
   "Wrap long lines": "긴 줄 바꿈",
+  "Message text; code stays monospace. Comma-separated, tried in order. A font this device does not have falls back to the default.": "메시지 본문에 적용되며 코드는 고정폭 글꼴을 유지합니다. 쉼표로 구분하며 앞에서부터 차례로 사용합니다. 이 기기에 없는 글꼴은 기본 글꼴로 대체합니다.",
   "Shortcuts": "단축키",
   "Install app": "앱 설치",
   "About": "정보",
@@ -288,4 +289,11 @@ export const SETTINGS_KO: Record<string, string> = {
   "Remove PC {name}": "{name} PC 제거",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "이 PC의 외부 알림 설정을 읽지 못했습니다({error}). 설정을 닫았다가 다시 여세요.",
+  "Comment on settled agent replies and files. Turning this off deletes every comment on this device.": "완료된 에이전트 답변과 파일에 댓글을 달 수 있습니다. 끄면 이 기기의 모든 댓글이 삭제됩니다.",
+  "Comments": "댓글",
+  "Delete 1 comment?": "댓글 1개를 삭제할까요?",
+  "Delete {count} comments?": "댓글 {count}개를 삭제할까요?",
+  "Every saved comment on this device is deleted. This cannot be undone.": "이 기기에 저장된 모든 댓글이 삭제됩니다. 되돌릴 수 없습니다.",
+  "Turn off and delete": "끄고 삭제",
+  "On a wide window, text and code can open beside the pane. Media, PDFs and folders always open in a popup, and the viewer's header button moves the file open now.": "넓은 창에서는 텍스트와 코드를 패널 옆에 열 수 있습니다. 미디어, PDF, 폴더는 항상 팝업으로 열리고, 뷰어 위쪽 버튼으로 지금 연 파일을 옮길 수 있습니다.",
 };

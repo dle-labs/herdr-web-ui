@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from "react";
-import type { HerdrSocket, SubmitDelivery, SubmitResult } from "./ws.ts";
+import type { HerdrSocket, SubmitOptions, SubmitResult } from "./ws.ts";
 import type { MachineSession } from "./machineSession.ts";
 import { EMPTY_DRAFT } from "./draft.ts";
 import { keyboardControl } from "./keyboardControl.ts";
@@ -82,7 +82,8 @@ export function useTerminalSends(deps: TerminalSendsDeps) {
   // must not turn a one-letter message into a control key. Offline it sends nothing and
   // keeps its text (never-queue); a message the server could not deliver keeps it too,
   // with the reason. Bracketed-paste wrapping follows the pane program's mode.
-  const submitComposerMessage = useCallback((text: string, delivery: SubmitDelivery = "immediate", clearDraft?: string, sendAnyway = false, resendId?: string, generation?: number, agentOnly = false, holdOnly = false): Promise<SubmitResult> | null => {
+  const submitComposerMessage = useCallback((text: string, options: SubmitOptions = {}): Promise<SubmitResult> | null => {
+    const { delivery = "immediate" } = options;
     const term = termRef.current;
     const socket = socketRef.current;
     const session = sessionRef.current;
@@ -91,7 +92,7 @@ export function useTerminalSends(deps: TerminalSendsDeps) {
     // its Enter would run the pty's line without the start a held draft keeps
     if (draftHeldForRef.current === pane) return Promise.resolve({ ok: false, code: "held_input", message: "send or discard the held input first" });
     const epoch = session.epoch;
-    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), false, delivery, clearDraft, sendAnyway, resendId, generation, agentOnly, holdOnly);
+    const sent = socket.submit(pane, composerMessage(text), composerPayload(text, term.modes.bracketedPasteMode), options);
     if (sent === null) return null;
     const releaseSubmit = submitRetention?.retain(pane);
     const submission = delivery !== "immediate" ? { pane, socket, epoch } : null;
@@ -103,7 +104,7 @@ export function useTerminalSends(deps: TerminalSendsDeps) {
     if (delivery === "immediate") { rememberGreeting(owner, afterSend(greetingMemory(owner))); redrawGreeting(); }
     onChatSuggestion(pane, null);
     return sent.then((result) => {
-      const typed = result.ok ? result.pending === undefined : !submitNotTyped(result.code);
+      const typed = result.ok ? result.pending === undefined : !submitNotTyped(result);
       if (delivery === "immediate") {
         rememberGreeting(owner, afterSettled(greetingMemory(owner), typed, history)); redrawGreeting();
         if (!typed && paneRef.current === pane) setChatUnsent((current) => current + 1);
@@ -130,16 +131,16 @@ export function useTerminalSends(deps: TerminalSendsDeps) {
     });
   }, [onChatSuggestion, machineId, submitRetention]);
 
-  const sendComposerText = useCallback((text: string, delivery: "queue" | "immediate" = "immediate"): false | Promise<true | string> => {
+  const sendComposerText = useCallback((text: string, options: SubmitOptions = {}): false | Promise<true | string> => {
     const pane = paneRef.current;
     // a screen a peek left open would take it: the row keeps it (the notice's close, or the screen's, lets it go)
     const open = stillOpenRef.current;
     if (pane !== null && open !== null && open.pane === pane) return Promise.resolve(stillOpenNote(open));
     const known = knownOutcomes(pane);
     const seen = inputRowNow() === "ready";
-    const result = submitComposerMessage(text, delivery);
+    const result = submitComposerMessage(text, options);
     return result === null ? false : result.then((answer) => {
-      if (!answer.ok) return submitNote(answer.code, answer.message, agent);
+      if (!answer.ok) return submitNote(answer.code, answer.message, agent, options.agentOnly === true);
       // an older bridge took it with no receipt: the held row goes, a row not confirmed keeps its text
       if (answer.unconfirmed && pane !== null) pendingMessages.keepUnconfirmed(paneStorageId(machineId, pane), text);
       if (pane !== null && answer.pending === undefined && !answer.unconfirmed) showSentCommand(pane, text, known, seen);
@@ -158,7 +159,7 @@ export function useTerminalSends(deps: TerminalSendsDeps) {
     const payload = message.includes("\n") ? composerPayload(text, term.modes.bracketedPasteMode) : message;
     reassertIfStaleRef.current();
     cancelTouchRef.current();
-    const sent = socket.submit(pane, message, payload, true);
+    const sent = socket.typeLine(pane, message, payload);
     if (sent === null) return false;
     consumeModifiers();
     const releaseSubmit = submitRetention?.retain(pane);

@@ -5,9 +5,10 @@
 
 import type { TelemetrySettings } from "../../shared/telemetry.ts";
 import { MAX_PINS, mirrorPalette, SHARED_SETTING_KEYS, type SharedSettingKey } from "../../shared/preferences.ts";
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { DEFAULT_THEME, terminalColors, themeColor as themeTableColor, type DrawnTheme, type ThemeId } from "./themes.ts";
 import { bootRows, drawnTheme, NO_CUSTOM_THEMES, sanitizeCustomThemes, type CustomThemes } from "./customThemes.ts";
+import { blockComments } from "./blockComments.ts";
 import { LANGUAGE_SETTINGS, LOCALE_TAGS, resolveLanguage, setCurrentLanguage, type Language, type LanguageSetting } from "./i18n.ts";
 import type { AlertPrefs, DoneAlerts } from "../../shared/notify-policy.ts";
 import { chatFontStack, sanitizeFontFamily } from "./fontFamily.ts";
@@ -177,6 +178,8 @@ export interface Settings {
   wrapCode: boolean;
   editTextFiles: boolean;
   reopenFileOnReturn: boolean;
+  /** Comments on replies and files; turning this off deletes device-local drafts. */
+  comments: boolean;
   diffStyle: DiffStyle;
   fileOpen: FilePresentation;
   filesPanel: boolean;
@@ -207,7 +210,7 @@ type TelemetrySourceSettings = Omit<Settings,
   | "claudeLaunchModel" | "claudeLaunchEffort" | "codexLaunchModel" | "codexLaunchEffort"
   | "followHerdrFocus" | "sidebarPeek" | "phoneInbox" | "sidebarBackgroundWorkspaces" | "codexDrag" | "composerArtifacts" | "composerPasteSend" | "composerBtw" | "terminalMirrorWrap" | "sidebarFilter" | "sidebarContext" | "sidebarAgentTree" | "foldHelpers" | "pcLoad"
   | "expandThinking" | "foldWork" | "customThemes" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort" | "terminalImages" | "terminalAttachButton"
-  | "terminalKeyboardOnRequest" | "terminalFoldKeyBar" | "fileFontSize" | "fileFontBase" | "editTextFiles" | "reopenFileOnReturn" | "phoneTabs">;
+  | "terminalKeyboardOnRequest" | "terminalFoldKeyBar" | "fileFontSize" | "fileFontBase" | "editTextFiles" | "reopenFileOnReturn" | "phoneTabs" | "comments">;
 
 function differsFromDefault(value: unknown, defaultValue: unknown): boolean {
   return JSON.stringify(value) !== JSON.stringify(defaultValue);
@@ -309,6 +312,7 @@ export const SETTING_SCOPE = {
   claudeLaunchMode: "shared", codexLaunchMode: "shared",
   claudeLaunchModel: "shared", claudeLaunchEffort: "shared", codexLaunchModel: "shared", codexLaunchEffort: "shared",
   customThemes: "shared",
+  comments: "device",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
 export function sharedSettings(settings: Settings): Partial<Record<SharedSettingKey, unknown>> {
@@ -404,6 +408,7 @@ export const DEFAULT_SETTINGS: Settings = {
   wrapCode: false,
   editTextFiles: false,
   reopenFileOnReturn: false,
+  comments: true,
   diffStyle: "unified",
   fileOpen: "popup",
   filesPanel: false,
@@ -436,8 +441,8 @@ function voiceButton(value: unknown): VoiceButton {
   return VOICE_BUTTONS.includes(value as VoiceButton) ? value as VoiceButton : DEFAULT_SETTINGS.voiceInput;
 }
 
-export function wantsVoiceInput(setting: VoiceButton, mode: "chat" | "terminal", phone: boolean): boolean {
-  return setting === "on" || (setting === "auto" && mode === "chat" && !phone);
+export function wantsVoiceInput(setting: VoiceButton, mode: "chat" | "terminal" | "comment", phone: boolean): boolean {
+  return mode === "comment" ? setting !== "off" : setting === "on" || (setting === "auto" && mode === "chat" && !phone);
 }
 
 export function quickReplyButtons(settings: Settings): string[] {
@@ -617,6 +622,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     wrapCode: typeof record["wrapCode"] === "boolean" ? record["wrapCode"] : DEFAULT_SETTINGS.wrapCode,
     editTextFiles: typeof record["editTextFiles"] === "boolean" ? record["editTextFiles"] : DEFAULT_SETTINGS.editTextFiles,
     reopenFileOnReturn: record["reopenFileOnReturn"] === true,
+    comments: typeof record["comments"] === "boolean" ? record["comments"] : DEFAULT_SETTINGS.comments,
     diffStyle: DIFF_STYLES.find((style) => style === record["diffStyle"]) ?? DEFAULT_SETTINGS.diffStyle,
     fileOpen: FILE_OPEN_TARGETS.find((target) => target === record["fileOpen"]) ?? DEFAULT_SETTINGS.fileOpen,
     filesPanel: typeof record["filesPanel"] === "boolean" ? record["filesPanel"] : DEFAULT_SETTINGS.filesPanel,
@@ -984,7 +990,13 @@ interface SettingsContextValue {
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<Settings>(loadSettings);
+  // Apply the store's visibility before child Markdown reads its initial comment state.
+  const [settings, setSettings] = useState<Settings>(() => {
+    const loaded = loadSettings();
+    blockComments.setEnabled(loaded.comments);
+    return loaded;
+  });
+  useLayoutEffect(() => blockComments.setEnabled(settings.comments), [settings.comments]);
   const stored = useRef<Settings>(settings);
   const [systemDark, setSystemDark] = useState(() => resolveTheme("system") === "dark");
 

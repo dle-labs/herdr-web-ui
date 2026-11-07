@@ -3,9 +3,11 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { loadKatex, ParsedMarkdown } from "../components/Markdown.tsx";
+import { CodeLines } from "../components/HighlightedCode.tsx";
+import { plainLines } from "./highlight.ts";
 import { OpenFileContext } from "./filePaths.ts";
 import { SettingsProvider } from "./settings.ts";
-import { parseMarkdown } from "../../shared/markdown.ts";
+import { parseMarkdown, parseMarkdownWithLines } from "../../shared/markdown.ts";
 import { TEXT_PREVIEW_BYTES } from "./filePreviewText.ts";
 import { hasPreview, PREVIEW_CHUNK_ELEMENTS, PREVIEW_ELEMENT_LIMIT, previewChunks, previewElements } from "./textPreview.ts";
 
@@ -35,6 +37,34 @@ describe("previewChunks", () => {
   });
 });
 
+describe("source line anchors", () => {
+  it("keeps source offsets and marked-line navigation together, with exactly one newline between lines", () => {
+    const html = renderToStaticMarkup(createElement(CodeLines, {
+      lines: plainLines("one\n\nthree"), firstLine: 12, markedLine: 14, lineNumbers: true,
+    }));
+    expect(html).toContain('data-line="12" data-source-line="12"');
+    expect(html).toContain('class="hl-line is-marked" data-line="14" data-source-line="14"');
+    expect(html.replace(/<[^>]+>/g, "")).toBe("one\n\nthree");
+  });
+
+  it("keeps Markdown heading copy metadata alongside per-line comment anchors", () => {
+    const blocks = parseMarkdownWithLines("# Heading\n\none\ntwo\n\n```text\ncode\n```");
+    const languages = Object.getOwnPropertyDescriptor(navigator, "languages");
+    Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+    try {
+      const html = renderToStaticMarkup(createElement(SettingsProvider, {
+        children: createElement(ParsedMarkdown, { blocks }),
+      }));
+      expect(html).toContain('data-markdown-heading="1"');
+      for (const line of [1, 3, 4, 7]) expect(html).toContain(`data-source-line="${line}"`);
+      expect(html).toContain('data-language="text"');
+    } finally {
+      if (languages) Object.defineProperty(navigator, "languages", languages);
+      else Reflect.deleteProperty(navigator, "languages");
+    }
+  });
+});
+
 describe("previewElements", () => {
   // what the Preview draws, counted on its markup: the estimate the worker refuses a file by must
   // never be below it, or a file under the limit could still hold the page
@@ -53,6 +83,7 @@ describe("previewElements", () => {
     try {
       for (const source of [
         "# Title", "one **two**\nthree", "- a\n- b\n  - c", "> - a",
+        "```plaintext\nsrc/a.ts\n\nlast line\n```", "```text\n" + "plain output\n".repeat(100) + "```",
         "- [x] done\n".repeat(300), "- [ ] open\n".repeat(300), "- a\n".repeat(300),
         "a/a.c ".repeat(500), "`src/a.ts` and `x` ".repeat(200), "\\(x_i + y\\) ".repeat(100),
         "\\[" + "a+".repeat(300) + "a\\]",

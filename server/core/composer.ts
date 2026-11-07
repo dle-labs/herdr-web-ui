@@ -4,6 +4,7 @@ import type { HerdrPane } from "../../shared/protocol.ts";
 import { displayWidth, secretPrompt } from "../../shared/secret-prompt.ts";
 import { AGENT_INPUT_DRAFT_MESSAGE, CLAUDE_FOLDED_DRAFT_MESSAGE, GROK_SEND_UNCONFIRMED_MESSAGE, NO_AGENT_MESSAGE } from "../../shared/submit-outcome.ts";
 import { agentPrompt, HerdrError, paneGet, paneProcessInfo, paneRead, paneScrollInfo, paneSendKeys, paneSendText, type ProcessInfo, faultOf, type HerdrFailureView } from "../herdr/client.ts";
+import { submitRoute } from "../submit-route.ts";
 import { mirrorInput } from "../mirror-input.ts";
 import { paneAgentOf, resolveAgent, typingRoots } from "../pane-context.ts";
 import { paneProcessRoots } from "../conversation.ts";
@@ -468,7 +469,7 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
     lastTyped.delete(paneId);
     inTime();
     try {
-      if (!fromTerminal) {
+      if (!fromTerminal || agentOnly) {
         let pane = await paneGet(paneId).catch((error: unknown) => {
           if (error instanceof HerdrError && error.code === "pane_not_found") return undefined;
           throw error;
@@ -714,11 +715,11 @@ export function createSubmitText({ options, lastTyped, attachments, terminalAtta
           if (refused !== undefined) throw refused;
           if (!(error instanceof HerdrError)) throw error;
           if (clearDraft !== undefined || sendAnyway) throw error;
-          // a message for an agent alone (#511) is never typed into what is there once the agent has gone
           if (agentOnly && (error.code === "agent_not_found" || error.code === "agent_not_ready")) throw new HerdrError("agent_not_ready", NO_AGENT_MESSAGE);
-          // nor typed past a collapsed queue: herdr cannot type only if the agent still runs, and Codex may exit first
-          const queuedOnly = !agentOnly && error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
-          if (error.code !== "agent_not_found" && error.code !== "agent_not_ready" && !queuedOnly) throw error;
+          const queuedOnly = error.code === "agent_blocked" && await blockedOnlyByCodexQueue(paneId);
+          const route = submitRoute(error.code, queuedOnly, agentOnly);
+          if (route === "rethrow") throw error;
+          if (route !== "type") throw new HerdrError(route.refuse.code, route.refuse.message);
         }
       }
       if (fromTerminal && !sentText.includes("\n") && sentText.length > TYPED_LINE_MAX) {

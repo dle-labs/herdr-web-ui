@@ -8,6 +8,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, type MutableRefObject, type RefObject } from "react";
 import { typeAheadFocused } from "./typeAhead.ts";
+import { commentTabTarget } from "./commentDom.ts";
 
 const FOCUSABLE = [
   "a[href]",
@@ -168,6 +169,12 @@ export function useFocusTrap<T extends HTMLElement>(open: boolean, options: Focu
       if (!node || nativeModalOver(node)) return;
       const holder = document.activeElement;
       if (holder instanceof Element && !node.contains(holder) && holder.closest('[role="dialog"], [role="alertdialog"], [role="menu"]') !== null) return;
+      const logical = commentTabTarget(node, document.activeElement, event.shiftKey);
+      if (logical !== null && node.contains(logical)) {
+        event.preventDefault();
+        logical.focus({ preventScroll: true });
+        return;
+      }
       const stops = [...tabStops(node, latest.current), ...overlayStops()];
       const stop = tabTarget(stops, document.activeElement, event.shiftKey);
       const next = stop && overlayEntry(stop, document.activeElement);

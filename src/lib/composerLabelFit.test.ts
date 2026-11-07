@@ -16,4 +16,9 @@ describe("composerLabelDraw", () => {
     expect(composerLabelDraw("no-effort", { modelClipped: true, modelWidth: 24, modelFloor: 24 })).toBe("out");
     expect(composerLabelDraw("no-effort", { modelClipped: true, modelWidth: 23.5, modelFloor: 24 })).toBe("out");
   });
+
+  it("compares integer client widths with fractional CSS floors in the same units", () => {
+    expect(composerLabelDraw("no-effort", { modelClipped: true, modelWidth: 22, modelFloor: 21.6002 })).toBe("out");
+    expect(composerLabelDraw("no-effort", { modelClipped: true, modelWidth: 23, modelFloor: 21.6002 })).toBe("no-effort");
+  });
 });

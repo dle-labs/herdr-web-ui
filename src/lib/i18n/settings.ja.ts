@@ -44,6 +44,7 @@ export const SETTINGS_JA: Record<string, string> = {
   "Increase chat font size": "チャットの文字を大きく",
   "Chat font": "チャットのフォント",
   "Wrap long lines": "長い行を折り返す",
+  "Message text; code stays monospace. Comma-separated, tried in order. A font this device does not have falls back to the default.": "メッセージ本文に適用され、コードは等幅フォントのままです。カンマ区切りで、先頭から順に使います。このデバイスにないフォントは既定のフォントで表示します。",
   "Shortcuts": "ショートカット",
   "Install app": "アプリをインストール",
   "About": "情報",
@@ -288,4 +289,11 @@ export const SETTINGS_JA: Record<string, string> = {
   "Remove PC {name}": "PC {name} を削除",
 
   "Could not read this PC's alert destination ({error}). Close Settings and open it again.": "この PC の外部通知の設定を読み取れませんでした（{error}）。設定を閉じてもう一度開いてください。",
+  "Comment on settled agent replies and files. Turning this off deletes every comment on this device.": "完了したエージェントの回答やファイルにコメントできます。オフにすると、このデバイスのコメントがすべて削除されます。",
+  "Comments": "コメント",
+  "Delete 1 comment?": "コメント 1 件を削除しますか？",
+  "Delete {count} comments?": "コメント {count} 件を削除しますか？",
+  "Every saved comment on this device is deleted. This cannot be undone.": "このデバイスに保存されたコメントがすべて削除されます。この操作は元に戻せません。",
+  "Turn off and delete": "オフにして削除",
+  "On a wide window, text and code can open beside the pane. Media, PDFs and folders always open in a popup, and the viewer's header button moves the file open now.": "広いウィンドウでは、テキストとコードをペインの横に開けます。メディア、PDF、フォルダーは常にポップアップで開き、ビューアー上部のボタンで今開いているファイルを移動できます。",
 };

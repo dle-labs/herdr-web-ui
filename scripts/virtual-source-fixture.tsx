@@ -10,7 +10,7 @@ function Fixture() {
   const [target, setTarget] = useState<{ path: string; machine: string } | null>(null);
   const { update } = useSettings();
   window.virtualQA = { open: (path, machine = "local") => setTarget({ path, machine }), close: () => setTarget(null), settings: update };
-  return <main>
+  return <main style={{ height: "100dvh", display: "flex", flexDirection: "column" }}>
     <button type="button">Outside</button>
     {target && <MachineContext.Provider value={target.machine}><FileViewer key={`${target.machine}:${target.path}`} path={target.path} paneId={null} onClose={() => setTarget(null)} /></MachineContext.Provider>}
   </main>;

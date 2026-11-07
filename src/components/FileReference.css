@@ -1,0 +1,20 @@
+/* The file and lines a comment is on (FileReference.tsx `FileReferenceLabel`): quiet, small, one line.
+   A long name is cut inside its stem, as the file viewer's title (FileViewer.css `.file-viewer-stem`):
+   the extension and the lines never give way */
+.comment-file-reference {
+  display: flex;
+  min-width: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.comment-file-stem {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comment-file-rest {
+  flex: none;
+}
