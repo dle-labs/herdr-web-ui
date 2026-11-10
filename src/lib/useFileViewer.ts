@@ -3,6 +3,7 @@ import { outsideSettings } from "./settingsHistory.ts";
 import { FILE_PREVIEW_KEY, WEB_PANEL_BELOW_KEY, sheetStep, webPagesBelow, withoutWebPanel } from "./historyKeys.ts";
 import type { FilePresentation } from "./filePresentation.ts";
 import { backUnderCurrentEntry } from "./historyNavigation.ts";
+import { refusePop } from "./popRefusal.ts";
 
 interface FilePreview {
   path: string;
@@ -54,10 +55,10 @@ export function useFileViewer(canLeave: () => boolean = () => true) {
       const previous = current.current;
       const replacing = previous !== null && (next?.path !== previous.path || next?.paneId !== previous.paneId || next?.machineId !== previous.machineId || next?.comment !== previous.comment);
       if (replacing && !leave.current()) {
-        // Keep the document and its draft mounted; restore a Back entry before
-        // App's selection/deep-link listeners can act on the refused destination.
+        // Keep the document and its draft mounted; restore a Back entry before App's
+        // selection/deep-link listeners read the event, which they then pass over (popRefused).
         window.history.pushState({ ...entry.current.state, [HISTORY_KEY]: previous }, "", entry.current.url);
-        event.stopImmediatePropagation();
+        refusePop(event);
         return;
       }
       if (next !== null) pops.current += 1;

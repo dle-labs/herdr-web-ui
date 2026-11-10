@@ -8,6 +8,7 @@ import { FILE_PREVIEW_KEY } from "./historyKeys.ts";
 import type { SelectionMark } from "./selectionMark.ts";
 import * as settingsHistory from "./settingsHistory.ts";
 import * as sheetHistory from "./sheetHistory.ts";
+import { refusePop } from "./popRefusal.ts";
 import { popUnread, useAddressBar } from "./useAddressBar.ts";
 import { INBOX_FROM_KEY } from "./useInbox.ts";
 
@@ -604,4 +605,19 @@ it("Back from the shown list onto an entry that names only an absolute file befo
 
   expect(writes).toEqual([`replaceState 0 ${P1}&file=%2Ftmp%2Fnotes.txt`]);
   expect(addresses()).toEqual([`${P1}&file=%2Ftmp%2Fnotes.txt`, ""]);
+
+it("a Back the file viewer refused selects nothing, and the entry it put back says what is shown", async () => {
+  // Given p2 shown on its entry, a collapsed sidebar not drawn yet, and a file whose comment field holds a
+  // draft: the file viewer's listener (lib/useFileViewer.ts) runs before the address bar's.
+  await mount([P1, P2]);
+  waiting = () => { place.sidebarCollapsed = true; };
+  listeners.splice(1, 0, (event) => { window.history.pushState(null, "", P2); refusePop(event as PopStateEvent); });
+
+  // When Back lands on p1's entry, and the file viewer puts p2's entry back.
+  await back();
+
+  // Then p2 stays selected, and the write held back for the pop is made over the entry put back.
+  expect(asked).toEqual([]);
+  expect(place.paneId).toBe("p2");
+  expect(addresses()).toEqual([P1, `${P2}&sidebar=hidden`]);
 });

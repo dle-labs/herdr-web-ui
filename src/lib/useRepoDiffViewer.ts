@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { WEB_PANEL_BELOW_KEY, sheetStep, webPagesBelow } from "./historyKeys.ts";
 import { backUnderCurrentEntry } from "./historyNavigation.ts";
+import { popRefused } from "./popRefusal.ts";
 import { diffTargetFromState, diffTargetState, type RepoDiffTarget } from "./repoDiff.ts";
 
 export function useRepoDiffViewer() {
@@ -11,6 +12,8 @@ export function useRepoDiffViewer() {
   useEffect(() => {
     const onPop = (event: PopStateEvent): void => {
       if (sheetStep.taking(event) || sheetStep.holds(event)) return;
+      // the file viewer refused this pop and put its entry back: the diff shown stays
+      if (popRefused(event)) return;
       closing.current = false;
       setViewing(diffTargetFromState(event.state));
     };

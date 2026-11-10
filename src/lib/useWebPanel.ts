@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { LOCAL_MACHINE } from "../../shared/machines.ts";
 import { WEB_PANEL_KEY as HISTORY_KEY, WEB_PANEL_DOCKED_KEY as DOCKED_KEY, WEB_PANEL_BELOW_KEY as BELOW_KEY, SHEET_HISTORY_KEY, sheetStep, webPagesBelow, withoutWebPanel } from "./historyKeys.ts";
 import { backUnderCurrentEntry } from "./historyNavigation.ts";
+import { popRefused } from "./popRefusal.ts";
 import { outsideSettings, settingsEntry } from "./settingsHistory.ts";
 import { panelUrl, wantsPanel } from "./webPanel.ts";
 import type { Settings } from "./settings.ts";
@@ -49,6 +50,8 @@ export function useWebPanel({ settings, filePanelAvailable }: { settings: Settin
   useEffect(() => {
     const onPop = (event: PopStateEvent): void => {
       if (sheetStep.holds(event) || sheetStep.taking(event)) return;
+      // the file viewer refused this pop and put its entry back: the web page shown stays
+      if (popRefused(event)) return;
       closingWebPage.current = false;
       const next = webPanelFromState(event.state);
       const docked = isDocked(event.state);

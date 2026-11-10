@@ -8,6 +8,7 @@ import { INBOX_FROM_KEY, type useInbox } from "./useInbox.ts";
 import { pageAddress, pageSearch } from "./pageQuery.ts";
 import type { SelectionMark } from "./selectionMark.ts";
 import { settingsEntry, settingsSteppedOff } from "./settingsHistory.ts";
+import { popRefused } from "./popRefusal.ts";
 import { sheetSteppedOff } from "./sheetHistory.ts";
 import type { useFilePanels } from "./useFilePanels.ts";
 import type { useNewSessionState } from "./useNewSessionDialog.ts";
@@ -226,8 +227,11 @@ export function useAddressBar({ inbox, mode, newSessionOpen, newSessionMachineId
     const decidePop = (event: PopStateEvent): void => {
       popMoving.current = false;
       readPop.current = event;
-      onPop(event);
+      // a pop the file viewer refused put back the entry it left: nothing moves, but the entry is read
+      const refused = popRefused(event);
+      if (!refused) onPop(event);
       if (heldWrite.current) { heldWrite.current = false; setReleased((count) => count + 1); }
+      if (refused) return;
       const pop = fileFromPopRef.current();
       if (pop !== 0 && !popMoving.current) { popStill.current = pop; setPopSettled((count) => count + 1); }
     };
