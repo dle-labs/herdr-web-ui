@@ -1,6 +1,7 @@
 import { createContext, useEffect, useRef, type ReactNode } from "react";
 import { ArrowLeft, Ellipsis, X } from "lucide-react";
 import { useT } from "../lib/i18n.ts";
+import { useAfterPop } from "../lib/useAfterPop.ts";
 import { useSheetHistory } from "../lib/sheetHistory.ts";
 import { nativeModalOver } from "../lib/useFocusTrap.ts";
 
@@ -29,15 +30,12 @@ export function MobileFilesToolbar({ showFile, onBack, onClose, open, onOpenChan
   const pendingClose = useRef(false);
   const latestClose = useRef(onClose);
   latestClose.current = onClose;
-  useEffect(() => {
-    const afterMenu = () => {
-      if (!pendingClose.current) return;
-      pendingClose.current = false;
-      latestClose.current();
-    };
-    window.addEventListener("popstate", afterMenu);
-    return () => window.removeEventListener("popstate", afterMenu);
-  }, []);
+  // the menu's own Back entry is consumed first; its pop then closes Files
+  useAfterPop(() => {
+    if (!pendingClose.current) return;
+    pendingClose.current = false;
+    latestClose.current();
+  });
   const closeFiles = () => {
     if (!open) { onClose(); return; }
     // A linked file owns its own Back entry below More. Consume More's first.
