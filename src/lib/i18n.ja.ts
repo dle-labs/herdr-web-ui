@@ -651,6 +651,7 @@ const BASE: Record<string, string> = {
   "Write a comment…": "コメントを書く…",
   "{count} comment": "コメント {count} 件",
   "{count} comments": "コメント {count} 件",
+  "Wrap long lines": "長い行を折り返す",
 };
 
 export const JA_PARTS: Record<string, Record<string, string>> = {

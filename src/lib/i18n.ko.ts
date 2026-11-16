@@ -649,6 +649,7 @@ const BASE: Record<string, string> = {
   "Write a comment…": "댓글 쓰기…",
   "{count} comment": "댓글 {count}개",
   "{count} comments": "댓글 {count}개",
+  "Wrap long lines": "긴 줄 바꿈",
 };
 
 export const KO_PARTS: Record<string, Record<string, string>> = {

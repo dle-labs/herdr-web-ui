@@ -655,6 +655,7 @@ const BASE: Record<string, string> = {
   "Write a comment…": "写评论…",
   "{count} comment": "{count} 条评论",
   "{count} comments": "{count} 条评论",
+  "Wrap long lines": "长行自动换行",
 };
 
 export const ZH_PARTS: Record<string, Record<string, string>> = {

@@ -43,8 +43,6 @@ export const SETTINGS_JA: Record<string, string> = {
   "Decrease chat font size": "チャットの文字を小さく",
   "Increase chat font size": "チャットの文字を大きく",
   "Chat font": "チャットのフォント",
-  "Wrap long lines": "長い行を折り返す",
-  "Message text; code stays monospace. Comma-separated, tried in order. A font this device does not have falls back to the default.": "メッセージ本文に適用され、コードは等幅フォントのままです。カンマ区切りで、先頭から順に使います。このデバイスにないフォントは既定のフォントで表示します。",
   "Shortcuts": "ショートカット",
   "Install app": "アプリをインストール",
   "About": "情報",
@@ -295,5 +293,4 @@ export const SETTINGS_JA: Record<string, string> = {
   "Delete {count} comments?": "コメント {count} 件を削除しますか？",
   "Every saved comment on this device is deleted. This cannot be undone.": "このデバイスに保存されたコメントがすべて削除されます。この操作は元に戻せません。",
   "Turn off and delete": "オフにして削除",
-  "On a wide window, text and code can open beside the pane. Media, PDFs and folders always open in a popup, and the viewer's header button moves the file open now.": "広いウィンドウでは、テキストとコードをペインの横に開けます。メディア、PDF、フォルダーは常にポップアップで開き、ビューアー上部のボタンで今開いているファイルを移動できます。",
 };
