@@ -605,6 +605,7 @@ it("Back from the shown list onto an entry that names only an absolute file befo
 
   expect(writes).toEqual([`replaceState 0 ${P1}&file=%2Ftmp%2Fnotes.txt`]);
   expect(addresses()).toEqual([`${P1}&file=%2Ftmp%2Fnotes.txt`, ""]);
+});
 
 it("a Back the file viewer refused selects nothing, and the entry it put back says what is shown", async () => {
   // Given p2 shown on its entry, a collapsed sidebar not drawn yet, and a file whose comment field holds a
