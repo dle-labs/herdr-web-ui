@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
+import type { WorkspaceFilesResponse } from "../../shared/protocol.ts";
 import { useMachineApi } from "../lib/machineContext.tsx";
 import { useT } from "../lib/i18n.ts";
 import { nativeModalOver, useFocusTrap } from "../lib/useFocusTrap.ts";
@@ -30,7 +31,7 @@ export function WorkspaceFileSearch({ paneId, onSelect, onClose, refreshToken, k
   const [active, setActive] = useState(0);
   const [result, setResult] = useState<{
     api: typeof api; paneId: string; query: string; refreshToken: number;
-    root: string; files: string[]; truncated: boolean; error: boolean;
+    root: string; files: string[]; truncated: boolean; error: boolean; match?: WorkspaceFilesResponse["match"];
   } | null>(null);
   const current = result?.api === api && result.paneId === paneId && result.query === query && result.refreshToken === refreshToken ? result : null;
   const files = current?.files ?? [];
@@ -86,7 +87,7 @@ export function WorkspaceFileSearch({ paneId, onSelect, onClose, refreshToken, k
     <section ref={surface} className="menu command-palette workspace-file-search" role="dialog" aria-modal="true" aria-label={t("Find files…")} tabIndex={-1}>
       <div className="palette-search">
         <input ref={input} className="input" type="text" role="combobox"
-          aria-label={t("Find files…")} placeholder={t("Find files…")} autoComplete="off" spellCheck={false}
+          aria-label={t("Find files…")} placeholder={t("Find files: name, *.adoc or a regex…")} autoComplete="off" spellCheck={false}
           aria-autocomplete="list" aria-expanded={true} aria-controls={id}
           aria-activedescendant={files[active] !== undefined ? `${id}-${active}` : undefined}
           value={query} onChange={(event) => { setQuery(event.target.value); setActive(0); }}
@@ -100,6 +101,7 @@ export function WorkspaceFileSearch({ paneId, onSelect, onClose, refreshToken, k
               if (files[active] !== undefined) choose(files[active]);
             }
           }} />
+        {(current?.match === "glob" || current?.match === "regex") && <span className="workspace-file-search-mode">{current.match === "glob" ? t("Glob") : t("Regex")}</span>}
         <button type="button" className="icon-button" aria-label={t("Close")} title={t("Close")} onClick={onClose}><X aria-hidden="true" /></button>
       </div>
       <ul ref={list} id={id} role="listbox" aria-label={t("Find files…")} className="workspace-file-search-list">
@@ -109,7 +111,8 @@ export function WorkspaceFileSearch({ paneId, onSelect, onClose, refreshToken, k
       </ul>
       {!current && <p className="workspace-file-search-status" role="status">{t("Loading…")}</p>}
       {current?.error && <p className="workspace-file-search-error" role="alert">{t("Could not load files")}</p>}
-      {current && !current.error && !files.length && <p className="workspace-file-search-status" role="status">{t("No matches")}</p>}
+      {current?.match === "invalid" && <p className="workspace-file-search-error" role="alert">{t("Not a valid pattern")}</p>}
+      {current && !current.error && current.match !== "invalid" && !files.length && <p className="workspace-file-search-status" role="status">{t("No matches")}</p>}
       {current?.truncated && <p className="workspace-file-search-status" role="status">{t("More results available. Refine your search.")}</p>}
     </section>
   </div>;

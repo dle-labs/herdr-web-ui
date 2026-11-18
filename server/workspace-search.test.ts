@@ -2,7 +2,7 @@ import { afterEach, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gitCommits, workspaceFiles } from "./workspace-search.ts";
+import { fileQueryMatcher, gitCommits, workspaceFiles } from "./workspace-search.ts";
 import { DEMO_COMMITS, demoGitChanges, demoGitDiff } from "../site/demo/gitDiff.ts";
 
 const owned: string[] = [];
@@ -30,13 +30,42 @@ it("lists repository-relative tracked and untracked files from a nested cwd, wit
   expect((await workspaceFiles(root)).truncated).toBe(true);
   expect((await workspaceFiles(root, "greeting")).truncated).toBe(false);
 });
+it("reads a glob or a regular expression as a pattern, and an unusable pattern as no match", async () => {
+  const root = directory(); git(root, "init", "-q");
+  mkdirSync(join(root, "docs", "modules"), { recursive: true });
+  for (const path of ["README.adoc", "docs/index.adoc", "docs/modules/nav.adoc", "docs/index.adoc.bak", "src.ts", "docs/notes.md"]) writeFileSync(join(root, path), "");
+  const search = (query: string) => workspaceFiles(root, query);
+  expect(await search("*.adoc")).toMatchObject({ files: ["docs/index.adoc", "docs/modules/nav.adoc", "README.adoc"], match: "glob" });
+  expect((await search("*.ADOC")).files).toHaveLength(3);
+  expect((await search("docs/*.adoc")).files).toEqual(["docs/index.adoc"]);
+  expect((await search("docs/**/*.adoc")).files).toEqual(["docs/index.adoc", "docs/modules/nav.adoc"]);
+  expect((await search("**/README.adoc")).files).toEqual(["README.adoc"]);
+  expect((await search("index.?doc*")).files).toEqual(["docs/index.adoc", "docs/index.adoc.bak"]);
+  expect((await search("[nr]*.adoc")).files).toEqual(["docs/modules/nav.adoc", "README.adoc"]);
+  expect((await search("[!nr]*.adoc")).files).toEqual(["docs/index.adoc"]);
+  expect(await search("\\.adoc$")).toMatchObject({ files: ["docs/index.adoc", "docs/modules/nav.adoc", "README.adoc"], match: "regex" });
+  expect((await search("^docs/.*\\.(md|bak)$")).files).toEqual(["docs/index.adoc.bak", "docs/notes.md"]);
+  expect((await search("modules/.*")).files).toEqual(["docs/modules/nav.adoc"]);
+  expect(await search("(unclosed")).toEqual({ root, files: [], truncated: false, match: "invalid" });
+  expect((await search("(a+)+$")).match).toBe("invalid");
+  expect((await search("src")).match).toBe("fuzzy");
+  expect((await search("src.ts")).files[0]).toBe("src.ts");
+});
+it("classifies queries without compiling user text into anything but a regex", () => {
+  expect(fileQueryMatcher("").kind).toBe("fuzzy");
+  expect(fileQueryMatcher("a.b").kind).toBe("fuzzy");
+  expect(fileQueryMatcher("[").kind).toBe("glob");
+  expect((fileQueryMatcher("[") as { test: (path: string) => boolean }).test("a[")).toBe(false);
+  expect((fileQueryMatcher("*[") as { test: (path: string) => boolean }).test("a[")).toBe(true);
+  expect(fileQueryMatcher(`${"a".repeat(300)}*`).kind).toBe("invalid");
+});
 it("walks nonrepositories without following symlinks or dependency/Git folders and reports depth truncation", async () => {
   const root = directory(); const outside = directory();
   writeFileSync(join(outside, "secret.txt"), "secret");
   writeFileSync(join(root, "safe.txt"), "safe");
   for (const name of [".git", "node_modules"]) { mkdirSync(join(root, name)); writeFileSync(join(root, name, "hidden.txt"), ""); }
   if (process.platform !== "win32") { symlinkSync(outside, join(root, "link")); symlinkSync(join(outside, "secret.txt"), join(root, "file-link")); }
-  expect(await workspaceFiles(root)).toEqual({ root, files: ["safe.txt"], truncated: false });
+  expect(await workspaceFiles(root)).toEqual({ root, files: ["safe.txt"], truncated: false, match: "fuzzy" });
   mkdirSync(join(root, ...Array(14).fill("deep")), { recursive: true });
   expect((await workspaceFiles(root, "not-found")).truncated).toBe(true);
 });

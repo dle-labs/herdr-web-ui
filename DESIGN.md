@@ -651,7 +651,13 @@ It is a CSS-only role of the relay app, not one of the runtime roles in `src/lib
   only while focus is inside Files, never in a terminal. Opening Files never opens the finder
   automatically. At most five fixed-height path rows are visible, with long paths ellipsized and
   remaining results scrollable; keyboard navigation scrolls only that list. Requests are debounced,
-  stale responses ignored, and incomplete results explicitly marked.
+  stale responses ignored, and incomplete results explicitly marked. The query is read the way
+  `fd` and VS Code's quick open read one: plain text stays fuzzy; `*`, `?` or `[…]` make a glob
+  matched against the file name (the whole path once it holds a `/`, with `**` crossing folders),
+  and regex syntax (`\ ^ $ + ( ) | { }` or `.*`) a JavaScript regular expression over the path, all
+  case-insensitive. A glob or regex shows its kind as a small badge at the end of the field; a
+  pattern that does not compile, or nests quantifiers (`(a+)+`) that could hang the bridge, says
+  **Not a valid pattern** instead of listing nothing.
   Both nested palettes own focus, Escape, swipe and phone Back while open. Closing one by its
   close button, Escape, backdrop, swipe or Back preserves Files, its selection and tree state,
   and returns focus to the opener. Files resumes its own phone Back entry after dismissal.

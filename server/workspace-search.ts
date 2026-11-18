@@ -56,6 +56,62 @@ function score(path: string, query: string): number {
   return at === query.length ? 1 : -1;
 }
 
+/** the longest query read as a pattern; a longer one is only ever a typo or an attack on the matcher */
+const MAX_PATTERN_LENGTH = 256;
+/** a quantified group that holds a quantifier ((a+)+, (\w*)*): the classic catastrophic backtracking shape */
+const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[*+}](?:[^()\\]|\\.)*\)[*+{]/;
+
+/** How a file query is read: fuzzy text, a glob (`*.adoc`, `src/**\/*.ts`) or a regular expression (`\.adoc$`). */
+export type FileQueryMatcher =
+  | { kind: "fuzzy" }
+  | { kind: "glob" | "regex"; test: (path: string) => boolean }
+  | { kind: "invalid" };
+
+/** One glob as a regex: `**` crosses folders, `*` and `?` stay within one, `[...]` is a class (`[!...]` negated). */
+function globSource(glob: string): string {
+  let out = "";
+  for (let i = 0; i < glob.length; i++) {
+    const character = glob[i]!;
+    if (character === "*") {
+      if (glob[i + 1] === "*") {
+        i++;
+        // `**/` also matches no folder at all, so `**/a.ts` finds a top-level a.ts
+        if (glob[i + 1] === "/") { i++; out += "(?:.*/)?"; } else out += ".*";
+      } else out += "[^/]*";
+    } else if (character === "?") out += "[^/]";
+    else if (character === "[") {
+      const close = glob.indexOf("]", i + 2);
+      if (close === -1) { out += "\\["; continue; }
+      let body = glob.slice(i + 1, close);
+      const negated = body[0] === "!" || body[0] === "^";
+      if (negated) body = body.slice(1);
+      out += `[${negated ? "^" : ""}${body.replace(/[\\\]^]/g, "\\$&")}]`;
+      i = close;
+    } else out += character.replace(/[.+^${}()|\\\]\/]/g, "\\$&");
+  }
+  return out;
+}
+
+/** Plain text is fuzzy; `*`, `?` or `[` make a glob; regex syntax (`\ ^ $ + ( ) | { }` or `.*`) makes a regex. Case never matters. */
+export function fileQueryMatcher(query: string): FileQueryMatcher {
+  const needle = query.trim();
+  if (/[\\^$+()|{}]|\.\*/.test(needle)) {
+    if (needle.length > MAX_PATTERN_LENGTH || NESTED_QUANTIFIER.test(needle)) return { kind: "invalid" };
+    try {
+      const pattern = new RegExp(needle, "i");
+      return { kind: "regex", test: (path) => pattern.test(path) };
+    } catch { return { kind: "invalid" }; }
+  }
+  if (/[*?[]/.test(needle)) {
+    if (needle.length > MAX_PATTERN_LENGTH) return { kind: "invalid" };
+    // a glob without a folder matches the file's name wherever it is, as in .gitignore
+    const whole = needle.includes("/");
+    const pattern = new RegExp(`^${globSource(whole ? needle.replace(/^\/+/, "") : needle)}$`, "i");
+    return { kind: "glob", test: whole ? (path) => pattern.test(path) : (path) => pattern.test(path.slice(path.lastIndexOf("/") + 1)) };
+  }
+  return { kind: "fuzzy" };
+}
+
 export async function workspaceFiles(cwd: string, query = ""): Promise<WorkspaceFilesResponse> {
   const reader = new GitReader();
   let repo: string | null;
@@ -90,8 +146,16 @@ export async function workspaceFiles(cwd: string, query = ""): Promise<Workspace
     };
     await walk(root, "", 0);
   }
+  const matcher = fileQueryMatcher(query);
+  if (matcher.kind === "invalid") return { root, files: [], truncated: false, match: "invalid" };
+  if (matcher.kind !== "fuzzy") {
+    const matches: string[] = [];
+    for (const path of files) if (matcher.test(path)) matches.push(path);
+    matches.sort((a, b) => a.localeCompare(b));
+    return { root, files: matches.slice(0, LIMIT), truncated: truncated || matches.length > LIMIT, match: matcher.kind };
+  }
   const needle = query.trim().toLowerCase();
   const matches = files.map((path) => ({ path, score: score(path, needle) })).filter((item) => item.score >= 0)
     .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
-  return { root, files: matches.slice(0, LIMIT).map((item) => item.path), truncated: truncated || matches.length > LIMIT };
+  return { root, files: matches.slice(0, LIMIT).map((item) => item.path), truncated: truncated || matches.length > LIMIT, match: "fuzzy" };
 }

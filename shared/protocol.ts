@@ -572,7 +572,8 @@ export interface GitCommitsResponse {
   commits: { id: string; subject: string; author: string; date: string }[];
   truncated: boolean;
 }
-/** GET /api/workspace/files?pane_id=&query= -> fuzzy filename/path search.
+/** GET /api/workspace/files?pane_id=&query= -> filename/path search: fuzzy text, a glob
+ * (`*.adoc`, `src/**\/*.ts`) or a regular expression (`\.adoc$`), case-insensitive.
  * Repository-relative tracked/untracked nonignored files, or cwd-relative bounded
  * walk outside Git. At most 100 results; truncated includes incomplete inventories.
  */
@@ -580,6 +581,9 @@ export interface WorkspaceFilesResponse {
   root: string;
   files: string[];
   truncated: boolean;
+  /** how the query was read; "invalid": a pattern that does not compile (or could hang the matcher), so nothing matched.
+   * Absent from an older server, which only matches fuzzily. */
+  match?: "fuzzy" | "glob" | "regex" | "invalid";
 }
 
 export interface ApiError {

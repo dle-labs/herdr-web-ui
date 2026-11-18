@@ -50,3 +50,14 @@
 .workspace-file-search-error {
   color: var(--danger-text);
 }
+
+/* how the server read the query: a glob or a regex (fuzzy text shows nothing) */
+.workspace-file-search-mode {
+  flex: none;
+  padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+}
