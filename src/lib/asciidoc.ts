@@ -12,6 +12,8 @@ type Fence = { delimiter: string };
 const ADMONITION = /^(NOTE|TIP|IMPORTANT|WARNING|CAUTION):\s+(.*)$/;
 const ADMONITION_NAME: Record<string, string> = { NOTE: "Note", TIP: "Tip", IMPORTANT: "Important", WARNING: "Warning", CAUTION: "Caution" };
 const PREPROCESSOR = /^(?:ifdef|ifndef|ifeval|endif)::.*\[.*\]\s*$/;
+// asciidoctor-diagram's block styles: `[mermaid]` over a literal or listing block draws it; only Mermaid renders here
+const DIAGRAMS = new Set(["a2s", "actdiag", "blockdiag", "bpmn", "bytefield", "d2", "dbml", "ditaa", "dpic", "erd", "gnuplot", "graphviz", "lilypond", "mermaid", "msc", "nomnoml", "nwdiag", "packetdiag", "pikchr", "plantuml", "rackdiag", "seqdiag", "shaape", "smcat", "structurizr", "svgbob", "symbolator", "syntrax", "tikz", "umlet", "vega", "vegalite", "wavedrom"]);
 const BUILTIN_ATTRIBUTES: Record<string, string> = { nbsp: " ", zwsp: "", empty: "", sp: " ", amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", brvbar: "¦", vbar: "|", plus: "+", startsb: "[", endsb: "]", caret: "^", asterisk: "*", tilde: "~", backslash: "\\", backtick: "`", "two-colons": "::", "two-semicolons": ";;", "cpp": "C++" };
 
 /** `text` with its delimiter-free inline AsciiDoc as Markdown: emphasis, links, xrefs, images, attributes. */
@@ -45,6 +47,21 @@ export function asciidocInline(text: string, attributes: ReadonlyMap<string, str
     .replace(/(^|[^\w_])_(?=\S)([^_\n]*?\S)_(?![\w_])/g, "$1*$2*")
     .replace(/\s\+$/, "");
   return out.replace(/\u0000(\d+)\u0000/g, (_, index: string) => code[Number(index)]!);
+}
+
+/**
+ * The fence language a block attribute line gives the code block under it: `[source,ts]` and `[,ts]` name it in
+ * their second position, a diagram style (`[mermaid]`, `[plantuml,target,svg]`) is its own; anything else names none.
+ */
+export function blockLanguage(attributes: string | null): string {
+  const list = /^\[(.*)\]$/.exec(attributes ?? "")?.[1];
+  if (list === undefined) return "";
+  const positional = list.split(",").map((value) => value.trim()).filter((value) => !value.includes("="));
+  // the style may carry an id, roles and options: `source#id.role%linenums`
+  const style = (positional[0] ?? "").replace(/[#.%].*$/, "").toLowerCase();
+  if (DIAGRAMS.has(style)) return style;
+  if (style === "" || style === "source" || style === "listing") return /^[^\s"']+$/.exec(positional[1] ?? "")?.[0] ?? "";
+  return "";
 }
 
 /** The cells of a table row line: AsciiDoc starts each with `|`, its spec (`2+`, `a`, `^.^`) before it. */
@@ -129,8 +146,10 @@ export function asciidocToMarkdown(source: string): string {
     if (PREPROCESSOR.test(trimmed) || /^toc::\[.*\]$/.test(trimmed) || trimmed === "<<<") { out.push(""); continue; }
 
     // delimited code: listing, literal, and passthrough (shown as its source, never as HTML)
-    if (/^-{4,}$/.test(trimmed) || /^\.{4,}$/.test(trimmed) || /^\+{4,}$/.test(trimmed) || trimmed === "```" || /^```[\w+-]*$/.test(trimmed)) {
-      const source = /^\[(?:source)?,\s*([^,\]\s]+)/.exec(pending ?? "")?.[1] ?? "";
+    // a diagram style makes an open block (`--`) a diagram's source too
+    const diagramOpen = trimmed === "--" && DIAGRAMS.has(blockLanguage(pending));
+    if (/^-{4,}$/.test(trimmed) || /^\.{4,}$/.test(trimmed) || /^\+{4,}$/.test(trimmed) || trimmed === "```" || /^```[\w+-]*$/.test(trimmed) || diagramOpen) {
+      const source = blockLanguage(pending);
       const language = trimmed.startsWith("```") ? trimmed.slice(3) : trimmed.startsWith("+") ? "html" : source;
       fence = { delimiter: trimmed.startsWith("```") ? "```" : trimmed };
       pending = null;

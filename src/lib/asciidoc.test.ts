@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { parseMarkdownWithLines } from "../../shared/markdown.ts";
-import { asciidocInline, asciidocToMarkdown } from "./asciidoc.ts";
+import { asciidocInline, asciidocToMarkdown, blockLanguage } from "./asciidoc.ts";
 
 const DOCUMENT = `= Project Guide
 :toc:
@@ -92,6 +92,31 @@ describe("asciidocToMarkdown", () => {
   it("shows a passthrough block as code, never as HTML", () => {
     const markdown = asciidocToMarkdown("++++\n<script>alert(1)</script>\n++++");
     expect(markdown).toBe("```html\n<script>alert(1)</script>\n```");
+  });
+
+  it("gives an asciidoctor-diagram block its diagram's fence, so a Mermaid one draws as a diagram", () => {
+    const flowchart = "flowchart TB\n  L[\"<b>Login</b>\"]:::person -- \"has\" --> C\n  classDef person fill:#08427b,color:#fff";
+    for (const [attributes, delimiter] of [["[mermaid]", "...."], ["[mermaid, domain, svg]", "----"], ["[source,mermaid]", "----"], ["[mermaid]", "--"]] as const) {
+      const document = `.Domain\n${attributes}\n${delimiter}\n${flowchart}\n${delimiter}\n`;
+      const markdown = asciidocToMarkdown(document);
+      expect(markdown.split("\n")).toHaveLength(document.split("\n").length);
+      const code = parseMarkdownWithLines(markdown).find((block) => block.type === "code");
+      expect(code).toMatchObject({ type: "code", language: "mermaid", value: flowchart });
+      expect(code?.source?.[0]).toBe(3);
+    }
+    expect(asciidocToMarkdown("[plantuml]\n----\nA -> B\n----")).toBe("\n```plantuml\nA -> B\n```");
+    // an open block without a diagram style still only groups
+    expect(asciidocToMarkdown("--\ntext\n--")).toBe("\ntext\n");
+  });
+
+  it("reads a block attribute line's language", () => {
+    expect(blockLanguage("[source,ts]")).toBe("ts");
+    expect(blockLanguage("[source#main.lead%linenums, ts, indent=0]")).toBe("ts");
+    expect(blockLanguage("[,yaml]")).toBe("yaml");
+    expect(blockLanguage("[Mermaid,target=domain,format=svg]")).toBe("mermaid");
+    expect(blockLanguage("[quote, Someone]")).toBe("");
+    expect(blockLanguage("[source]")).toBe("");
+    expect(blockLanguage(null)).toBe("");
   });
 
   it("leaves code untouched and an unclosed block open to the end", () => {
