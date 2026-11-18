@@ -6,6 +6,11 @@ export function hasPreview(language: string | null): boolean {
   return language === "markdown";
 }
 
+/** An AsciiDoc file: its Preview is drawn as Markdown's, from its text rewritten line for line (lib/asciidoc.ts). */
+export function isAsciidocPath(path: string): boolean {
+  return /\.(?:adoc|asciidoc)$/i.test(path);
+}
+
 /**
  * How many elements a Preview may draw. Its parse runs in a worker, but drawing is on the page: in
  * Chromium a list of 65 536 items (about 131 000 elements) held it for 1.6 s, about 12 µs an

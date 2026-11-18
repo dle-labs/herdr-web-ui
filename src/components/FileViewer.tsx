@@ -41,7 +41,8 @@ import { MAX_INLINE_IMAGE_BYTES, markdownImagePreview } from "../lib/markdownIma
 import type { MarkdownBlock } from "../../shared/markdown.ts";
 import { knownPreview, parsePreviewOffThread } from "../lib/markdownPreview.ts";
 import { outlineOf } from "../lib/markdownOutline.ts";
-import { hasPreview, type TextViewMode } from "../lib/textPreview.ts";
+import { hasPreview, isAsciidocPath, type TextViewMode } from "../lib/textPreview.ts";
+import { asciidocToMarkdown } from "../lib/asciidoc.ts";
 import { readFilePreviewText, SOURCE_PREVIEW_LINES, type FilePreviewText } from "../lib/filePreviewText.ts";
 import { readerHref } from "../lib/fileReader.ts";
 import { getTransport } from "../lib/transport.ts";
@@ -243,7 +244,7 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
       setInfo(next);
       if (next.kind !== "text") return;
       // Read a bounded prefix: Markdown keeps its Preview budget; source also has a line cap.
-      const budget = readBudget(languageForPath(next.path), next.size);
+      const budget = readBudget(isAsciidocPath(next.path) ? "markdown" : languageForPath(next.path), next.size);
       // The request gets the deadline; the body keeps whatever arrived within the remaining time.
       const started = Date.now();
       deadline = setTimeout(() => download.abort(), budget.timeoutMs);
@@ -277,9 +278,14 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
   const url = fileUrl(info?.path ?? target.path, paneId);
   const textFile = info?.kind === "text";
   const language = languageForPath(info?.path ?? target.path);
-  const preview = useMarkdownPreview(textFile && loaded !== null && mode === "preview" && hasPreview(language) ? loaded.text : null);
+  // AsciiDoc previews as the Markdown it rewrites to, line for line, so comments keep the file's own lines
+  const asciidoc = isAsciidocPath(info?.path ?? target.path);
+  const previewLanguage = asciidoc ? "markdown" : language;
+  const wantsPreview = textFile && loaded !== null && mode === "preview" && hasPreview(previewLanguage);
+  const previewText = useMemo(() => !wantsPreview ? null : asciidoc ? asciidocToMarkdown(loaded.text) : loaded.text, [wantsPreview, asciidoc, loaded]);
+  const preview = useMarkdownPreview(previewText);
   const previewRefused = preview.status === "failed";
-  const previewable = hasPreview(language) && !previewRefused;
+  const previewable = hasPreview(previewLanguage) && !previewRefused;
   const view = previewable && mode === "preview" ? "markdown" : "code";
   const previewBlocks = !editing && view === "markdown" && preview.status === "ready" ? preview.blocks : null;
   const outline = useMemo(() => previewBlocks !== null ? outlineOf(previewBlocks) : [], [previewBlocks]);
@@ -337,7 +343,7 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
   const { stem, extension } = pathParts(info?.name ?? shownPath);
   const { folder } = pathParts(shownPath);
   const cutShort = textFile && (!htmlPage || source) && loaded !== null && loaded.truncated;
-  const budget = textFile ? readBudget(language, info.size) : null;
+  const budget = textFile ? readBudget(previewLanguage, info.size) : null;
   const cutBytes = cutShort && budget !== null && loaded.truncatedBy !== "lines" && loaded.truncatedBy !== "time" && (loaded.total ?? info.size) > budget.bytes ? { shown: budget.bytes, total: loaded.total ?? info.size } : null;
   const request = useMemo(() => codeShown ? lineRequest(target.line, sourceText, loaded.truncated, loaded.lines) : null, [codeShown, target.line, sourceText, loaded]);
   const requestNotice = (() => {
@@ -364,7 +370,7 @@ export function FileViewer({ connected = false, page = false, path: asked, paneI
   const canEdit = editable && settings.editTextFiles && !page && paneId !== null && textFile && (!htmlPage || source) && info.size <= MAX_EDITABLE_TEXT_BYTES;
   const draftWaits = canEdit && hasDraft(machineId, info.path);
   useEffect(() => { if (draftWaits) setEditing(true); }, [draftWaits]);
-  const markdown = info?.kind === "text" && /\.(?:md|markdown)$/i.test(info.name);
+  const markdown = info?.kind === "text" && (/\.(?:md|markdown)$/i.test(info.name) || isAsciidocPath(info.name));
   const previewUrl = readerHref(machineId, shownPath + (target.line === null ? "" : `#L${target.line}`));
   const imagePreview = useCallback((src: string) => markdownImagePreview(
     src, shownPath, (target) => fetchFileInfo(target, paneId), (target, download) => fileUrl(target, paneId, download),

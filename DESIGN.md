@@ -3823,7 +3823,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   `--fw-medium` cut inside its stem, then the actions as `--control-h` − 6px ghost buttons in one
   run (popup, new tab, raw, download, copy, Close), never stacked; and a toolbar of `--control-h` −
   `--space-1` carrying the meta line (size or partial-view notice, folder) and, at its end, the
-  file's view modes as a compact segmented control (**Preview | Source** for Markdown in place of
+  file's view modes as a compact segmented control (**Preview | Source** for Markdown and AsciiDoc in place of
   Show source, **Page | Source** for HTML) whose chosen segment is the row's one `--bg-hover` fill.
   A mode is drawn `--control-h` − `--space-4` tall (`18px`, `16px` compact) and, with a mouse, takes clicks over
   `--pointer-target` through an invisible `::before` expander above and below it, inside the row.

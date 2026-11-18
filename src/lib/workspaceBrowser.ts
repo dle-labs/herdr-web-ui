@@ -1,6 +1,7 @@
 import type { GitChangesResponse } from "../../shared/protocol.ts";
 import { languageForPath } from "./highlight.ts";
 import { fileIconCategory } from "./fileTypeIcon.ts";
+import { isAsciidocPath } from "./textPreview.ts";
 import { workspaceChildPath } from "./workspaceFileTree.ts";
 
 export type WorkspaceFileIntent = "browse" | "changes";
@@ -13,10 +14,10 @@ export function changedWorkspacePath(inventory: GitChangesResponse, absolute: st
     || file.old_path !== undefined && normalize(workspaceChildPath(inventory.root, file.old_path)) === target)?.path ?? null;
 }
 
-/** The current Markdown document, never a deleted or binary diff's contents. */
+/** The current Markdown (or AsciiDoc) document, never a deleted or binary diff's contents. */
 export function changedMarkdownPreviewPath(inventory: GitChangesResponse, path: string): string | null {
   const file = inventory.files.find((file) => file.path === path);
-  return file && file.status !== "deleted" && !file.binary && languageForPath(file.path) === "markdown"
+  return file && file.status !== "deleted" && !file.binary && (languageForPath(file.path) === "markdown" || isAsciidocPath(file.path))
     ? workspaceChildPath(inventory.root, file.path) : null;
 }
 

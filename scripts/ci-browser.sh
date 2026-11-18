@@ -108,6 +108,7 @@ run_script scripts/setup-row-demo-regression.ts
 run_script scripts/interface-font-demo-regression.ts
 run_script scripts/file-text-size-demo-regression.ts
 run_script scripts/files-panel-demo-regression.ts
+run_script scripts/files-tree-width-demo-regression.ts
 run_script scripts/docked-file-link-demo-regression.ts
 run_script scripts/files-documents-demo-regression.ts
 run_script scripts/theme-first-paint-demo-regression.ts
