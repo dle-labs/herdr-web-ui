@@ -15,7 +15,7 @@ function Fixture() {
       <main style={{ flex: "1 1 0", minWidth: 0, padding: 16 }}>
         <textarea id="composer" aria-label="Message" rows={3} style={{ width: "100%" }} />
       </main>
-      {shown?.docked && <FileViewer key={shown.at} docked path={shown.path} paneId={null} onClose={() => setShown(null)} />}
+      {shown?.docked && <FileViewer key={shown.at} path={shown.path} paneId={null} onClose={() => setShown(null)} />}
     </div>
     {shown && !shown.docked && <FileViewer key={shown.at} path={shown.path} paneId={null} onClose={() => setShown(null)} />}
   </SettingsProvider>;

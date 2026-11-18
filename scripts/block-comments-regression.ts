@@ -12,7 +12,6 @@ import { buildDemoApp } from "./demo-build.ts";
 
 const TEXT = "The sync plan keeps every revision in order and never loses a write.";
 const app = mkdtempSync(join(tmpdir(), "chat-reply-comments-"));
-const frames = (page: Page) => page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 
 /** Checks the copy event contract, including the app's Markdown copy handler; no OS clipboard permission required. */
 async function copiedSelection(page: Page, expected?: string): Promise<void> {

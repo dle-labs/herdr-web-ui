@@ -744,7 +744,7 @@ describe("numbered lists as agents write them", () => {
     const nested = parent?.type === "list" ? parent.items[0]?.blocks?.[0] : undefined;
     expect(nested?.type === "list" && nested.items.map((item) => item.number)).toEqual([3, 7]);
     const html = render("1. a\n12. b");
-    expect(html).toContain('<li value="1"><span>a</span></li><li value="12"><span>b</span></li>');
+    expect(html).toContain('<li value="1"><div class="markdown-item"><span>a</span></div></li><li value="12"><div class="markdown-item"><span>b</span></div></li>');
     expect(html).toMatch(/--markdown-list-digits:2/);
     expect(render("1. a\n2. b")).not.toContain("value=");
     // past a 32-bit integer the browser ignores `start` and `value`: such a list counts up from 1, as before

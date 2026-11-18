@@ -234,12 +234,12 @@ async function checkStickyReveal(page: Page, dialog: Locator, mobile: boolean): 
       assert.deepEqual(await selected(), originalSelection, "scrolling does not select a tree row");
       assert.ok((await dialog.locator(".files-mobile-header").boundingBox())!.y === 0, "toolbar stays at viewport top");
     }
-    const document = await next.elementHandle();
+    const diffDocument = await next.elementHandle();
     await (await fileAction(dialog, "Reveal in file tree")).click();
     assert.ok(await dialog.locator(".changes-navigation").isVisible());
     assert.deepEqual(await selected(), ["src/new.ts"]);
     await treeFile(dialog, "src/new.ts").click();
-    assert.ok(await document!.evaluate(node => node.isConnected), "Reveal retains diff DOM");
+    assert.ok(await diffDocument!.evaluate(node => node.isConnected), "Reveal retains diff DOM");
     await dialog.getByRole("button", {name:"Back to files",exact:true}).click();
     await treeFile(dialog,"src/greeting.ts").click();
     await first.locator("[data-diff-type]").waitFor();
@@ -263,7 +263,7 @@ async function checkStickyReveal(page: Page, dialog: Locator, mobile: boolean): 
     return node.getBoundingClientRect().bottom <= next.getBoundingClientRect().top + 1;
   }), "the previous section's sticky header leaves instead of overlapping or stacking");
   assert.deepEqual(await selected(), originalSelection, "crossing a section boundary does not select it");
-  const document = await next.elementHandle();
+  const diffDocument = await next.elementHandle();
   const before = await detail.evaluate((node) => node.scrollTop);
   const pageTop = await page.evaluate(() => window.scrollY);
   await reveal(next).click();
@@ -276,7 +276,7 @@ async function checkStickyReveal(page: Page, dialog: Locator, mobile: boolean): 
     return row.top >= nav.top - 1 && row.bottom <= nav.bottom + 1;
   }), "the focused selected row is revealed inside the tree");
   assert.equal(await page.evaluate(() => window.scrollY), pageTop, "Reveal focus never scrolls the page");
-  assert.ok(await document!.evaluate((node) => node.isConnected), "Reveal retains the continuous diff document");
+  assert.ok(await diffDocument!.evaluate((node) => node.isConnected), "Reveal retains the continuous diff document");
   assert.equal(await dialog.locator("[data-diff-path]").count(), 2);
   assert.ok(Math.abs(await detail.evaluate((node) => node.scrollTop) - before) <= 1, "desktop Reveal focuses with preventScroll, preserving the diff viewport");
   await treeFile(dialog, "src").click();
@@ -534,7 +534,6 @@ try {
           await dialog.getByRole("button", { name: "Back to files", exact: true }).click();
           await treeFile(dialog, "src/new.ts").click();
           await section(dialog, "src/new.ts").locator('[data-diff-type="single"]').waitFor();
-          const wrap = dialog.locator(".files-dialog-header").getByRole("button", { name: "Wrap long lines", exact: true });
           await (await fileAction(dialog, "Wrap long lines")).click();
           assert.equal(await section(dialog, "src/new.ts").locator("pre").getAttribute("data-overflow"), "wrap");
           await (await fileAction(dialog, "Wrap long lines")).click();
@@ -794,7 +793,6 @@ try {
         await page.evaluate(() => { (window as any).gitEmpty = false; (window as any).gitRevision = 0; });
         await openPaneChanges();
         const quick = page.getByRole("dialog", { name: "Files", exact: true });
-        const findButton = quick.getByRole("button", { name: "Find files…", exact: true });
         const findPalette = page.getByRole("dialog", { name: "Find files…", exact: true });
         const finder = findPalette.getByRole("combobox", { name: "Find files…", exact: true });
         await quick.locator(".files-dialog-header").waitFor();
@@ -923,8 +921,6 @@ try {
         const markdown = await openChanges(page);
         await treeFile(markdown, "docs").click();
         const modes = markdown.getByRole("group", { name: "Markdown view", exact: true });
-        const preview = modes.getByRole("button", { name: "Preview", exact: true });
-        const diff = modes.getByRole("button", { name: "Diff", exact: true });
         const markdownCases = [
           { path: "docs/untracked.md", status: "untracked", heading: "Untracked guide" },
           { path: "docs/added.md", status: "added", heading: "Added guide" },

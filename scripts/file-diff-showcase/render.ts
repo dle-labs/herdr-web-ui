@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
-import { join, resolve, sep } from 'node:path';
+import { join, resolve } from 'node:path';
 import { chromium } from 'playwright-core';
 import { CHAPTERS, OUTPUT } from './timeline.ts';
+import { serveDemo } from '../demo-server.ts';
 
 const root = resolve(import.meta.dir, '../../_film/file-diff-showcase');
 const output = join(root, 'output'); mkdirSync(output, { recursive: true });
@@ -51,15 +52,8 @@ window.draw=async function(frame){
  ctx.fillStyle='#6d5a3d';ctx.fillRect(32,1044,1841,2);ctx.fillStyle='#efb45e';ctx.fillRect(32,1044,1841*frame.t/60,2);
  ctx.font='13px Arial';ctx.fillStyle='#a99e8e';ctx.fillText('Browse · Compare · Comment',32,1070);ctx.textAlign='right';ctx.fillText(String(Math.floor(frame.t)).padStart(2,'0')+' / 60',1873,1070);ctx.textAlign='left';
 };</script>`;
-const server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) {
-  const path = new URL(req.url).pathname;
-  if (path === '/favicon.ico') return new Response(null, { status: 204 });
-  if (path === '/') return new Response(html, { headers: { 'content-type': 'text/html' } });
-  const file = resolve(root, '.' + decodeURIComponent(path));
-  if (!file.startsWith(root + sep)) return new Response('Forbidden', { status: 403 });
-  const body = Bun.file(file);
-  return await body.exists() ? new Response(body) : new Response('Not found', { status: 404 });
-} });
+writeFileSync(join(root, 'index.html'), html);
+const server = serveDemo(root, { prefix: '/' });
 const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome', headless: true, args: ['--no-sandbox'] });
 let encoder: ReturnType<typeof Bun.spawn> | undefined;
 function sample(device: string, t: number) {

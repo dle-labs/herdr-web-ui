@@ -6,6 +6,7 @@ import { chromium, type Browser, type Page } from "playwright-core";
 import panes from "../site/demo/fixtures/panes.json";
 import { buildDemoApp } from "./demo-build.ts";
 import { chromePath } from "./chrome-path.ts";
+import { serveDemo } from "./demo-server.ts";
 import { runMoreItem } from "./header-more.ts";
 
 // The Files browser on a wide monitor, on the unmodified app over the demo's fixture transport, light
@@ -21,7 +22,7 @@ const evidence = process.env.UI_EVIDENCE_DIR;
 const FILES_SCRIPT = `<script>(${(() => {
   const demoFetch = window.fetch;
   const guide = "= Demo Guide\n:product: Ovis\n\n== Install\n\nRun *{product}* with `bun`.\n\nNOTE: A note.\n\n|===\n|Name |Value\n\n|alpha |1\n|===\n";
-  window.fetch = async (input, init) => {
+  window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.pathname.endsWith("/workspace/directories") && (init?.method ?? "GET") === "GET") {
       const listing = await (await demoFetch(input, init)).json();
@@ -32,7 +33,7 @@ const FILES_SCRIPT = `<script>(${(() => {
       if (url.pathname.endsWith("/fs/file")) return new Response(guide, { headers: { "content-type": "text/plain" } });
     }
     return demoFetch(input, init);
-  };
+  }) as typeof fetch;
 }).toString()})();</script>`;
 
 async function open(browser: Browser, width: number, theme: "light" | "dark"): Promise<{ page: Page; errors: string[]; close: () => Promise<void> }> {
@@ -136,17 +137,7 @@ try {
   await buildDemoApp(app);
   const index = join(app, "index.html");
   writeFileSync(index, readFileSync(index, "utf8").replace(/<script type="module"/, () => `<script src="./demo-transport.js"></script>${FILES_SCRIPT}\n    <script type="module"`));
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
-    const path = new URL(request.url).pathname;
-    if (!path.startsWith("/herdr-web-ui/demo/app/")) return new Response("not found", { status: 404 });
-    let file: string;
-    try { file = decodeURIComponent(path.slice("/herdr-web-ui/demo/app/".length)); }
-    catch { return new Response("bad path", { status: 400 }); }
-    if (!file || file.endsWith("/")) file += "index.html";
-    if (file.split("/").includes("..") || file.includes("\\")) return new Response("bad path", { status: 400 });
-    const body = Bun.file(join(app, file));
-    return (await body.exists()) ? new Response(body) : new Response("not found", { status: 404 });
-  } });
+  const server = serveDemo(app);
   origin = `http://127.0.0.1:${server.port}`;
   try {
     const browser = await chromium.launch({ executablePath: chromePath(), headless: true, args: ["--no-sandbox"] });

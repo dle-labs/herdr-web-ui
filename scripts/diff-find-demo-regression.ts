@@ -118,7 +118,7 @@ async function check(browser: Browser, origin: string, width: 390 | 1440, theme:
         const root = "/home/demo/checkout-api";
         const revision = "find-fixture";
         const wanted = ["src/money.ts", "docs/checkout-flow.png", "src/money-copy.ts"];
-        window.fetch = async (input, init) => {
+        window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
           const url = new URL(input instanceof Request ? input.url : String(input), location.href);
           if (url.pathname === "/api/workspace/changes") {
             const legacy = await (await original("/api/workspace/diff/files?scope=workspace")).json();
@@ -135,7 +135,7 @@ async function check(browser: Browser, origin: string, width: 390 | 1440, theme:
               new_file: { name: path, contents: body.filter((line: string) => !line.startsWith("-")).map((line: string) => line.slice(1)).join("\n") + "\n" } });
           }
           return original(input, init);
-        };
+        }) as typeof fetch;
       };
       // The demo transport installs itself during script evaluation before the app's load.
       window.addEventListener("DOMContentLoaded", install, { once: true });
