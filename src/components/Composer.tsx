@@ -894,7 +894,7 @@ export function Composer({
    * `sendAnyway`: the user saw the box a DraftRefusal showed and sends over it; `now`: Ctrl+Enter; `hold`: Alt+Enter. */
   const send = useCallback((clearDraft?: string, sendAnyway = false, now = false, hold = false): boolean => {
     if (composingRef.current) return false;
-    if (viewOnly || !connected || uploading || roomless || sending || !outgoing.sendable || text.trim().length === 0) return false;
+    if (viewOnly || !connected || uploading || roomless || sending || !outgoing.sendable) return false;
     const unsaved = changedField(surfaceRef.current?.closest(".terminal-stack") ?? null);
     if (unsaved !== null) { revealField(unsaved); return false; }
     // a terminal command is never sent on its own: the two ways on stand over the card instead, and the
