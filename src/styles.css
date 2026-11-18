@@ -1849,8 +1849,8 @@ button {
 .app {
   --sidebar-shown-w: min(var(--sidebar-user-w, var(--sidebar-w)), 50vw);
   /* the docked file panel's width (FileViewer.css): the one its edge was dragged to (--file-panel-user-w,
-     written by App), else min(42vw, 560px). The panel yields first to leave 320px for the pane. */
-  --file-panel-shown-w: min(max(320px, min(var(--file-panel-user-w, min(42vw, 560px)), 60vw)), calc(100vw - var(--sidebar-shown-w) - 320px));
+     written by App), else min(42vw, 560px), with no cap of its own. The panel yields first to leave 320px for the pane. */
+  --file-panel-shown-w: min(max(320px, var(--file-panel-user-w, min(42vw, 560px))), calc(100vw - var(--sidebar-shown-w) - 320px));
   display: flex;
   flex-direction: column;
   height: 100%;

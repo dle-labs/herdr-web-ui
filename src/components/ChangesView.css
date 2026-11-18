@@ -8,8 +8,25 @@
   min-height: 0;
 }
 .changes-markdown-mode { display: flex; justify-content: flex-end; flex-shrink: 0; padding: var(--space-2); border-block-end: var(--hairline) solid var(--border); }
-.changes-layout { display: grid; grid-template-columns: minmax(180px, 26%) minmax(0, 1fr); flex: 1; min-height: 0; }
-.changes-navigation { min-height: 0; border-inline-end: var(--hairline) solid var(--border); }
+/* the tree column: the width its edge was dragged to (--file-tree-w, FileTreeResizer), else 26%; never under 140px
+   and always leaving the file 240px, so a narrower window or panel squeezes a chosen width rather than the file */
+.changes-layout {
+  display: grid;
+  grid-template-columns: max(140px, min(var(--file-tree-w, 26%), calc(100% - 240px))) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.changes-layout[data-tree-collapsed] { grid-template-columns: auto minmax(0, 1fr); }
+.changes-navigation { position: relative; min-width: 0; min-height: 0; border-inline-end: var(--hairline) solid var(--border); }
+.changes-navigation[hidden] { display: none; }
+/* the folded tree: one narrow strip holding the button that unfolds it */
+.changes-navigation-folded {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-2) var(--space-1);
+  border-inline-end: var(--hairline) solid var(--border);
+}
 .changes-detail { min-height: 0; min-width: 0; overflow: auto; padding-inline-start: var(--space-3); }
 .changes-diff-section { border-block-end: var(--hairline) solid var(--border); padding-block-end: var(--space-4); scroll-margin-block-start: var(--space-2); }
 .changes-diff-header {

@@ -661,6 +661,15 @@ It is a CSS-only role of the relay app, not one of the runtime roles in `src/lib
   Both nested palettes own focus, Escape, swipe and phone Back while open. Closing one by its
   close button, Escape, backdrop, swipe or Back preserves Files, its selection and tree state,
   and returns focus to the opener. Files resumes its own phone Back entry after dismissal.
+- The tree column takes 26% of the browser until its right edge (an unseen `--space-2` grip like
+  the file panel's) is dragged, then keeps that width per device (`ovis:file-tree-width`), never
+  under 140px and always leaving the document 240px; double-click resets it, arrow keys move it.
+  Dragging it past its minimum (the seam turns `--status-blocked`) or **Collapse file tree** in
+  the header folds it to a narrow strip holding only **Expand file tree** (Lucide
+  `PanelLeftOpen`), which brings it back at the width it had, as VS Code's sidebar does. Phones
+  show the tree and the document as separate steps, so neither applies there.
+- The Files dialog has no width cap of its own (`96vw`), so a large monitor gives the tree and the
+  document its room.
 - **Compare with…** opens a header-anchored searchable commit overlay, without shifting or
   shrinking the file view. Its list shows up to five fixed-height, two-line rows, with remaining
   commits scrollable and long subjects/authors ellipsized; full text remains in tooltips.
@@ -1094,7 +1103,7 @@ Comfortable values are `:root`; the final column is the complete compact overrid
 | `--dialog-w-md` | `420px` | — | Confirmation dialog width |
 | `--dialog-w-form` | `525px` | — | Form dialog width (the worktree dialog; the new workspace dialog reaches the same width from `--sidebar-w` and `--content-w`) |
 | `--dialog-w` | `560px` | — | Standard modal dialog width (session history, unsent text) |
-| `--dialog-w-lg` | `1100px` | — | Wide file/diff modal width |
+| `--dialog-w-lg` | `1100px` | — | Wide modal width (Files has no cap: `96vw`) |
 | `--dialog-w-xl` | `1400px` | — | Extra-wide split diff modal width |
 | `--dialog-max-h` | `720px` | — | Modal dialog max height |
 | `--outline-w` | `240px` | — | Markdown outline column width |
@@ -3821,6 +3830,7 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   The content fills the panel edge to edge (no inset, radius or frame around a page, PDF or
   video; code and Markdown keep their `--space-3` inset). The panel's left edge is an unseen
   `--space-2` grip that draws a 2px `--accent` seam under the pointer, while held and on focus.
+  Dragged, it has no maximum of its own: it only leaves the pane beside it 320px.
   Under 300px (a 980px window with the sidebar at its widest) the header keeps the name, the
   popup toggle and Close alone. The panel is its pane's (its paths are read from the pane's
   folder): selecting another pane or PC closes it (a file in the popup too), and the move takes the

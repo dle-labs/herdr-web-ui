@@ -2,14 +2,13 @@ const KEY = "ovis:file-panel-width";
 
 export const FILE_PANEL_DOCK_QUERY = "(min-width: 980px)";
 export const FILE_PANEL_MIN_WIDTH = 320;
-export const FILE_PANEL_MAX_WIDTH = 900;
+/** what the pane beside the panel always keeps */
+const PANE_MIN_WIDTH = 320;
 export const FILE_PANEL_WIDTH_STEP = 16;
 
+/** No cap of its own (a wide monitor gives it the room): the panel only yields to the sidebar and a 320px pane, even below its preferred minimum. */
 export function filePanelMaxWidth(viewportWidth: number, sidebarWidth = 0): number {
-  return Math.min(
-    Math.max(FILE_PANEL_MIN_WIDTH, Math.min(FILE_PANEL_MAX_WIDTH, Math.floor(viewportWidth * 0.6))),
-    Math.floor(viewportWidth - sidebarWidth - 320),
-  );
+  return Math.floor(viewportWidth - sidebarWidth - PANE_MIN_WIDTH);
 }
 
 export function clampFilePanelWidth(width: number, viewportWidth = Number.POSITIVE_INFINITY, sidebarWidth = 0): number {

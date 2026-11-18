@@ -1,0 +1,38 @@
+/* The Files tree column's right edge, an unseen grip centred on its seam as the file panel's edge is
+   (FilePanelResizer.css): it lights up under a pointer, while held and while focused, and turns to the
+   danger tone while a drag would fold the tree away. */
+.file-tree-resizer {
+  position: absolute;
+  top: 0;
+  right: calc(var(--space-1) * -1);
+  bottom: 0;
+  z-index: var(--z-header);
+  width: var(--space-2);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.file-tree-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(50% - var(--hairline));
+  width: calc(var(--hairline) * 2);
+  background: transparent;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.file-tree-resizer:focus-visible { outline: none; }
+
+@media (hover: hover) {
+  .file-tree-resizer:hover::after { background: var(--accent); }
+}
+
+.file-tree-resizer.is-dragging::after,
+.file-tree-resizer:focus-visible::after { background: var(--accent); }
+.file-tree-resizer.is-collapsing::after { background: var(--status-blocked); }
+
+@media (prefers-reduced-motion: reduce) {
+  .file-tree-resizer::after { transition: none; }
+}

@@ -6,7 +6,8 @@
 }
 
 .files-dialog-changes {
-  width: min(96vw, 1100px);
+  /* no fixed cap: on a wide monitor the browser uses the room the window has */
+  width: 96vw;
   max-width: 100%;
   height: var(--app-height, 100dvh);
   max-height: min(92vh, 100%);

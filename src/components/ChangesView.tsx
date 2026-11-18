@@ -1,7 +1,7 @@
 import { FileToolbarContext, MOBILE_FILES_QUERY } from "./MobileFilesToolbar.tsx";
-import { useContext, useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useContext, useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { FolderSearch, GitCompareArrows, FolderInput } from "lucide-react";
+import { FolderSearch, GitCompareArrows, FolderInput, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { WorkspaceFileSearch } from "./WorkspaceFileSearch.tsx";
 import { CommitPicker } from "./CommitPicker.tsx";
 import { WorkerPoolContextProvider } from "@pierre/diffs/react";
@@ -18,6 +18,8 @@ import { PIERRE_THEME } from "../lib/pierreTheme.ts";
 import { changedMarkdownPreviewPath, changedWorkspacePath, workspacePreviewPath, type WorkspaceFileIntent } from "../lib/workspaceBrowser.ts";
 import { useT } from "../lib/i18n.ts";
 import { WorkspaceFileTree } from "./WorkspaceFileTree.tsx";
+import { FileTreeResizer } from "./FileTreeResizer.tsx";
+import { storedFileTreeCollapsed, storedFileTreeWidth, storeFileTreeCollapsed } from "../lib/fileTreeWidth.ts";
 import { DiffOrphanComments, DiffViewer } from "./DiffViewer.tsx";
 import { FileViewer } from "./FileViewer.tsx";
 import { RenderBoundary } from "./RenderBoundary.tsx";
@@ -143,6 +145,11 @@ export default function ChangesView({ hidden = false, openRequest = null, paneId
   const [jump, setJump] = useState<string | null>(initialComment?.diff?.path ?? null);
   const [queue] = useState(createDiffQueue);
   const narrow = useMediaQuery(MOBILE_FILES_QUERY);
+  // the tree column's width and fold, per device; a phone shows the tree or the file, never both, so neither applies there
+  const [treeWidth, setTreeWidth] = useState(storedFileTreeWidth);
+  const [treeFolded, setTreeFolded] = useState(storedFileTreeCollapsed);
+  const treeCollapsed = treeFolded && !narrow;
+  const foldTree = (folded: boolean): void => { setTreeFolded(folded); storeFileTreeCollapsed(folded); };
   const surface = useRef<HTMLDivElement>(null);
   const documentRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -310,9 +317,12 @@ export default function ChangesView({ hidden = false, openRequest = null, paneId
   const readerPath = initialRequestActive && initialPath ? initialPath : preview;
   const owner = paneId === null ? null : paneStorageId(machineId, paneId);
   return <div ref={surface} hidden={hidden} data-show-file={showFile || undefined} className={`changes-view${narrow && showFile ? " is-showing-file" : ""}`}>
-    {paneId !== null && toolsHost !== null && createPortal(
-      <button type="button" className="icon-button" aria-label={t("Find files…")} title={t("Find files…")} aria-haspopup="dialog" aria-expanded={searchOpen}
-        onClick={onSearchOpen}><FolderSearch aria-hidden="true" /></button>, toolsHost)}
+    {toolsHost !== null && createPortal(<>
+      {!narrow && <button type="button" className="icon-button" aria-label={treeCollapsed ? t("Expand file tree") : t("Collapse file tree")} title={treeCollapsed ? t("Expand file tree") : t("Collapse file tree")}
+        aria-pressed={!treeCollapsed} onClick={() => foldTree(!treeCollapsed)}>{treeCollapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}</button>}
+      {paneId !== null && <button type="button" className="icon-button" aria-label={t("Find files…")} title={t("Find files…")} aria-haspopup="dialog" aria-expanded={searchOpen}
+        onClick={onSearchOpen}><FolderSearch aria-hidden="true" /></button>}
+    </>, toolsHost)}
     {paneId !== null && gitToolsHost !== null && createPortal(<>
       <button type="button" className="icon-button file-compare-button" data-commit-picker-trigger="" data-base-commit={baseCommit} aria-expanded={compareTarget !== undefined}
         aria-label={t("Compare with…")} title={baseCommit ? `${t("Compare with…")} ${baseCommit} → ${t("Working tree")}` : t("Compare with…")}
@@ -340,8 +350,12 @@ export default function ChangesView({ hidden = false, openRequest = null, paneId
         <button type="button" aria-pressed={preview === null} onClick={() => showMarkdown("diff")}>{t("Diff")}</button>
       </div>
     </div>}
-    <div className="changes-layout">
-      <aside className="changes-navigation"><WorkspaceFileTree root={root} paneId={paneId} files={inventory?.files ?? []} refreshToken={refreshToken} revealToken={revealToken} selected={preview ?? (path ? absolutePath(root, path) : null)} onSelect={select} onCompare={paneId === null ? undefined : (relative) => setCompareTarget(relative)} /></aside>
+    <div className="changes-layout" data-tree-collapsed={treeCollapsed || undefined} style={treeWidth === null || narrow ? undefined : { "--file-tree-w": `${treeWidth}px` } as CSSProperties}>
+      {/* folded: only a small button that brings the tree back at the width it had */}
+      {treeCollapsed && <div className="changes-navigation-folded">
+        <button type="button" className="icon-button" aria-label={t("Expand file tree")} title={t("Expand file tree")} onClick={() => foldTree(false)}><PanelLeftOpen aria-hidden="true" /></button>
+      </div>}
+      <aside className="changes-navigation" hidden={treeCollapsed}>{!narrow && <FileTreeResizer width={treeWidth} onResize={setTreeWidth} onCollapse={() => foldTree(true)} />}<WorkspaceFileTree root={root} paneId={paneId} files={inventory?.files ?? []} refreshToken={refreshToken} revealToken={revealToken} selected={preview ?? (path ? absolutePath(root, path) : null)} onSelect={select} onCompare={paneId === null ? undefined : (relative) => setCompareTarget(relative)} /></aside>
       {/* Scrolling a comment into view (or collapsing it after Save) is not file navigation. */}
       <div className="changes-detail" ref={documentRef} onScroll={toolbar ? updateVisiblePath : undefined} aria-label={t("File diff")}>
         {documentClosed ? <p className="changes-note" role="status">{t("Select a file to view.")}</p> : preview ? <FileViewer key={`${readerPath}:${refreshToken}`} keyboardActive={keyboardActive} path={readerPath!} paneId={paneId} machineId={machineId} paneFolder={start} connected={connected} editable={editable}
